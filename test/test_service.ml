@@ -1,3 +1,5 @@
+module Service = Cashflow_io.Service
+module Transfer_query = Cashflow_io.Transfer_query
 module Cycle = Cashflow_core.Cycle
 module Holidays = Cashflow_core.Holidays
 module Household = Cashflow_core.Household

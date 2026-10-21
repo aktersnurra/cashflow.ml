@@ -1,3 +1,5 @@
+module Import = Cashflow_io.Import
+module Import_store = Cashflow_io.Import_store
 open Hegel
 open Test_service_support
 

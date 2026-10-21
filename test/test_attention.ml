@@ -1,3 +1,10 @@
+module Attention = Cashflow_io.Attention
+module Import = Cashflow_io.Import
+module Inbox = Cashflow_io.Inbox
+module Insights = Cashflow_io.Insights
+module Llm = Cashflow_io.Llm
+module Service = Cashflow_io.Service
+module Store_sqlite = Cashflow_io.Store_sqlite
 module Str_compat = Cashflow_core.Str_compat
 
 open Test_service_support

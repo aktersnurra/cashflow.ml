@@ -1,3 +1,9 @@
+module Db_guard = Cashflow_io.Db_guard
+module Id_generator = Cashflow_io.Id_generator
+module Planning_store = Cashflow_io.Planning_store
+module Reporting_live = Cashflow_io.Reporting_live
+module Service = Cashflow_io.Service
+module Sql = Cashflow_io.Sql
 open Cashflow_core
 open Cashflow_workflow
 open Test_service_support

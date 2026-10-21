@@ -2,4 +2,4 @@
  (name cashflow)
  (enabled_if (= %{context_name} default))
  (public_name cashflow)
- (libraries cashflow cashflow_core cmdliner eio_main logs))
+ (libraries cashflow_io cashflow_core cmdliner eio_main logs))

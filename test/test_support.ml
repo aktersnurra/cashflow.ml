@@ -1,3 +1,7 @@
+module Id_generator = Cashflow_io.Id_generator
+module Ledger = Cashflow_io.Ledger
+module Mem_store = Cashflow_io.Mem_store
+module Store_sqlite = Cashflow_io.Store_sqlite
 module Account = Cashflow_core.Account
 module Amount = Cashflow_core.Amount
 module Currency = Cashflow_core.Currency

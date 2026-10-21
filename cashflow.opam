@@ -34,6 +34,7 @@ depends: [
   "domain-name"
   "cmdliner"
   "logs"
+  "conf-python-3" {with-test}
   "alcotest" {with-test}
   "hegel" {with-test}
   "ppx_hegel_test" {with-test}

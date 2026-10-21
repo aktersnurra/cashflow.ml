@@ -1,3 +1,4 @@
+module Id_generator = Cashflow_io.Id_generator
 module Account_id = Cashflow_core.Account_id
 module Transfer_id = Cashflow_core.Transfer_id
 module User_id = Cashflow_core.User_id

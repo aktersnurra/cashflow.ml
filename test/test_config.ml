@@ -1,3 +1,4 @@
+module Config = Cashflow_io.Config
 module Str_compat = Cashflow_core.Str_compat
 
 let minimal =

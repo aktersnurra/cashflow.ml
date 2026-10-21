@@ -1,3 +1,4 @@
+module Id_generator = Cashflow_io.Id_generator
 module Account_id = Cashflow_core.Account_id
 
 open Test_support

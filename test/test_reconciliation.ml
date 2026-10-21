@@ -1,3 +1,7 @@
+module Planning_store = Cashflow_io.Planning_store
+module Reconciliation = Cashflow_io.Reconciliation
+module Service = Cashflow_io.Service
+module Sql = Cashflow_io.Sql
 open Cashflow_core
 open Test_service_support
 

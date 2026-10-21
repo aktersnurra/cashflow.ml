@@ -1,3 +1,8 @@
+module Config = Cashflow_io.Config
+module Http_server = Cashflow_io.Http_server
+module Oidc = Cashflow_io.Oidc
+module Sql = Cashflow_io.Sql
+module Web_auth = Cashflow_io.Web_auth
 module Str_compat = Cashflow_core.Str_compat
 
 open Test_service_support

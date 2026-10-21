@@ -1,3 +1,5 @@
+module Db_guard = Cashflow_io.Db_guard
+module Sql = Cashflow_io.Sql
 (* The connection guard: request fibers share one connection, so a fiber that yields inside a
    transaction must not let another fiber's statements into it. *)
 let insert = Sql.(stmt "INSERT INTO t (v) VALUES (?)" (text @-> nil) exec)

@@ -1,3 +1,6 @@
+module Import = Cashflow_io.Import
+module Service = Cashflow_io.Service
+module Store_sqlite = Cashflow_io.Store_sqlite
 module Access = Cashflow_core.Access
 module Account = Cashflow_core.Account
 module Account_info = Cashflow_core.Account_info
