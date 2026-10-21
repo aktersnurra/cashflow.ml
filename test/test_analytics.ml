@@ -252,6 +252,18 @@ let test_goal_update_currency () =
   ignore (ok_import (save [ ("goal_id", `String usd_id); ("currency", `String "USD"); ("name", `String "Trip"); ("target_amount", `String "2000.00") ]));
   Alcotest.(check int64) "explicit USD update" 2_000_00L (Option.get (Planning_store.find_goal service.db usd_id)).target_amount
 
+(* Editing a household goal from the personal scope keeps it the household's (the store never
+   changes a goal's owner or currency on update). *)
+let test_goal_keeps_its_owner () =
+  let service, alice, _ = scenario () in
+  let household = ok (Insights.context service alice ~scope:Household ()) in
+  let goal = ok (Insights.save_goal household ~name:"Sofa" ~target_amount:10_000_00L ~target_date:None ~monthly_amount:None ()) in
+  let me = ok (Insights.context service alice ~scope:Me ()) in
+  ignore (ok (Insights.save_goal me ~goal_id:goal.goal.goal_id ~name:"New sofa" ~target_amount:12_000_00L ~target_date:None ~monthly_amount:None ()));
+  let stored = Option.get (Planning_store.find_goal service.db goal.goal.goal_id) in
+  Alcotest.(check string) "renamed" "New sofa" stored.name;
+  Alcotest.(check bool) "still the household's" true (Owner.equal stored.goal_owner (List.hd household.owners))
+
 let () =
   Alcotest.run "analytics"
     [ ( "insights",
@@ -261,7 +273,8 @@ let () =
           Alcotest.test_case "net worth with a loan" `Quick test_net_worth_with_a_loan;
           Alcotest.test_case "goal report currency" `Quick test_goal_report_currency;
           Alcotest.test_case "contribution target currency" `Quick test_contribution_target_currency;
-          Alcotest.test_case "goal update currency" `Quick test_goal_update_currency ] );
+          Alcotest.test_case "goal update currency" `Quick test_goal_update_currency;
+          Alcotest.test_case "a goal keeps its owner" `Quick test_goal_keeps_its_owner ] );
       ( "arithmetic",
         [ Alcotest.test_case "rounding keeps the total" `Quick test_rounding_keeps_the_total;
           Alcotest.test_case "decimals" `Quick test_decimals; Alcotest.test_case "json amounts" `Quick test_json_amounts;

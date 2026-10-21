@@ -218,6 +218,28 @@ let test_undo_after_share () =
 
 (* A contribution that came in as two imported rows: pairing it is idempotent, counts as the
    contribution in both scopes, and undoing either import puts the other row back in the inbox. *)
+(* Undoing both imports of a paired move: the first undo puts the other row back in the inbox; the
+   second must not bring back the first row, whose own import is gone. Found by the service
+   property test: the revived row could be shared, posting household transfers for nothing. *)
+let test_undo_does_not_revive_a_row () =
+  let service, alice, household, checking, _ = household_setup () in
+  let savings = open_checking service alice ~statement_backed:true "Savings" in
+  let ctx = Import.context service alice in
+  let first = imported (Import.confirm ctx (request checking "Datum;Text;Belopp\n2026-10-01;TILL SPAR;-100,00\n")) in
+  let second = imported (Import.confirm ctx (request savings "Datum;Text;Belopp\n2026-10-01;FRÅN LÖN;100,00\n")) in
+  let out_id = find_item service alice "TILL SPAR" and in_id = find_item service alice "FRÅN LÖN" in
+  ignore (ok (Inbox.pair service alice ~out_id ~in_id));
+  ignore (ok_import (Import.undo ctx ~batch_id:first.batch.batch_id));
+  let in_inbox id = List.exists (fun (v : Inbox.item_view) -> Transfer_id.equal v.item.transfer_id id) (Inbox.list service alice ~limit:50) in
+  Alcotest.(check bool) "the savings row is back in the inbox" true (in_inbox in_id);
+  ignore (ok_import (Import.undo ctx ~batch_id:second.batch.batch_id));
+  Alcotest.(check bool) "the checking row stays gone" false (in_inbox out_id);
+  let groceries =
+    (List.find (fun (i : Account_info.t) -> i.account.name = "Groceries" && Owner.equal i.account.owner (Household household.id)) (Service.accounts service alice)).account.id
+  in
+  Alcotest.(check bool) "and can't be shared" true (Result.is_error (Inbox.share service alice ~transfer_id:out_id ~household_category_id:groceries));
+  Alcotest.(check (list (pair string int64))) "nothing left in alice's books" [] (sum_of service alice (Access.personal alice))
+
 let test_pairing_a_contribution () =
   let service, alice, _, checking, shared = household_setup () in
   let ctx = Import.context service alice in
@@ -398,6 +420,7 @@ let () =
       ( "inbox",
         [ Alcotest.test_case "pair and share" `Quick test_pair_and_share; Alcotest.test_case "undo after share" `Quick test_undo_after_share;
           Alcotest.test_case "pairing a contribution" `Quick test_pairing_a_contribution;
+          Alcotest.test_case "undo doesn't revive a row" `Quick test_undo_does_not_revive_a_row;
           Alcotest.test_case "a manual move confirmed by both statements" `Quick test_manual_move_confirmed_by_both_statements;
           Alcotest.test_case "a member shares a purchase" `Quick test_member_shares_a_purchase;
           Alcotest.test_case "reconciliation follows the ledger" `Quick test_reconciliation_follows_the_ledger; Alcotest.test_case "reconcile" `Quick test_reconcile ] ) ]

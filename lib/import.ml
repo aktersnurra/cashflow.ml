@@ -504,7 +504,14 @@ let undo ctx ~batch_id =
                 | Error e -> raise (Abort (e :> error)))
               to_reverse;
             let now = ctx.service.now () in
-            List.iter (fun id -> Option.iter (fun item -> Import_store.save_item db ~now { item with status = "open" }) (Import_store.find_item db id)) partners;
+            (* Only a partner still paired goes back to the inbox: one whose own import was undone
+               already is dismissed and stays so. *)
+            List.iter
+              (fun id ->
+                Option.iter
+                  (fun (item : Import_store.item) -> if item.status = "paired" then Import_store.save_item db ~now { item with status = "open" })
+                  (Import_store.find_item db id))
+              partners;
             List.iter
               (fun id -> Option.iter (fun item -> Import_store.save_item db ~now { item with status = "dismissed" }) (Import_store.find_item db id))
               transfers;
