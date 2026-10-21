@@ -77,6 +77,15 @@ let balance_on =
      WHERE (debit_account_id = ?1 OR credit_account_id = ?1) AND kind IN ('single', 'post_pending') AND value_date <= ?2"
     Codec.(account_id @-> date @-> nil) (one (row (int64 @-> nil) Fun.id))
 
+(* Transfers in effect on an account that day: reversed ones and their reversals cancel out. *)
+let posted_on =
+  stmt
+    "SELECT count(*) FROM transfers t WHERE (debit_account_id = ?1 OR credit_account_id = ?1) AND kind IN ('single', 'post_pending') \
+     AND value_date = ?2 AND reverses IS NULL AND NOT EXISTS (SELECT 1 FROM transfers r WHERE r.reverses = t.id)"
+    Codec.(account_id @-> date @-> nil) (one (row (int @-> nil) Fun.id))
+
+let posted_count_on db (account : Account.t) date = run db posted_on account.id date
+
 let posted_balance_on db (account : Account.t) date =
   let debit_minus_credit = run db balance_on account.id date in
   if Account.debit_normal account.kind then debit_minus_credit else Int64.neg debit_minus_credit

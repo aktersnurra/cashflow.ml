@@ -216,34 +216,49 @@ let suggest_with_llm (d, rows) =
   let suggestions = Llm_features.suggest_categories d.ctx.service d.ctx.access ~bank_account:d.account unknown in
   Ok (d, List.map (fun p -> match List.assoc_opt p.index suggestions with Some s when p.suggestion = None -> { p with suggestion = Some s } | _ -> p) rows)
 
-(* The balance after the file's last day, from the running-balance column. Banks list rows newest
-   or oldest first, so the closing row is the newest-dated one at whichever end comes later. *)
+(* The balance after the file's last row. Banks list rows newest or oldest first; the running
+   balances say which (each one is the previous plus the row's amount, in time order), and when
+   they can't, the dates do. *)
 let closing_balance (rows : Statement_format.row list) =
+  let rec in_time_order = function
+    | (a : Statement_format.row) :: (b :: _ as rest) -> (
+        match a.balance, b.balance with Some x, Some y -> Int64.equal y (Int64.add x b.amount) && in_time_order rest | _ -> false)
+    | [ _ ] | [] -> true
+  in
   match rows, List.rev rows with
   | first :: _, last :: _ ->
-      let newest_first = Date.compare first.booking_date last.booking_date >= 0 in
-      let closing = if newest_first then first else last in
+      let closing =
+        if List.length rows > 1 && in_time_order rows then last
+        else if List.length rows > 1 && in_time_order (List.rev rows) then first
+        else if Date.compare first.booking_date last.booking_date >= 0 then first
+        else last
+      in
       Option.map (fun balance -> (closing.booking_date, balance)) closing.balance
   | _ -> None
 
 (* Stage 5: will the ledger agree with the bank once the new rows are posted? *)
+(* Stage 5: will the ledger agree with the bank once the new rows are posted? The ledger is
+   compared at the end of the statement's closing day, so when it will hold more of that day than
+   the file does (a later file already brought in the rest of the day), there is no fair point to
+   compare and no check is made. *)
 let check_balance (d, rows) =
-  let already_imported = Import_store.find_active_batch d.ctx.service.db ~account_id:d.account.account.id ~sha:d.sha256 in
+  let db = d.ctx.service.db and account = d.account.account in
+  let already_imported = Import_store.find_active_batch db ~account_id:account.id ~sha:d.sha256 in
+  let posting p = match p.status with New | Matched _ -> true | Duplicate _ | Decided_duplicate _ | Ambiguous _ -> false in
   let balance =
-    Option.map
-      (fun (on_date, statement_balance) ->
-        let existing = Import_store.posted_balance_on d.ctx.service.db d.account.account on_date in
-        let sign = if Account.debit_normal d.account.account.kind then 1L else -1L in
-        let added =
-          List.fold_left
-            (fun sum p ->
-              match p.status with
-              | (New | Matched _) when Date.compare p.row.booking_date on_date <= 0 -> Int64.add sum (Int64.mul sign p.row.amount)
-              | _ -> sum)
-            0L rows
-        in
-        { on_date; statement_balance = Int64.mul sign statement_balance; ledger_balance = Int64.add existing added })
-      (closing_balance d.rows)
+    Option.bind (closing_balance d.rows) (fun (on_date, statement_balance) ->
+        let on_day p = Date.equal p.row.booking_date on_date in
+        let ledger_rows = Import_store.posted_count_on db account on_date + List.length (List.filter (fun p -> on_day p && posting p) rows) in
+        if ledger_rows > List.length (List.filter on_day rows) then None
+        else
+          let existing = Import_store.posted_balance_on db account on_date in
+          let sign = if Account.debit_normal account.kind then 1L else -1L in
+          let added =
+            List.fold_left
+              (fun sum p -> if posting p && Date.compare p.row.booking_date on_date <= 0 then Int64.add sum (Int64.mul sign p.row.amount) else sum)
+              0L rows
+          in
+          Some { on_date; statement_balance = Int64.mul sign statement_balance; ledger_balance = Int64.add existing added })
   in
   Ok { decoded_file = d; rows; already_imported; balance }
 
