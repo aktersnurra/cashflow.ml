@@ -35,3 +35,6 @@ let level_of_env ~default =
 let setup () =
   Logs.set_reporter reporter;
   Logs.set_level ~all:true (level_of_env ~default:(Some Logs.Info))
+
+(* The level from the configuration file; CASHFLOW_LOG_LEVEL still wins, for a one-off debug run. *)
+let configure level = Logs.set_level ~all:true (level_of_env ~default:level)

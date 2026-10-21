@@ -17,7 +17,12 @@ let test_defaults () =
   Alcotest.(check string) "admin group" "cashflow-admin" c.admin_group;
   Alcotest.(check string) "static dir" "/usr/local/share/cashflow/web" c.static_dir;
   Alcotest.(check (option string)) "no web client" None c.web_client_id;
-  Alcotest.(check (option string)) "no llm" None c.openrouter_api_key
+  Alcotest.(check (option string)) "no llm" None c.openrouter_api_key;
+  Alcotest.(check bool) "info logging" true (c.log_level = Some Logs.Info);
+  let with_level level = String.sub minimal 0 (String.length minimal - 1) ^ Printf.sprintf " (log_level %s))" level in
+  Alcotest.(check bool) "debug" true ((ok (with_level "Debug")).log_level = Some Logs.Debug);
+  Alcotest.(check bool) "quiet" true ((ok (with_level "Quiet")).log_level = None);
+  ignore (error (with_level "Verbose"))
 
 let test_secrets () =
   Unix.putenv "CASHFLOW_TEST_SECRET" "from-env";

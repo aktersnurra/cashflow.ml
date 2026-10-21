@@ -24,6 +24,10 @@
  ;; Where the built web UI is installed. Optional; this is the default.
  (static_dir /usr/local/share/cashflow/web)
 
+ ;; Quiet, Error, Warning, Info or Debug. Optional; this is the default.
+ ;; CASHFLOW_LOG_LEVEL overrides it for a single run.
+ (log_level Info)
+
  ;; Optional: category suggestions and month summaries through OpenRouter.
  ;; (openrouter ((api_key (Env OPENROUTER_API_KEY)) (model anthropic/claude-haiku-5.5)))
  )

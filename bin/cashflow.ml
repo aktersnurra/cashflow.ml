@@ -1,7 +1,9 @@
 let with_config path f =
   match Config.load path with
   | Error reason -> Logs.err (fun m -> m "invalid configuration: %s" reason); 1
-  | Ok config -> f config
+  | Ok config ->
+      Logging.configure config.Config.log_level;
+      f config
 
 (* Validates the configuration file, secrets included, without touching the database. *)
 let check_config path = with_config path (fun config -> Logs.app (fun m -> m "%s is valid; serving %s" path config.public_base_url); 0)
