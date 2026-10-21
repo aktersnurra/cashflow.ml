@@ -73,7 +73,9 @@ OCaml's advanced features are used where they rule out a class of bugs or remove
 **Polymorphic variants for errors.** Each stage declares exactly which errors it can return, for example ``[> `Exists_with_different_fields | `Linked_event_failed ]``. The type of a composed pipeline is the union of its stages' errors, and the adapter's final `match` is checked for exhaustiveness.
 
 **Tests**
-- **QCheck-STM** tests the ledger against a simple model. Generated random sequences of batches (linked, pending, reversals, retries) must produce the same balances as the model.
+- **[Hegel](https://ocaml.org/p/hegel/latest/README.html)** is the property-testing library: it is built on Hypothesis's engine and shrinks failures automatically. Tests use `let%hegel_test` from `ppx_hegel_test` and run under Alcotest.
+- **Model-based ledger test:** a test draws a random command sequence (open account, batch with linked and pending transfers, post or void, reverse, retry with the same idempotency key). Each command is applied both to `Ledger.Make (Mem_store)` and to a deliberately naive reference model, and the two must agree after every step. Hegel shrinks a failure down to the shortest sequence of commands that reproduces it.
+- **Platform note:** Hegel loads a native `libhegel`, which is published for Linux and macOS (Apple Silicon) only. Tests therefore run on the development machine and in CI, not on the FreeBSD NUC; the production binary doesn't depend on Hegel. CI pins the `libhegel` version and sets `HEGEL_LIBHEGEL_NO_DOWNLOAD=1` once it is cached.
 - **Invariants:** balances equal the sum of transfers, replaying a batch changes nothing, and posted balances never break an account's flags.
 
 **Not used:** OCaml 5 effect handlers are not used directly beyond what Eio provides, and there are no ppx-heavy DSLs. JSON codecs use `jsont` combinators, which work on both the server and in js_of_ocaml.
@@ -272,7 +274,7 @@ drop CSV ─▶ detect format ─▶ parse rows ─▶ match account ─▶ fing
 
 ### 6.2 Formats
 
-There is one parser module per format, behind a common signature (`detect`, `parse`, `account_hint`). The first one is Handelsbanken. I need an anonymised sample of its export, because the columns, the date format, the decimal separator and the encoding all decide the parser (§17). Avanza and Montrose imports are out of scope for v1.
+There is one parser module per format, behind a common signature (`detect`, `parse`, `account_hint`). The first one is Handelsbanken. I need an anonymised sample of its export, because the columns, the date format, the decimal separator and the encoding all decide the parser (§17). Avanza and Montrose imports are out of scope for v1. Adding one later means writing one format module: it maps deposits, withdrawals, dividends and fees to transfers, ignores individual trades, and reuses the rest of the pipeline.
 
 ### 6.3 Row fingerprint and duplicates
 
