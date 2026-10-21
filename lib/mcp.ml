@@ -25,7 +25,7 @@ let annotations (c : Commands.command) =
 let tool (c : Commands.command) =
   `Assoc [ ("name", `String c.name); ("description", `String c.description); ("inputSchema", Commands.schema c); ("annotations", annotations c) ]
 
-let tools () = List.filter (fun (c : Commands.command) -> c.mcp) (Commands.all ())
+let tools () = List.filter (fun (c : Commands.command) -> c.mcp) (Api.all ())
 
 let discover_result =
   cacheable

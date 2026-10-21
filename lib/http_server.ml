@@ -139,7 +139,7 @@ let api_command deps (request : request) name =
       if header request "x-csrf-token" <> Some csrf then error_json 403 "missing or wrong CSRF token"
       else if not (is_json request) then error_json 415 "send JSON"
       else
-        match Commands.find name, parse_json request.body with
+        match Api.find name, parse_json request.body with
         | None, _ -> error_json 404 ("unknown command " ^ name)
         | _, Error _ -> error_json 400 "malformed JSON"
         | Some command, Ok args -> (
@@ -171,7 +171,7 @@ let api_commands deps (request : request) =
                     (fun (c : Commands.command) ->
                       if Commands.allowed ~scopes access c then Some (`Assoc [ ("name", `String c.name); ("description", `String c.description); ("schema", Commands.schema c) ])
                       else None)
-                    (Commands.all ())) ) ])
+                    (Api.all ())) ) ])
 
 (* Static files: the Bonsai bundle. Paths are confined to the static directory; anything that
    isn't an asset gets index.html, so the UI's own routes work on reload. *)

@@ -28,3 +28,8 @@
  (name test_http)
  (modules test_http test_service_support)
  (libraries alcotest cashflow yojson uri))
+
+(test
+ (name test_attention)
+ (modules test_attention test_service_support)
+ (libraries alcotest cashflow))

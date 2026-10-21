@@ -187,6 +187,25 @@ CREATE TABLE login_attempts (
   created_at TEXT NOT NULL
 );
 |}
+    );
+    ( 5,
+      {|
+-- What a user did with an attention card: snoozed it until a date, or resolved it (with a note,
+-- e.g. the budget status that was acknowledged, so a worse one shows the card again).
+CREATE TABLE attention_cards (
+  user_id TEXT NOT NULL REFERENCES users(id), card_key TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('snoozed', 'resolved')), until_date TEXT, note TEXT,
+  updated_at TEXT NOT NULL, PRIMARY KEY (user_id, card_key)
+);
+
+-- LLM output is cached (a month summary is written once) and every call is logged, so the
+-- user can see what was sent where.
+CREATE TABLE llm_cache (cache_key TEXT PRIMARY KEY, content TEXT NOT NULL, model TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE TABLE llm_calls (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL REFERENCES users(id), purpose TEXT NOT NULL,
+  item_count INTEGER NOT NULL, model TEXT NOT NULL, ok INTEGER NOT NULL, created_at TEXT NOT NULL
+);
+|}
     ) ]
 
 let latest_version = List.fold_left (fun latest (version, _) -> max latest version) 0 migrations

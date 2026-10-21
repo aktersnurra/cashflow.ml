@@ -723,11 +723,6 @@ let base =
     update_household ]
   @ queries
 
-(* Commands added by later modules (the attention feed) register here. *)
-let extra : command list ref = ref []
-let all () = base @ !extra
-let find name = List.find_opt (fun c -> c.name = name) (all ())
-
 let schema c =
   `Assoc
     [ ("type", `String "object"); ("properties", `Assoc c.properties); ("required", `List (List.map (fun n -> `String n) c.required));
