@@ -40,7 +40,7 @@ One OCaml binary, `cashflow`, with the same shape as `kcal`:
 - **Ledger core:** pure functions that validate a batch of transfers against account state and return either new balances or a list of errors. The store applies the result inside a single SQLite transaction. This is the part that copies TigerBeetle, and it can be tested exhaustively without a database.
 - External calls (the OpenRouter LLM, and later a bank-sync provider) are injected as records of functions, like `Withings.request` in kcal.
 
-The generic pieces of kcal (OIDC verification, MCP dispatch, HTTP adapter, logging, migrations, date and timezone handling) should move into a shared library used by both apps. Until that repo exists, cashflow copies them and marks the copies, so the extraction is mechanical later.
+The generic pieces of kcal (OIDC verification, MCP dispatch, HTTP adapter, logging, migrations, date and timezone handling) are copied into cashflow for now, each copy marked with a `(* copied from kcal: … *)` header. They get improved here as needed, and are extracted into shared libraries once both copies have settled. That extraction is a later topic.
 
 ## 3. Ledger core (TigerBeetle rules)
 
@@ -266,7 +266,7 @@ Handelsbanken's PSD2 API is only open to licensed providers. Enable Banking's fr
 Someone can enter spending on a bank account by hand, through the Add sheet or `add_transaction` over MCP, before the CSV that contains it has been imported. That would be counted twice if the import simply posted it again. Instead, a manual entry against an account that has a bank file behind it uses TigerBeetle's two-phase transfers:
 
 1. **When entered,** the manual entry is posted as a `Pending` transfer, already in its category: "expected, not yet confirmed by the bank". The account's posted balance still matches the bank, and the pending columns show what is expected.
-2. **On import,** each new row is first matched against pending transfers on the same account, with the same direction, a date within ±4 days, and an amount within ±10 % (to allow for tips and currency conversion).
+2. **On import,** each new row is first matched against pending transfers on the same account, with the same direction, the same transaction date (the date of purchase, not the bank's booking date) and the same amount. A row with the same date but a different amount (tips, currency conversion) is never matched automatically. It goes to the Inbox with the pending entry offered as a candidate.
    - With exactly one candidate, the import posts that pending transfer (`Post_pending`) for the bank's amount and date. It uses the category from the manual entry and doesn't add a new row to the Inbox.
    - With several candidates, the row goes to the Inbox with the candidates attached, and the user picks one.
 3. **Unmatched entries:** if a pending entry has still not been matched once an import has covered its date plus seven days, a "Not found on the bank statement" card asks you to void it, keep waiting, or move it to Cash.
@@ -306,7 +306,14 @@ UX best practice is monthly envelopes with history that never changes. In more d
 - **`value_date`:** a plain calendar date with no timezone, because bank statements give dates, not times. All analytics group transfers by `value_date`.
 - **`recorded_at`:** a UTC instant, used for auditing and for "last imported" checks.
 - **User timezone:** set in Settings (default `Europe/Stockholm`, using kcal's built-in table). It only decides what "today" is and how instants are displayed.
-- **Month = pay cycle.** Budgets, the monthly overview and the contribution planner use a *cycle* that starts on the user's payday, configured per user. The default is the 25th. If the 25th is a Saturday, Sunday or Swedish public holiday, the cycle starts on the last banking day before it, which is when Swedish salaries are actually paid. The holiday table is built in, the same way kcal's timezone table is. A cycle is named after the month it mostly covers, so 25 Oct – 24 Nov is "November". A household's cycle follows the admin's setting. Analytics can still group by calendar month when asked.
+- **Month = pay cycle.** Budgets, the monthly overview and the contribution planner use a *cycle*. Each user and each household configures its own in Settings:
+  - **Start:** a day of the month from 1 to 28, or *last banking day*. Day 1 gives calendar months.
+  - **Adjustment:** when the start falls on a weekend or public holiday, either move it to the previous banking day (the default, which is how Swedish salaries are paid), move it to the next banking day, or don't move it.
+  - **Holiday calendar:** the default is Swedish, from a built-in table like kcal's timezone table.
+  - **Naming:** after the month the cycle mostly covers, or after the month it starts in.
+  - **Defaults:** the 25th, previous banking day, Swedish holidays, named after the month it mostly covers, so 25 Oct – 24 Nov is "November".
+  - **Changes:** changing the setting applies from the next cycle on, so past cycles keep their boundaries.
+  - **Calendar months:** analytics can still group by calendar month when asked.
 
 ## 10. Analytics
 
@@ -476,13 +483,19 @@ Analytics are SQL aggregations over `transfer` grouped by `value_date`. With a f
 | **M5 · Household** | memberships, invitations, masking, contributions, planner, settle-up |
 | **M6 · Budgets and insights** | budget versions, pace, rollover, recurring-payment detection, net worth, attention engine |
 | **M7 · LLM** | categorisation suggestions, narrative cards |
-| **Later** | sinking funds, investment-account CSVs, bank sync, extracting the shared library |
+| **Later** | sinking funds, investment-account CSVs, bank sync, extracting shared libraries from cashflow and kcal |
 
 ## 17. Open questions
 
-1. **Shared library:** what should the repo be called, and should it be created now or after M2?
-2. **Handelsbanken CSV:** I need an anonymised export, a few rows with the amounts changed. An export is being prepared.
-3. **Avanza and Montrose:** should their CSV exports be in v1, or only Handelsbanken?
-4. **Matching tolerance:** is ±4 days and ±10 % right for matching manual entries to bank rows (§6.7)?
+1. **Handelsbanken CSV:** I need an anonymised export, a few rows with the amounts changed. One is being prepared. It also decides whether the transaction date and the booking date are separate columns, which §6.7 depends on.
+2. **Investment exports:** should Avanza's and Montrose's CSV exports be in v1, or only Handelsbanken's?
 
-Resolved: the admin comes from the PocketID `groups` claim; every active member may post to household accounts; a month is a pay cycle starting on the 25th; the phone is a first-class target; translations use gettext with `en` and `sv`; there can be several savings goals.
+Resolved:
+- **Admin:** from the PocketID `groups` claim.
+- **Household posting:** every active member may post to household accounts.
+- **Months:** a configurable pay cycle, defaulting to the 25th.
+- **Phone:** a first-class target.
+- **Translations:** gettext with `en` and `sv`.
+- **Savings goals:** there can be several.
+- **Matching manual entries:** same transaction date and the same amount.
+- **Shared code:** copied from kcal for now, extracted later.
