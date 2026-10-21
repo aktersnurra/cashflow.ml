@@ -176,8 +176,6 @@ let note_rank = function "over_budget" -> 2 | "ahead_of_pace" -> 1 | _ -> 0
 
 (* The feed *)
 
-let summary_text : (Service.t -> Access.t -> month_review -> string option) ref = ref (fun _ _ _ -> None)
-
 let feed (service : Service.t) access =
   let today = Service.today service access in
   let user = Access.user access in
@@ -196,8 +194,18 @@ let feed (service : Service.t) access =
       let previous = Cycle.previous ctx.setting current in
       if Date.days_between ~first:current.first ~last:today < 10 then (
         let summary = match Analytics.cashflow_summary (Insights.book ctx) ~cycles:[ previous ] ~reconciled_through:(Insights.reconciled_through ctx) (Insights.transfers ctx ~first:previous.first ~last:previous.last) with [ s ] -> Some s | _ -> None in
-        let review = { reviewed = previous; review_summary = summary; review_currency = ctx.currency; text = None } in
-        add Month_review ("month_review:" ^ Cycle.label previous) { review with text = !summary_text service access review });
+        let text =
+          Option.bind summary (fun summary ->
+              let before = Cycle.previous ctx.setting previous in
+              let previous_summary =
+                match Analytics.cashflow_summary (Insights.book ctx) ~cycles:[ before ] ~reconciled_through:None (Insights.transfers ctx ~first:before.first ~last:before.last) with
+                | [ s ] -> Some s
+                | _ -> None
+              in
+              let top = List.filteri (fun i _ -> i < 5) (Insights.spending_by_category ctx ~period:(Cycle_offset (-1)) ~compare_previous:true) in
+              Llm_features.month_summary service access ~cycle:previous ~currency:ctx.currency ~summary ~previous:previous_summary ~top)
+        in
+        add Month_review ("month_review:" ^ Cycle.label previous) { reviewed = previous; review_summary = summary; review_currency = ctx.currency; text });
       let summary = match Insights.cashflow_summary ctx ~cycles:1 with [ s ] -> Some s | _ -> None in
       add ~resolvable:false Overview "overview" { cycle = current; summary; currency = ctx.currency };
       List.iter

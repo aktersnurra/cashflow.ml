@@ -9,9 +9,18 @@ let error_to_string : [< error ] -> string = function
   | `Not_found what -> what ^ " not found"
   | `Invalid reason -> reason
 
-type t = { db : Sql.db; now : unit -> Ptime.t }
+type t = { db : Sql.db; now : unit -> Ptime.t; assistant : Llm.t option  (** off unless an API key is configured *) }
 
-let make ?(now = fun () -> Ptime_clock.now ()) db = { db; now }
+let make ?(now = fun () -> Ptime_clock.now ()) ?assistant db = { db; now; assistant }
+
+(* Every LLM call is logged with its purpose and size, never its content, for the settings page. *)
+let log_llm_call service (access : Access.t) ~purpose ~items ~ok =
+  match service.assistant with
+  | None -> ()
+  | Some llm ->
+      Sql.(run service.db (stmt "INSERT INTO llm_calls (user_id, purpose, item_count, model, ok, created_at) VALUES (?, ?, ?, ?, ?, ?)"
+             Codec.(user_id @-> text @-> int @-> text @-> bool @-> time @-> nil) exec))
+        (Access.user access).id purpose items llm.model ok (service.now ())
 
 let env service : Ledger_core.env =
   { now = service.now; fresh_account_id = Account_id.fresh; fresh_transfer_id = Transfer_id.fresh }

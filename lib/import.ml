@@ -1,6 +1,6 @@
 (* Importing a bank statement, as a pipeline of stages composed with Kleisli composition:
 
-     decode >=> fingerprint >=> classify >=> suggest >=> check_balance
+     decode >=> fingerprint >=> classify >=> suggest >=> suggest_with_llm >=> check_balance
 
    Each stage takes the previous one's result and either refines it or stops with an error, so a
    stage can be tested on its own, and a bank sync can reuse everything after [decode]. Running
@@ -147,6 +147,13 @@ let suggest (d, rows) =
   in
   Ok (d, rows)
 
+(* Stage 4b: rows nobody's rules or history recognised go to the LLM in one batch, if one is
+   configured; its suggestions are only ever suggestions. *)
+let suggest_with_llm (d, rows) =
+  let unknown = List.filter_map (fun p -> match p.status, p.suggestion with New, None -> Some (p.index, p.row) | _ -> None) rows in
+  let suggestions = Llm_features.suggest_categories d.ctx.service d.ctx.access ~bank_account:d.account unknown in
+  Ok (d, List.map (fun p -> match List.assoc_opt p.index suggestions with Some s when p.suggestion = None -> { p with suggestion = Some s } | _ -> p) rows)
+
 (* The balance after the file's last day, from the running-balance column. Banks list rows newest
    or oldest first, so the closing row is the newest-dated one at whichever end comes later. *)
 let closing_balance (rows : Statement_format.row list) =
@@ -178,7 +185,7 @@ let check_balance (d, rows) =
   in
   Ok { decoded_file = d; rows; already_imported; balance }
 
-let pipeline ctx = decode ctx >=> fingerprint >=> classify >=> suggest >=> check_balance
+let pipeline ctx = decode ctx >=> fingerprint >=> classify >=> suggest >=> suggest_with_llm >=> check_balance
 let preview ctx request = pipeline ctx request
 
 type summary = { batch : Import_store.batch; inbox_count : int; balance : balance_check option }

@@ -210,51 +210,11 @@ let max_age headers =
              | _ -> None)
 
 let https_client env =
-  let certificate_bundle () =
-    let rec read = function
-      | [] -> Error ()
-      | path :: rest ->
-          (try
-             let channel = open_in_bin path in
-             let pem =
-               Fun.protect ~finally:(fun () -> close_in_noerr channel) (fun () ->
-                   really_input_string channel (in_channel_length channel))
-             in
-             match X509.Certificate.decode_pem_multiple pem with
-             | Ok certificates when certificates <> [] -> Ok certificates
-             | _ -> read rest
-           with Sys_error _ -> read rest)
-    in
-    read [ "/etc/ssl/cert.pem"; "/etc/ssl/certs/ca-certificates.crt" ]
-  in
-  let tls =
-    match certificate_bundle () with
-    | Error () ->
-        Log.err (fun m -> m "no usable CA certificate bundle found; OIDC discovery and JWKS fetches will fail");
-        Error ()
-    | Ok certificates ->
-        let authenticator =
-          X509.Authenticator.chain_of_trust
-            ~time:(fun () -> Ptime.of_float_s (Unix.gettimeofday ())) certificates
-        in
-        (match Tls.Config.client ~authenticator () with
-        | Ok config -> Ok config
-        | Error _ ->
-            Log.err (fun m -> m "could not build TLS client configuration");
-            Error ())
-  in
-  match tls with
+  match Https.tls_config () with
   | Error () -> { discover = (fun ~issuer:_ -> Error ()); fetch_jwks = (fun ~uri:_ -> Error ()); post_form = (fun ~uri:_ _ -> Error ()) }
   | Ok tls_config ->
       Mirage_crypto_rng_unix.use_default ();
-      let https uri flow =
-        match Uri.host uri with
-        | None -> failwith "missing HTTPS host"
-        | Some host ->
-            (match Domain_name.of_string host with
-            | Error _ -> failwith "invalid HTTPS host"
-            | Ok host -> Tls_eio.client_of_flow tls_config ~host:(Domain_name.host_exn host) flow)
-      in
+      let https = Https.connector tls_config in
       let client = Cohttp_eio.Client.make ~https:(Some https) env#net in
       let get uri =
         try

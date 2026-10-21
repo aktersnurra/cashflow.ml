@@ -39,7 +39,10 @@ let serve () =
   with_config (fun config ->
       Eio_main.run @@ fun env ->
       with_database config (fun db ->
-          let service = Service.make db in
+          let assistant =
+            Option.map (fun api_key -> Llm.openrouter ~post:(Https.post env) ~api_key ~model:config.openrouter_model) config.openrouter_api_key
+          in
+          let service = Service.make ?assistant db in
           let client = Oidc.https_client env in
           let verify_bearer = Oidc.make ~issuer:config.oidc_issuer ~audience:config.oidc_audience ~client () in
           let web_auth =
@@ -53,7 +56,6 @@ let serve () =
                          admin_group = config.admin_group })
             | _ -> None
           in
-          Llm_setup.install ~env ~config service;
           (* Runs until the process is stopped. *)
           Http_server.run env { service; verify_bearer; web_auth; config; now = Ptime_clock.now }))
 
