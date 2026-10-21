@@ -52,3 +52,10 @@
  (enabled_if (= %{context_name} default))
  (modules test_mf2)
  (libraries alcotest mf2 cashflow_msg mf2_runtime))
+
+(test
+ (name test_config)
+ (enabled_if (= %{context_name} default))
+ (modules test_config)
+ (libraries alcotest cashflow sexplib unix)
+ (deps ../cashflow.example.sexp))

@@ -566,6 +566,7 @@ Analytics are SQL aggregations over `transfer` grouped by `value_date`. With a f
 - **The server** builds and runs natively on FreeBSD. Eio picks its POSIX backend; io_uring is Linux-only and would make no measurable difference at this scale.
 - **The web UI:** Bonsai v0.17 (the last opam release) needs OCaml 5.1, while the server uses 5.5. The UI therefore builds in a second opam switch through `dune-workspace.web`, with every stanza marked for its context. The MF2 runtime, the generated messages and `mf2c` are plain OCaml and build in both. The UI's output is static files, built in CI or anywhere else and served by `cashflow serve`.
 - **Commands:** every use case is one entry in `lib/commands.ml`. The MCP tools and the web API (`/api/commands/<name>`) are both generated from that table, which replaces the separate REST routes sketched in §13.
+- **Configuration** is one typed S-expression file (`cashflow.example.sexp`), parsed with derived converters into a record. Unknown fields are errors with their position, and secrets can be inline, in a file or in an environment variable. `cashflow check-config` validates it.
 - **JSON** uses yojson throughout (as kcal does) rather than `jsont`; the UI reads the same JSON with small helpers.
 
 ## 17. Open questions

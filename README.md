@@ -70,10 +70,13 @@ cashflow verify         # recompute balances; non-zero exit on a mismatch
 cashflow void-expired   # daily, from cron
 ```
 
-Configuration is environment-based; see `.env.example`.
-- **Web sign-in:** needs a confidential OIDC client in Pocket ID, with the callback `$CASHFLOW_PUBLIC_BASE_URL/auth/callback`.
+Configuration is code: one typed S-expression file, `/usr/local/etc/cashflow.sexp` by default (or `--config FILE`, or `$CASHFLOW_CONFIG`). Start from [`cashflow.example.sexp`](cashflow.example.sexp) and check it with `cashflow check-config`.
+- **Parsing:** the file is read with derived converters, so a misspelt field is an error that names its line and column. Missing optional fields take their defaults.
+- **Secrets:** a secret is `(Inline "...")`, `(File /path)` or `(Env NAME)`, so the file itself can live in git with the rest of the jail's configuration.
+
+- **Web sign-in:** needs a confidential OIDC client in Pocket ID, with the callback `<public_url>/auth/callback`.
 - **Admin:** members of the `cashflow-admin` group are admins. They create the household and add its shared bank accounts.
-- **Static files:** `CASHFLOW_STATIC_DIR` points at the built UI.
+- **Static files:** `static_dir` points at the built UI.
 - **Reverse proxy:** as with kcal, Caddy owns public TLS. Let it compress responses (`encode zstd gzip`).
 
 ## Layout
