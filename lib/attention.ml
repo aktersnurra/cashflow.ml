@@ -139,7 +139,10 @@ let mismatches (service : Service.t) access =
   List.filter_map
     (fun (account : Account_info.t) ->
       match List.rev (Planning_store.checkpoints service.db account.account.id) with
-      | latest :: _ when not (Int64.equal latest.statement_balance latest.ledger_balance) -> Some { account; checkpoint = latest }
+      | latest :: _ ->
+          (* Against the ledger as it is now. *)
+          let ledger_balance = Import_store.posted_balance_on service.db account.account latest.on_date in
+          if Int64.equal latest.statement_balance ledger_balance then None else Some { account; checkpoint = { latest with ledger_balance } }
       | _ -> None)
     (statement_accounts service access)
 

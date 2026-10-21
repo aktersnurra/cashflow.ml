@@ -44,6 +44,8 @@ let serve path =
   with_config path (fun config ->
       Eio_main.run @@ fun env ->
       with_database config (fun db ->
+          (* Request fibers share the connection; they take turns with it. *)
+          Sql.set_guard db (Db_guard.make ());
           let assistant =
             Option.map (fun api_key -> Llm.openrouter ~post:(Https.post env) ~api_key ~model:config.openrouter_model) config.openrouter_api_key
           in

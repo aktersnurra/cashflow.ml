@@ -126,10 +126,12 @@ let insert_checkpoint =
     Codec.(text @-> account_id @-> date @-> int64 @-> int64 @-> text @-> nullable text @-> user_id @-> time @-> nil)
     exec
 
+(* Checkpoints from undone imports no longer say anything. *)
 let checkpoints_of =
   stmt
-    "SELECT id, account_id, on_date, statement_balance, ledger_balance, source FROM reconciliation_checkpoints \
-     WHERE account_id = ? ORDER BY on_date, created_at"
+    "SELECT c.id, c.account_id, c.on_date, c.statement_balance, c.ledger_balance, c.source FROM reconciliation_checkpoints c \
+     WHERE c.account_id = ? AND NOT EXISTS (SELECT 1 FROM import_batches b WHERE b.id = c.import_batch_id AND b.undone_at IS NOT NULL) \
+     ORDER BY c.on_date, c.created_at"
     Codec.(account_id @-> nil) (many checkpoint_row)
 
 let add_checkpoint db ~now ~user_id ?import_batch_id ~source (c : checkpoint) =
@@ -138,8 +140,9 @@ let add_checkpoint db ~now ~user_id ?import_batch_id ~source (c : checkpoint) =
 let checkpoints db account_id = run db checkpoints_of account_id
 
 (* The latest date up to which the account's balance matched the bank: the last matching
-   checkpoint, unless a later one disagreed. *)
-let reconciled_through db account_id =
+   checkpoint, unless a later one disagreed. The ledger's side is its balance on that date now,
+   not when the checkpoint was made, so a later reversal or correction of an earlier entry shows. *)
+let reconciled_through db account_id ~ledger_balance_on =
   List.fold_left
-    (fun through c -> if Int64.equal c.statement_balance c.ledger_balance then Some c.on_date else None)
+    (fun _ c -> if Int64.equal c.statement_balance (ledger_balance_on c.on_date) then Some c.on_date else None)
     None (checkpoints db account_id)

@@ -46,6 +46,12 @@ let flow book flows (transfer : Transfer.t) =
   match d, c with
   | Some _, None when balance_sheet d -> { flows with transfers_in = flows.transfers_in +: a }
   | None, Some _ when balance_sheet c -> { flows with transfers_out = flows.transfers_out +: a }
+  (* A move between a member and the household that came in as two imported rows, paired: each
+     bank side was imported against a suspense account in its own scope, and this entry clears
+     the two across the boundary, so it is the contribution. Nothing else crosses the boundary
+     between such accounts, so a reversal that does is one of these undone: the move back. *)
+  | Some _, None when transfer.code = Contribution || transfer.code = Reversal -> { flows with transfers_in = flows.transfers_in +: a }
+  | None, Some _ when transfer.code = Contribution || transfer.code = Reversal -> { flows with transfers_out = flows.transfers_out +: a }
   | _ -> flows
 
 let flows_between book ~first ~last transfers =
@@ -128,8 +134,9 @@ let net_worth_series book ~dates transfers =
   let change (t : Transfer.t) =
     let side id sign =
       match book.inside id with
-      | Some info when info.account.kind = Asset -> Int64.mul sign (amount t)
-      | Some info when info.account.kind = Liability -> Int64.mul (Int64.neg sign) (amount t)
+      (* Both kinds count debit minus credit: a liability's balance is negative worth, so a
+         debit (paying it down) raises net worth and a credit (borrowing) lowers it. *)
+      | Some info when info.account.kind = Asset || info.account.kind = Liability -> Int64.mul sign (amount t)
       | _ -> 0L
     in
     side t.debit_account_id 1L +: side t.credit_account_id (-1L)

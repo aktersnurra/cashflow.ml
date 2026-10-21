@@ -86,6 +86,20 @@ let test_retrying_a_linked_chain_reports_it_exists () =
     (submit_ok store env [ List.hd chain; transfer "c" ~debit:groceries ~credit:checking 1_00 ]);
   Alcotest.check int64 "unchanged" 90_00L (balance store checking)
 
+(* The same key twice in one chain: the second finds the first, which only exists if the chain
+   commits, so it must never be reported as existing when the chain doesn't. *)
+let test_same_key_twice_in_a_chain () =
+  let store, env, checking, salary, groceries = setup () in
+  let a = transfer "a" ~linked:true ~debit:checking ~credit:salary 100_00 in
+  expect [ created; exists ] (submit_ok store env [ a; { a with linked = false } ]);
+  Alcotest.check int64 "posted once" 100_00L (balance store checking);
+  let b = transfer "b" ~linked:true ~debit:groceries ~credit:checking 10_00 in
+  (* Linked to a transfer that already exists: the chain is a partial match, so nothing is created
+     and only what existed before is reported. *)
+  let results = submit_ok store env [ b; { b with linked = true }; { a with linked = false } ] in
+  expect [ failed `Linked_event_failed; failed `Linked_event_failed; exists ] results;
+  Alcotest.check int64 "b rolled back" 100_00L (balance store checking)
+
 let test_pending_post_and_void () =
   let store, env, checking, salary, groceries = setup () in
   ignore (submit_ok store env [ transfer "pay" ~debit:checking ~credit:salary 1_000_00 ]);
@@ -190,6 +204,7 @@ let test_verify_detects_tampering () =
       ( "linked",
         [ Alcotest.test_case "chain is atomic" `Quick test_linked_chain_is_atomic;
           Alcotest.test_case "retrying a chain" `Quick test_retrying_a_linked_chain_reports_it_exists;
+          Alcotest.test_case "the same key twice in a chain" `Quick test_same_key_twice_in_a_chain;
           Alcotest.test_case "correction" `Quick test_correction_is_a_linked_reversal_and_repost ] );
       ( "pending",
         [ Alcotest.test_case "post and void" `Quick test_pending_post_and_void;

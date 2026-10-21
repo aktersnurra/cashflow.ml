@@ -59,14 +59,15 @@ let created_transfers =
   stmt "SELECT transfer_id FROM import_rows WHERE batch_id = ? AND status IN ('new', 'matched') AND transfer_id IS NOT NULL ORDER BY row_index"
     (text @-> nil) (many (row Codec.(transfer_id @-> nil) Fun.id))
 
-(* An active import that counts some of this one's rows as already there: by fingerprint, or by
+(* An active import that counts some of this one's rows as already there: by fingerprint, as the
+   other side of a manual move this one posted, or by
    the user's "already imported" on a row with the same day and amount (which of the identical
    rows it meant can't be known, so any of them counts). *)
 let dependent_batch =
   stmt
     ("SELECT " ^ batch_columns
    ^ " FROM import_batches WHERE undone_at IS NULL AND id <> ?1 AND id IN ( \
-      SELECT batch_id FROM import_rows WHERE status = 'duplicate' AND \
+      SELECT batch_id FROM import_rows WHERE status IN ('duplicate', 'confirmed_leg') AND \
         transfer_id IN (SELECT transfer_id FROM import_rows WHERE batch_id = ?1 AND status IN ('new', 'matched')) \
       UNION \
       SELECT r.batch_id FROM import_rows r JOIN transfers t ON t.id = r.transfer_id \
@@ -141,6 +142,10 @@ let insert_item =
     Codec.(transfer_id @-> account_id @-> account_id @-> nullable account_id @-> nullable text @-> nullable int @-> nullable transfer_id @-> text @-> text @-> time @-> time @-> nil)
     exec
 
+let insert_triage = stmt "INSERT OR IGNORE INTO triage_transfers (item_transfer_id, transfer_id) VALUES (?, ?)" Codec.(transfer_id @-> transfer_id @-> nil) exec
+let triage_of_item = stmt "SELECT transfer_id FROM triage_transfers WHERE item_transfer_id = ? ORDER BY rowid" Codec.(transfer_id @-> nil) (many (row Codec.(transfer_id @-> nil) Fun.id))
+let items_of_triage = stmt "SELECT item_transfer_id FROM triage_transfers WHERE transfer_id = ?" Codec.(transfer_id @-> nil) (many (row Codec.(transfer_id @-> nil) Fun.id))
+
 let item_by_transfer = stmt ("SELECT " ^ item_columns ^ " FROM inbox_items i WHERE i.transfer_id = ?") Codec.(transfer_id @-> nil) (opt item_row)
 
 let open_items_for =
@@ -213,3 +218,15 @@ let add_rule db ~now (r : Suggest.rule) =
 let remove_rule db owner id =
   run db delete_rule id (Codec.owner_kind owner) (Codec.owner_id owner);
   Sql.changes db > 0
+
+(* What triage posted for an inbox row, and which rows a triage transfer was about. *)
+let record_triage db ~item transfer = run db insert_triage item transfer
+let triage_transfers db item = run db triage_of_item item
+let triaged_items db transfer = run db items_of_triage transfer
+
+let insert_leg = stmt "INSERT OR IGNORE INTO statement_legs (entry_id, account_id, batch_id) VALUES (?, ?, ?)" Codec.(transfer_id @-> account_id @-> text @-> nil) exec
+let delete_legs = stmt "DELETE FROM statement_legs WHERE batch_id = ?" (text @-> nil) exec
+
+(* A statement row on [account] confirmed the manual entry [entry]. *)
+let confirm_leg db ~entry ~account ~batch_id = run db insert_leg entry account batch_id
+let forget_legs db ~batch_id = run db delete_legs batch_id

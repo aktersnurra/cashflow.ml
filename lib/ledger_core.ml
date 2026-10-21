@@ -264,15 +264,17 @@ let apply env view scope events =
         match go ov start [] chain with
         | Error (index, error) -> fail_chain start chain index error; ov
         | Ok (chain_ov, outcomes) ->
-            let created = List.exists (function Created _ -> true | Exists _ -> false) outcomes in
-            let existed = List.exists (function Exists _ -> true | Created _ -> false) outcomes in
-            if created && existed then (
+            (* An event can find a transfer an earlier event of this same chain created (the same
+               key twice); that one stands or falls with the chain, so only transfers that
+               existed before it count as existing. *)
+            let in_chain = List.filter_map (function Created (t : Transfer.t) -> Some t.id | Exists _ -> None) outcomes in
+            let existed_before = function Exists (t : Transfer.t) -> not (List.exists (Transfer_id.equal t.id) in_chain) | Created _ -> false in
+            let created = in_chain <> [] in
+            if created && List.exists existed_before outcomes then (
               (* A chain is atomic, so it either exists in full or is created in full. A partial
                  match means a key was reused across chains: report what exists and create nothing. *)
               List.iteri
-                (fun offset outcome ->
-                  results.(start + offset) <-
-                    (match outcome with Exists _ -> Ok outcome | Created _ -> Error `Linked_event_failed))
+                (fun offset outcome -> results.(start + offset) <- (if existed_before outcome then Ok outcome else Error `Linked_event_failed))
                 outcomes;
               ov)
             else (

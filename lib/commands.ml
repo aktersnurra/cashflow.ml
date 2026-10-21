@@ -51,12 +51,17 @@ let required_date name fields =
   match date with Some d -> Ok d | None -> invalid (name ^ " is required, as YYYY-MM-DD")
 
 (* Amounts are decimal strings in the account's currency ("1240.50"); plain JSON numbers are
-   accepted too, as long as they have no more decimals than the currency. *)
+   accepted too, as long as they have no more decimals than the currency. A number is read as the
+   shortest decimal that is the same float, never rounded: one that can't be written with the
+   currency's decimals is refused. *)
 let decimal_text name fields =
   match List.assoc_opt name fields with
   | Some (`String s) -> Ok (Some s)
   | Some (`Int n) -> Ok (Some (string_of_int n))
-  | Some (`Float f) -> Ok (Some (Printf.sprintf "%.6g" f))
+  | Some (`Intlit s) -> Ok (Some s)
+  | Some (`Float f) ->
+      let exact digits = let text = Printf.sprintf "%.*g" digits f in if float_of_string text = f then Some text else None in
+      Ok (List.find_map exact [ 15; 16; 17 ])
   | None | Some `Null -> Ok None
   | Some _ -> invalid (name ^ " must be a decimal amount")
 
@@ -409,7 +414,7 @@ let planned_json currency (p : Import.planned) =
           (match p.status with
           | New -> "new"
           | Duplicate _ | Decided_duplicate _ -> "duplicate"
-          | Matched _ -> "confirms_pending"
+          | Matched _ | Confirms_leg _ -> "confirms_pending"
           | Ambiguous _ -> "ambiguous") );
       ("already_imported_alike", match p.status with Ambiguous existing -> `Int (List.length existing) | _ -> `Null);
       ("suggested_category_id", Json.option (fun (s : Suggest.suggestion) -> `String (Account_id.to_string s.category_id)) p.suggestion);
@@ -581,6 +586,9 @@ let earmark =
       let* ctx = insights_ctx service access fields in
       let* goal_id = required_string "goal_id" fields in
       let* account_id = account_id "account_id" fields in
+      (* In the account's currency, which the goal's must match. *)
+      let* currency = lift (currency_of_account service access account_id) in
+      let* ctx = lift (Insights.context service access ~scope:ctx.scope ~currency:(Currency.code currency) ()) in
       let* amount = signed_amount ctx.currency "amount" fields in
       let* amount = match amount with Some v when Int64.compare v 0L >= 0 -> Ok v | _ -> invalid "amount must be zero or more" in
       let* progress = lift (Insights.earmark ctx ~goal_id ~account_id ~amount) in

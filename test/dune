@@ -66,3 +66,9 @@
  (modules test_import_properties test_service_support)
  (libraries alcotest cashflow hegel)
  (preprocess (pps ppx_hegel_test)))
+
+(test
+ (name test_sql)
+ (enabled_if (= %{context_name} default))
+ (modules test_sql)
+ (libraries alcotest cashflow eio eio_main))

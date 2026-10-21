@@ -141,7 +141,7 @@ CREATE INDEX import_batches_account_idx ON import_batches(account_id, created_at
 CREATE TABLE import_rows (
   batch_id TEXT NOT NULL REFERENCES import_batches(id), row_index INTEGER NOT NULL,
   fingerprint TEXT NOT NULL, transfer_id TEXT REFERENCES transfers(id),
-  status TEXT NOT NULL CHECK (status IN ('new', 'duplicate', 'decided_duplicate', 'matched')),
+  status TEXT NOT NULL CHECK (status IN ('new', 'duplicate', 'decided_duplicate', 'matched', 'confirmed_leg')),
   PRIMARY KEY (batch_id, row_index)
 );
 
@@ -154,9 +154,26 @@ CREATE TABLE inbox_items (
   suggested_account_id TEXT REFERENCES accounts(id), suggestion_source TEXT, suggestion_confidence INTEGER,
   candidate_pending_id TEXT REFERENCES transfers(id),
   merchant_key TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('open', 'done', 'dismissed')),
+  status TEXT NOT NULL CHECK (status IN ('open', 'done', 'paired', 'dismissed')),
   created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
+-- Which bank-account sides of a manual entry a statement has confirmed. A move between two
+-- statement-backed accounts is confirmed by a row on each; the first posts the entry, the second
+-- only confirms it.
+CREATE TABLE statement_legs (
+  entry_id TEXT NOT NULL REFERENCES transfers(id),
+  account_id TEXT NOT NULL REFERENCES accounts(id),
+  batch_id TEXT NOT NULL REFERENCES import_batches(id),
+  PRIMARY KEY (entry_id, account_id)
+);
+-- Every transfer a triage action posted, against each inbox row it was about (a pair is about
+-- two), so undoing an import reverses exactly those and a retry finds what it did.
+CREATE TABLE triage_transfers (
+  item_transfer_id TEXT NOT NULL REFERENCES inbox_items(transfer_id),
+  transfer_id TEXT NOT NULL REFERENCES transfers(id),
+  PRIMARY KEY (item_transfer_id, transfer_id)
+);
+CREATE INDEX triage_transfers_transfer_idx ON triage_transfers(transfer_id);
 CREATE INDEX inbox_items_open_idx ON inbox_items(status, bank_account_id);
 CREATE INDEX inbox_items_merchant_idx ON inbox_items(merchant_key, status);
 

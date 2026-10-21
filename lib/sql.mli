@@ -59,6 +59,16 @@ type db
 val open_db : string -> db
 (** Opens a database with foreign keys on and, for files, WAL journaling. ":memory:" works. *)
 
+type guard = { exclusive : 'a. (unit -> 'a) -> 'a; held : unit -> bool }
+(** How concurrent users share the connection: [exclusive f] runs [f] with the connection to
+    itself, and [held ()] says whether the caller is already inside such a call. Every statement
+    and transaction runs under it. The default does nothing, for single-threaded use; a server
+    with concurrent request fibers sets one that serialises them ({!Db_guard}). Code holding the
+    connection should not wait on the network, since everyone else waits on it. *)
+
+val set_guard : db -> guard -> unit
+val unguarded : db -> guard
+
 val close : db -> unit
 val run : db -> 'f t -> 'f
 val exec_script : db -> string -> unit
@@ -66,6 +76,8 @@ val exec_script : db -> string -> unit
 val transaction : db -> (unit -> 'a) -> 'a
 (** [BEGIN IMMEDIATE] ... [COMMIT], rolled back if the function raises. Nested calls become
     savepoints, so a service can group several operations that each use a transaction. *)
+
+val in_transaction : db -> bool
 
 val changes : db -> int
 (** Rows changed by the last statement. *)

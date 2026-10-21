@@ -60,7 +60,7 @@ let reconciled_through ctx =
   | accounts ->
       List.fold_left
         (fun through (info : Account_info.t) ->
-          match through, Planning_store.reconciled_through ctx.service.db info.account.id with
+          match through, Planning_store.reconciled_through ctx.service.db info.account.id ~ledger_balance_on:(Import_store.posted_balance_on ctx.service.db info.account) with
           | Some (Some a), Some b -> Some (Some (Date.min a b))
           | None, b -> Some b
           | _, None | Some None, _ -> Some None)
@@ -312,6 +312,8 @@ let earmark ctx ~goal_id ~account_id ~amount =
   | Some goal when Access.can_use ctx.access goal.goal_owner -> (
       let* info = Service.find_account ctx.service ctx.access account_id in
       if info.account.kind <> Asset then Error (`Invalid "only asset accounts can hold earmarked savings")
+      else if Currency.code info.account.currency <> goal.currency || not (Currency.equal ctx.currency info.account.currency) then
+        Error (`Invalid (Printf.sprintf "the goal is in %s; earmark from an account in %s" goal.currency goal.currency))
       else
         let elsewhere = Planning_store.earmarked_elsewhere ctx.service.db ~account_id ~goal_id in
         let balance = Account.posted_balance info.account in

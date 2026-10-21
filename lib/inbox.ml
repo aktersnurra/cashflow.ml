@@ -17,8 +17,9 @@ let list (service : Service.t) access ~limit =
 
 let count (service : Service.t) access = Import_store.open_count service.db access
 
-let find_open (service : Service.t) access transfer_id =
+let find_open (service : Service.t) access ?(paired = false) transfer_id =
   match Import_store.find_item service.db transfer_id with
+  | Some { status = "paired"; _ } when not paired -> Error (`Invalid "this row is paired with another as one move between accounts")
   | Some item when item.status <> "dismissed" -> (
       match Service.find_account service access item.bank_account_id with Ok bank -> Ok (item, bank) | Error _ -> Error (`Not_found "inbox item"))
   | _ -> Error (`Not_found "inbox item")
@@ -33,6 +34,12 @@ let single_result = function Ok [ result ] -> Ok result | Ok _ -> Error (`Invali
 
 let finish (service : Service.t) (item : Import_store.item) ~current ~revision ~status =
   Import_store.save_item service.db ~now:(service.now ()) { item with current_account_id = current; revision; status }
+
+let transfer_of = function Ok (Ledger_core.Created (v : Service.transfer_view) | Exists v) -> Some v.transfer.id | Error _ -> None
+
+(* Remembers what a triage action posted for each row it was about (see Import.undo). *)
+let record (service : Service.t) items results =
+  List.iter (fun result -> Option.iter (fun t -> List.iter (fun (item : Import_store.item) -> Import_store.record_triage service.db ~item:item.transfer_id t) items) (transfer_of result)) results
 
 let categorize (service : Service.t) access ~transfer_id ~category_id ?(tags = []) () =
   let* item, bank = find_open service access transfer_id in
@@ -59,7 +66,10 @@ let categorize (service : Service.t) access ~transfer_id ~category_id ?(tags = [
                          memo = { t.memo with tags = t.memo.tags @ tags }; value_date = t.value_date } } ])
         in
         match result with
-        | Ok _ -> finish service item ~current:category_id ~revision ~status:"done"; Ok (Some result)
+        | Ok _ ->
+            record service [ item ] [ result ];
+            finish service item ~current:category_id ~revision ~status:"done";
+            Ok (Some result)
         | Error _ -> Ok (Some result))
 
 (* A shared cost paid from a personal account (§4.6): the household's books get the expense and
@@ -114,41 +124,54 @@ let share (service : Service.t) access ~transfer_id ~household_category_id =
             [ { key = key_for item revision; linked = true; body = transfer receivable.account.id item.current_account_id Reclassify };
               { key = household_key; linked = false; body = transfer category.account.id payable.account.id Purchase } ]
         in
-        if List.for_all Result.is_ok results then finish service item ~current:receivable.account.id ~revision ~status:"done";
+        if List.for_all Result.is_ok results then (
+          record service [ item ] results;
+          finish service item ~current:receivable.account.id ~revision ~status:"done");
         Ok results)
 
 (* Two rows that are one move between the user's own accounts (checking to savings, personal to
-   household): the money left one and arrived in the other, so the uncategorized sides cancel. *)
+   household): the money left one and arrived in the other, so the uncategorized sides cancel.
+   Both rows are then paired: asking again for the same pair returns what was posted, and neither
+   row can be paired with anything else. *)
 let pair (service : Service.t) access ~out_id ~in_id =
-  let* out_item, out_bank = find_open service access out_id in
-  let* in_item, in_bank = find_open service access in_id in
-  let* out_t = Service.get_transfer service access out_id in
-  let* in_t = Service.get_transfer service access in_id in
-  let out_t = out_t.transfer and in_t = in_t.transfer in
-  if not (outflow out_item out_t && not (outflow in_item in_t)) then Error (`Invalid "pair a row that took money out with one that brought it in")
-  else if not (Amount.equal out_t.amount in_t.amount) then Error (`Invalid "the two rows have different amounts")
-  else if abs (Date.days_between ~first:out_t.value_date ~last:in_t.value_date) > 3 then Error (`Invalid "the two rows are more than three days apart")
-  else if not (Currency.equal out_bank.account.currency in_bank.account.currency) then Error (`Invalid "the accounts have different currencies")
-  else
-    let code : Transfer.code = if Owner.equal out_bank.account.owner in_bank.account.owner then Internal else Contribution in
-    let scope = if Owner.equal out_bank.account.owner in_bank.account.owner then out_bank.account.owner else Access.personal access in
-    let revision = out_item.revision + 1 in
-    Sql.transaction service.db (fun () ->
-        let* result =
-          single_result
-            (Service.submit service access ~scope
-               [ { key = key_for out_item revision; linked = false;
-                   body =
-                     Transfer
-                       { debit_account_id = in_item.current_account_id; credit_account_id = out_item.current_account_id; amount = out_t.amount;
-                         phase = Posted; code; memo = out_t.memo; value_date = out_t.value_date } } ])
-        in
-        (match result with
-        | Ok _ ->
-            finish service out_item ~current:out_item.current_account_id ~revision ~status:"done";
-            finish service in_item ~current:in_item.current_account_id ~revision:in_item.revision ~status:"done"
-        | Error _ -> ());
-        Ok result)
+  let* out_item, out_bank = find_open service access ~paired:true out_id in
+  let* in_item, in_bank = find_open service access ~paired:true in_id in
+  let shared = List.filter (fun t -> List.exists (Transfer_id.equal t) (Import_store.triage_transfers service.db in_id)) (Import_store.triage_transfers service.db out_id) in
+  match out_item.status, in_item.status, shared with
+  | "paired", "paired", t :: _ ->
+      let* existing = Service.get_transfer service access t in
+      Ok (Ok (Ledger_core.Exists existing))
+  | "paired", _, _ | _, "paired", _ -> Error (`Invalid "one of the rows is already paired with another")
+  | "done", _, _ | _, "done", _ -> Error (`Invalid "pair two uncategorised rows; one of these already has a category")
+  | _ ->
+      let* out_t = Service.get_transfer service access out_id in
+      let* in_t = Service.get_transfer service access in_id in
+      let out_t = out_t.transfer and in_t = in_t.transfer in
+      if not (outflow out_item out_t && not (outflow in_item in_t)) then Error (`Invalid "pair a row that took money out with one that brought it in")
+      else if not (Amount.equal out_t.amount in_t.amount) then Error (`Invalid "the two rows have different amounts")
+      else if abs (Date.days_between ~first:out_t.value_date ~last:in_t.value_date) > 3 then Error (`Invalid "the two rows are more than three days apart")
+      else if not (Currency.equal out_bank.account.currency in_bank.account.currency) then Error (`Invalid "the accounts have different currencies")
+      else
+        let code : Transfer.code = if Owner.equal out_bank.account.owner in_bank.account.owner then Internal else Contribution in
+        let scope = if Owner.equal out_bank.account.owner in_bank.account.owner then out_bank.account.owner else Access.personal access in
+        let revision = out_item.revision + 1 in
+        Sql.transaction service.db (fun () ->
+            let* result =
+              single_result
+                (Service.submit service access ~scope
+                   [ { key = key_for out_item revision; linked = false;
+                       body =
+                         Transfer
+                           { debit_account_id = in_item.current_account_id; credit_account_id = out_item.current_account_id; amount = out_t.amount;
+                             phase = Posted; code; memo = out_t.memo; value_date = out_t.value_date } } ])
+            in
+            (match result with
+            | Ok _ ->
+                record service [ out_item; in_item ] [ result ];
+                finish service out_item ~current:out_item.current_account_id ~revision ~status:"paired";
+                finish service in_item ~current:in_item.current_account_id ~revision:in_item.revision ~status:"paired"
+            | Error _ -> ());
+            Ok result)
 
 (* Rows that look like the other half of a move: the same amount the other way within three days. *)
 let pair_candidates (service : Service.t) access ~transfer_id =

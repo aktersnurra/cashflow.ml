@@ -46,6 +46,9 @@ type status =
   | Ambiguous of Transfer_id.t list
       (** on an edge day, identical to rows already imported: the data can't say whether it is one of them *)
   | Decided_duplicate of Transfer_id.t  (** an ambiguous row the user said is already imported *)
+  | Confirms_leg of Transfer.t
+      (** the other side of a manual move between two statement-backed accounts, whose first
+          statement already posted it *)
 
 type planned = {
   index : int;
@@ -152,12 +155,23 @@ let classify (k : keyed) =
     Hashtbl.replace decided (base, decision) (n + 1);
     n
   in
+  let posts = Store_sqlite.unconfirmed_posts_on d.ctx.service.db account.id in
   let new_or_matched (row : Statement_format.row) key =
     let purchase_date = Option.value row.transaction_date ~default:row.booking_date in
     let same_day (t : Transfer.t) = Date.equal t.value_date purchase_date && direction_matches account.id row t && not (Hashtbl.mem claimed t.id) in
-    match List.filter (fun (t : Transfer.t) -> same_day t && Int64.equal (Amount.to_int64 t.amount) (Int64.abs row.amount)) pendings with
+    let same_amount (t : Transfer.t) = Int64.equal (Amount.to_int64 t.amount) (Int64.abs row.amount) in
+    (* A manual entry already posted by the statement of the account at its other end: entered
+       on the same day, or posted on it. *)
+    let entered_same_day (post : Transfer.t) =
+      same_day post
+      || (match post.kind with Post_pending { pending_id } -> Option.fold ~none:false ~some:(fun (m : Transfer.t) -> same_day { post with value_date = m.value_date }) (view.transfer pending_id) | _ -> false)
+    in
+    match List.filter (fun t -> same_day t && same_amount t) pendings with
     | [ pending ] -> Hashtbl.replace claimed pending.id (); (key, Matched pending)
-    | _ -> (key, New)
+    | _ -> (
+        match List.filter (fun t -> entered_same_day t && same_amount t) posts with
+        | [ post ] -> Hashtbl.replace claimed post.id (); (key, Confirms_leg post)
+        | _ -> (key, New))
   in
   let free key = match usable_key view account.owner key 0 with `Exists (key, (t : Transfer.t)) -> (key, Duplicate t.id) | `Free key -> (key, New) in
   let rows =
@@ -188,7 +202,7 @@ let classify (k : keyed) =
                   Date.equal t.value_date purchase_date && direction_matches account.id r.row t && not (Hashtbl.mem claimed t.id)
                   && not (Int64.equal (Amount.to_int64 t.amount) (Int64.abs r.row.amount)))
                 pendings
-          | Duplicate _ | Matched _ | Ambiguous _ | Decided_duplicate _ -> None
+          | Duplicate _ | Matched _ | Ambiguous _ | Decided_duplicate _ | Confirms_leg _ -> None
         in
         { index = r.index; row = r.row; key; status; near_pending; suggestion = None })
       k.keyed_rows
@@ -204,17 +218,20 @@ let suggest (d, rows) =
         | New ->
             let input = { Suggest.bank_account = d.account; row = planned.row; merchant = Suggest.merchant_key planned.row } in
             { planned with suggestion = d.ctx.suggester input }
-        | Duplicate _ | Matched _ | Ambiguous _ | Decided_duplicate _ -> planned)
+        | Duplicate _ | Matched _ | Ambiguous _ | Decided_duplicate _ | Confirms_leg _ -> planned)
       rows
   in
   Ok (d, rows)
 
 (* Stage 4b: rows nobody's rules or history recognised go to the LLM in one batch, if one is
-   configured; its suggestions are only ever suggestions. *)
-let suggest_with_llm (d, rows) =
+   configured; its suggestions are only ever suggestions. [confirm] asks before it takes the
+   database and passes the answer in, so no transaction waits on the network. *)
+let suggest_with_llm ?answered (d, rows) =
   let unknown = List.filter_map (fun p -> match p.status, p.suggestion with New, None -> Some (p.index, p.row) | _ -> None) rows in
-  let suggestions = Llm_features.suggest_categories d.ctx.service d.ctx.access ~bank_account:d.account unknown in
-  Ok (d, List.map (fun p -> match List.assoc_opt p.index suggestions with Some s when p.suggestion = None -> { p with suggestion = Some s } | _ -> p) rows)
+  let suggestions =
+    match answered with Some suggestions -> suggestions | None -> Llm_features.suggest_categories d.ctx.service d.ctx.access ~bank_account:d.account unknown
+  in
+  Ok (d, List.map (fun p -> match List.assoc_opt p.index suggestions with Some s when p.suggestion = None && p.status = New -> { p with suggestion = Some s } | _ -> p) rows)
 
 (* The balance after the file's last row. Banks list rows newest or oldest first; the running
    balances say which (each one is the previous plus the row's amount, in time order), and when
@@ -244,7 +261,7 @@ let closing_balance (rows : Statement_format.row list) =
 let check_balance (d, rows) =
   let db = d.ctx.service.db and account = d.account.account in
   let already_imported = Import_store.find_active_batch db ~account_id:account.id ~sha:d.sha256 in
-  let posting p = match p.status with New | Matched _ -> true | Duplicate _ | Decided_duplicate _ | Ambiguous _ -> false in
+  let posting p = match p.status with New | Matched _ -> true | Duplicate _ | Decided_duplicate _ | Ambiguous _ | Confirms_leg _ -> false in
   let balance =
     Option.bind (closing_balance d.rows) (fun (on_date, statement_balance) ->
         let on_day p = Date.equal p.row.booking_date on_date in
@@ -262,7 +279,7 @@ let check_balance (d, rows) =
   in
   Ok { decoded_file = d; rows; already_imported; balance }
 
-let pipeline ctx = decode ctx >=> fingerprint >=> classify >=> suggest >=> suggest_with_llm >=> check_balance
+let pipeline ?answered ctx = decode ctx >=> fingerprint >=> classify >=> suggest >=> suggest_with_llm ?answered >=> check_balance
 let preview ctx request = pipeline ctx request
 
 type summary = { batch : Import_store.batch; inbox_count : int; balance : balance_check option }
@@ -286,7 +303,7 @@ let uncategorized ctx (account : Account.t) kind =
 
 let event_for ctx (account : Account.t) (p : planned) =
   match p.status with
-  | Duplicate _ | Decided_duplicate _ | Ambiguous _ -> Ok None
+  | Duplicate _ | Decided_duplicate _ | Ambiguous _ | Confirms_leg _ -> Ok None
   | Matched pending ->
       Ok (Some ({ Ledger_event.key = p.key; linked = false; body = Post_pending { pending_id = pending.id; amount = None; value_date = p.row.booking_date } }, None))
   | New ->
@@ -311,13 +328,19 @@ let event_for ctx (account : Account.t) (p : planned) =
       in
       Ok (Some (event, match inbox with `Inbox current -> Some current | `Categorized -> None))
 
+let entry_of (post : Transfer.t) = match post.kind with Post_pending { pending_id } -> Some pending_id | _ -> None
+
+(* The LLM is asked first, outside the transaction; inside it the plan is worked out again
+   against the database as it is then, reusing those suggestions. *)
 let confirm ctx request =
   let db = ctx.service.db in
   let now = ctx.service.now () in
+  let* outside = preview ctx request in
+  let answered = List.filter_map (fun p -> match p.suggestion with Some ({ Suggest.source = Llm; _ } as s) -> Some (p.index, s) | _ -> None) outside.rows in
   try
     Sql.transaction db (fun () ->
         let fail e = raise (Abort e) in
-        let p = match preview ctx request with Ok p -> p | Error e -> fail e in
+        let p = match pipeline ~answered ctx request with Ok p -> p | Error e -> fail e in
         match p.already_imported with
         | Some batch -> Ok (`Already_imported batch)
         | None ->
@@ -361,7 +384,7 @@ let confirm ctx request =
               { batch_id = Uuidm.to_string (Uuidm.v4_gen (Random.State.make_self_init ()) ()); account_id = account.id;
                 file_sha256 = d.sha256; file_name = request.file_name; format = d.format; row_count = List.length p.rows;
                 new_count = count (fun r -> r.status = New); duplicate_count = count (fun r -> match r.status with Duplicate _ | Decided_duplicate _ -> true | _ -> false);
-                matched_count = count (fun r -> match r.status with Matched _ -> true | _ -> false);
+                matched_count = count (fun r -> match r.status with Matched _ | Confirms_leg _ -> true | _ -> false);
                 first_date = List.fold_left (fun a d -> Some (match a with None -> d | Some a -> Date.min a d)) None dates;
                 last_date = List.fold_left (fun a d -> Some (match a with None -> d | Some a -> Date.max a d)) None dates;
                 created_at = now; undone = false }
@@ -374,8 +397,14 @@ let confirm ctx request =
                   match planned.status with
                   | Duplicate id -> (Some id, "duplicate")
                   | Decided_duplicate id -> (Some id, "decided_duplicate")
+                  | Confirms_leg post ->
+                      Option.iter (fun entry -> Import_store.confirm_leg db ~entry ~account:account.id ~batch_id:batch.batch_id) (entry_of post);
+                      (Some post.id, "confirmed_leg")
                   | Ambiguous _ -> assert false (* refused before anything is posted *)
-                  | Matched _ | New ->
+                  | Matched pending ->
+                      Import_store.confirm_leg db ~entry:pending.id ~account:account.id ~batch_id:batch.batch_id;
+                      ( Option.map (fun (_, id, _) -> id) (List.find_opt (fun (q, _, _) -> q.index = planned.index) posted), "matched" )
+                  | New ->
                       ( Option.map (fun (_, id, _) -> id) (List.find_opt (fun (q, _, _) -> q.index = planned.index) posted),
                         if planned.status = New then "new" else "matched" )
                 in
@@ -411,7 +440,9 @@ let confirm ctx request =
             Ok (`Imported { batch; inbox_count = !inbox_count; balance }))
   with Abort e -> Error e
 
-(* Undoing an import reverses everything it posted, including categorisations made since. *)
+(* Undoing an import reverses everything it posted, and everything triage posted about its rows
+   since (categorisations, both sides of a shared cost, pairings), each in the scope it was
+   posted in. A row paired with one from another import goes back to that inbox. *)
 let undo ctx ~batch_id =
   let db = ctx.service.db in
   match Import_store.find_batch db batch_id with
@@ -426,47 +457,35 @@ let undo ctx ~batch_id =
           (Printf.sprintf "a later import (%s) overlaps this one; undo that first"
              (Option.value later.file_name ~default:(Ptime.to_rfc3339 ~tz_offset_s:0 later.created_at))))
   | Some batch -> (
-      let* account = Service.find_account ctx.service ctx.access batch.account_id in
-      let scope = account.account.owner in
+      let* _ = Service.find_account ctx.service ctx.access batch.account_id in
       let view = Store_sqlite.view db in
       let transfers = Import_store.batch_transfers db batch_id in
-      let categorisations =
-        List.concat_map
-          (fun id ->
-            match Import_store.find_item db id with
-            | None -> []
-            | Some item ->
-                List.filter_map
-                  (fun revision ->
-                    let key = Result.get_ok (Idempotency_key.of_string (Printf.sprintf "categorize:%s:%d" (Transfer_id.to_string id) revision)) in
-                    Option.map (fun (t : Transfer.t) -> t.id) (view.transfer_by_key scope key))
-                  (List.init item.revision (fun i -> i + 1)))
-          transfers
+      let triage = List.sort_uniq Transfer_id.compare (List.concat_map (Import_store.triage_transfers db) transfers) in
+      let partners =
+        List.concat_map (Import_store.triaged_items db) triage |> List.filter (fun item -> not (List.exists (Transfer_id.equal item) transfers))
       in
-      let events =
-        List.map
-          (fun id ->
-            { Ledger_event.key = Result.get_ok (Idempotency_key.of_string ("undo:" ^ Transfer_id.to_string id)); linked = false;
-              body = Reverse { transfer_id = id; value_date = None; memo = None } })
-          (List.rev categorisations @ transfers)
+      (* Latest first, so a categorisation is undone before the row it moved. *)
+      let to_reverse = List.filter_map view.transfer (List.rev triage @ transfers) in
+      let reverse (t : Transfer.t) =
+        { Ledger_event.key = Result.get_ok (Idempotency_key.of_string ("undo:" ^ Transfer_id.to_string t.id)); linked = false;
+          body = Reverse { transfer_id = t.id; value_date = None; memo = None } }
       in
       try
         Sql.transaction db (fun () ->
-            (match events with
-            | [] -> ()
-            | _ -> (
-                match Service.submit ctx.service ctx.access ~scope events with
-                | Ok results ->
-                    List.iter
-                      (function
-                        | Ok _ | Error `Transfer_already_reversed -> ()
-                        | Error e -> raise (Abort (`Invalid ("undo failed: " ^ Ledger_error.transfer_to_string e))))
-                      results
-                | Error e -> raise (Abort (e :> error))));
+            List.iter
+              (fun (t : Transfer.t) ->
+                match Service.submit ctx.service ctx.access ~scope:t.scope [ reverse t ] with
+                | Ok [ (Ok _ | Error `Transfer_already_reversed) ] -> ()
+                | Ok [ Error e ] -> raise (Abort (`Invalid ("undo failed: " ^ Ledger_error.transfer_to_string e)))
+                | Ok _ -> raise (Abort (`Invalid "undo failed"))
+                | Error e -> raise (Abort (e :> error)))
+              to_reverse;
             let now = ctx.service.now () in
+            List.iter (fun id -> Option.iter (fun item -> Import_store.save_item db ~now { item with status = "open" }) (Import_store.find_item db id)) partners;
             List.iter
               (fun id -> Option.iter (fun item -> Import_store.save_item db ~now { item with status = "dismissed" }) (Import_store.find_item db id))
               transfers;
+            Import_store.forget_legs db ~batch_id;
             Import_store.undo_batch db ~now batch_id;
             Ok (Option.get (Import_store.find_batch db batch_id)))
       with Abort e -> Error e)
