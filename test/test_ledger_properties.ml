@@ -59,16 +59,17 @@ let draw_event tc state : Ledger_event.t =
 
 let created_transfer = function Ok (Ledger_core.Created (transfer : Transfer.t)) -> Some transfer | _ -> None
 
-(* Every chain in a batch was either created in full or not at all. *)
+(* Every chain in a batch either went through in full or created nothing. (An event may find a
+   transfer created earlier in its own chain, so "in full" means every event succeeded.) *)
 let check_chains_are_atomic events results =
   let rec go events results chain =
     match events, results with
-    | [], [] -> assert (chain = [] || List.for_all Option.is_none chain)
+    | [], [] -> assert (chain = [] || not (List.exists (fun r -> Option.is_some (created_transfer r)) chain))
     | (event : Ledger_event.t) :: events, result :: results ->
-        let chain = created_transfer result :: chain in
+        let chain = result :: chain in
         if event.linked then go events results chain
         else (
-          assert (List.for_all Option.is_some chain || List.for_all Option.is_none chain);
+          assert (List.for_all Result.is_ok chain || not (List.exists (fun r -> Option.is_some (created_transfer r)) chain));
           go events results [])
     | _ -> assert false
   in
