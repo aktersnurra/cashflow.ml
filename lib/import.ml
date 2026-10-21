@@ -328,6 +328,14 @@ let undo ctx ~batch_id =
   match Import_store.find_batch db batch_id with
   | None -> Error (`Not_found "import")
   | Some batch when batch.undone -> Ok batch
+  | Some batch when Option.is_some (Import_store.dependent db batch_id) ->
+      (* Undoing it would take rows out of the ledger that a later import still counts as there,
+         and re-uploading that file would be refused as already imported. *)
+      let later = Option.get (Import_store.dependent db batch_id) in
+      Error
+        (`Invalid
+          (Printf.sprintf "a later import (%s) overlaps this one; undo that first"
+             (Option.value later.file_name ~default:(Ptime.to_rfc3339 ~tz_offset_s:0 later.created_at))))
   | Some batch -> (
       let* account = Service.find_account ctx.service ctx.access batch.account_id in
       let scope = account.account.owner in

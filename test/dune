@@ -59,3 +59,10 @@
  (modules test_config)
  (libraries alcotest cashflow sexplib unix)
  (deps ../cashflow.example.sexp))
+
+(test
+ (name test_import_properties)
+ (enabled_if (= %{context_name} default))
+ (modules test_import_properties test_service_support)
+ (libraries alcotest cashflow hegel)
+ (preprocess (pps ppx_hegel_test)))

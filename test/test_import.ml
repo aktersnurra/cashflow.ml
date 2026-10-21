@@ -63,6 +63,8 @@ let test_import_matches_dedupes_and_checks_the_balance () =
   (match Import.confirm ctx (request checking october) with Ok (`Already_imported _) -> () | _ -> Alcotest.fail "imported twice");
   let summary = imported (Import.confirm ctx (request checking late_october)) in
   Alcotest.(check (list int)) "overlap: new, duplicate" [ 1; 2 ] [ summary.batch.new_count; summary.batch.duplicate_count ];
+  let first = (List.nth (Import_store.batches service.db ~account_id:checking ~limit:5) 1).batch_id in
+  Alcotest.(check bool) "the earlier import can't be undone under the later one" true (Result.is_error (Import.undo ctx ~batch_id:first));
   Alcotest.(check int64) "checking" 9_412_00L (balance service alice checking);
   match summary.balance with
   | Some b -> Alcotest.(check int64) "reconciled" b.statement_balance b.ledger_balance
