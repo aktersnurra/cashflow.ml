@@ -42,6 +42,42 @@ One OCaml binary, `cashflow`, with the same shape as `kcal`:
 
 The generic pieces of kcal (OIDC verification, MCP dispatch, HTTP adapter, logging, migrations, date and timezone handling) are copied into cashflow for now, each copy marked with a `(* copied from kcal: … *)` header. They get improved here as needed, and are extracted into shared libraries once both copies have settled. That extraction is a later topic.
 
+### 2.1 Using OCaml's type system
+
+OCaml's advanced features are used where they rule out a class of bugs or remove duplicated code, and nowhere else. Each entry below names what it buys.
+
+**GADTs**
+- **Typed analytics queries.** `type _ query = Spending_by_category : Range.t * Scope.t -> Category_total.t list query | Net_worth : … -> Net_worth_point.t list query | …`, with a single `run : type a. a query -> a` and `codec : type a. a query -> a Jsont.t`. The MCP tool table, the `/api` routes and the UI's calls are all generated from this one type. Adding an analytics function is one constructor, and the compiler points out every place that still needs it.
+- **Typed SQL statements.** `('params, 'row) Stmt.t` (in the style of Caqti), so the types of a query's parameters and result rows are checked when the code compiles, not when the query runs.
+- **Card state machines.** `type (_, _) transition = Upload : (stale, uploading) transition | Preview : (uploading, preview) transition | …`. An attention card (§11.3) can only move along transitions that exist, and a card that ends in a terminal state can't go anywhere else.
+- **The pending lifecycle.** `_ Transfer.t` is indexed by `[ `Pending | `Posted | `Voided ]`, so `post_pending` and `void_pending` only accept pending transfers, and a pending transfer is resolved at most once (§3.3, rule 5).
+
+**Abstract and phantom types**
+- **IDs:** each ID type comes from the generative functor `Id.Make ()`, so `Account_id.t` and `Transfer_id.t` can't be swapped by mistake.
+- **Money:** `Amount.t` is a private `int64` built only by smart constructors; there are no floats.
+- **Validation state:** `Transfer.unvalidated` and `Transfer.validated` are separate types, and the store only accepts validated transfers ("parse, don't validate").
+- **Authorisation as a capability:** `Access.t` is a proof that the user may use an owner scope. Only the service layer's authorisation check can create one, and every store function requires one, so a call that skips authorisation doesn't compile.
+
+**Functors and first-class modules**
+- **Two store implementations:** `Ledger.Make (Store : STORE)` runs against SQLite in production and against an in-memory store in property tests.
+- **Import formats:** a registry of first-class modules `(module Statement_format.S)`, so adding a bank is one module.
+- **Pay cycles:** `Cycle.Make (Holidays : HOLIDAYS)`, so the Swedish calendar is one implementation among others.
+- **Effects at the edges:** the LLM and the clock are passed in as module or record arguments, so tests never touch the network or real time.
+
+**Higher-order functions and composition**
+- **The import pipeline** is a chain of `'a -> ('b, error) result` stages composed with `let*` and Kleisli composition (`>=>`): `parse >=> match_account >=> fingerprint >=> dedupe >=> match_pending >=> categorise >=> post`. Each stage can be tested and reused on its own, and bank sync (§6.6) will reuse everything after `parse`.
+- **Category suggestions** are suggester functions combined with a first-success operator (`<|>`): rules, then history, then the LLM.
+- **Categorisation rules** are compiled once into closures, instead of being interpreted again for every row.
+- **HTTP middleware:** `handler -> handler` layers for logging, sessions, CSRF checks and scope checks, combined with `@@`.
+
+**Polymorphic variants for errors.** Each stage declares exactly which errors it can return, for example ``[> `Exists_with_different_fields | `Linked_event_failed ]``. The type of a composed pipeline is the union of its stages' errors, and the adapter's final `match` is checked for exhaustiveness.
+
+**Tests**
+- **QCheck-STM** tests the ledger against a simple model. Generated random sequences of batches (linked, pending, reversals, retries) must produce the same balances as the model.
+- **Invariants:** balances equal the sum of transfers, replaying a batch changes nothing, and posted balances never break an account's flags.
+
+**Not used:** OCaml 5 effect handlers are not used directly beyond what Eio provides, and there are no ppx-heavy DSLs. JSON codecs use `jsont` combinators, which work on both the server and in js_of_ocaml.
+
 ## 3. Ledger core (TigerBeetle rules)
 
 ### 3.1 Currencies
@@ -138,7 +174,7 @@ Analytics report, for each period, whether it is reconciled, and the UI marks pe
 
 ### 3.7 Investments (occasional)
 
-Avanza and Montrose are Asset accounts.
+Investment accounts, such as Avanza and Montrose, are Asset accounts. In v1 they get no CSV import, only transfers to and from checking, plus occasional revaluations.
 
 - **Contributions and withdrawals** are ordinary transfers to and from checking.
 - **Market value:** `set_market_value(account, value, date)` posts the difference between the current ledger balance and the new value, with `code=revaluation`, against `Equity:Unrealized gains`.
@@ -236,7 +272,7 @@ drop CSV ─▶ detect format ─▶ parse rows ─▶ match account ─▶ fing
 
 ### 6.2 Formats
 
-There is one parser module per format, behind a common signature (`detect`, `parse`, `account_hint`). The first one is Handelsbanken. I need an anonymised sample of its export, because the columns, the date format, the decimal separator and the encoding all decide the parser (§17). Avanza and Montrose exports come next if their CSVs turn out to be usable.
+There is one parser module per format, behind a common signature (`detect`, `parse`, `account_hint`). The first one is Handelsbanken. I need an anonymised sample of its export, because the columns, the date format, the decimal separator and the encoding all decide the parser (§17). Avanza and Montrose imports are out of scope for v1.
 
 ### 6.3 Row fingerprint and duplicates
 
@@ -406,17 +442,55 @@ Example: you open the app after ten days away. The Import card is at the top. Yo
 
 Every card can be snoozed. Card state lives on the server, so the feed looks the same on every device and over MCP (`get_attention_feed`, so Claude can say "you have 5 uncategorised rows and you're over on restaurants").
 
-### 11.4 Translations (gettext, as in Phoenix)
+### 11.4 Translations (Unicode MessageFormat 2)
 
-Translation works the way it does in Phoenix: GNU gettext `.po` files, and the English source string as the message ID.
+Messages use Unicode MessageFormat 2 (MF2), the successor to ICU MessageFormat, which Unicode made stable as part of CLDR/LDML. MF2 standardises the syntax of a single message. It does not yet have a settled standard file format for collections of messages, so cashflow uses a small file format of its own (below).
 
-- **Files:** `priv/gettext/default.pot` is the template; `priv/gettext/<locale>/LC_MESSAGES/default.po` holds each language, starting with `en` and `sv`.
-- **In code:** strings are written as `T.s "Groceries"`, `T.n "%d row" "%d rows" n` (plurals) and `T.p "verb" "Post"` (when one English word needs different translations).
-- **Build step:** dune runs a small generator that compiles the `.po` files into an OCaml table. It is linked into both the server and the js_of_ocaml client, so there are no runtime file reads and no C library is needed.
-- **Keeping files in sync:** `cashflow gettext extract` scans the source for `T.` calls and updates the `.pot` file, like `mix gettext.extract --merge`. A test fails if a message is missing from a `.po` file or a translation is no longer used.
-- **Choosing the language:** from the user's `locale` setting, falling back to `Accept-Language` and then to `en`. MCP replies stay in English with machine-readable fields, because the agent translates for the user anyway.
-- **Formatting:** numbers, money and dates are formatted by locale. `sv` gives `1 240,50 kr` and `25 okt.`; `en` gives `SEK 1,240.50` and `Oct 25`.
-- **Names are data:** account and category names are stored as entered, not translated. The seeded chart of accounts is created in the creator's language.
+**Messages** have stable IDs rather than English text as the key:
+
+```
+# locales/en.mf2
+inbox.title = Inbox
+inbox.count =
+  .input {$n :integer}
+  .match $n
+  one {{{$n} row to review}}
+  *   {{{$n} rows to review}}
+budget.pace = {$spent :currency} of {$budget :currency}, {$status}
+
+# locales/sv.mf2
+inbox.count =
+  .input {$n :integer}
+  .match $n
+  one {{{$n} rad att granska}}
+  *   {{{$n} rader att granska}}
+```
+
+**Compiled to typed OCaml.** A dune rule runs a generator, `mf2c`, over `locales/*.mf2` and produces a module `Msg` with one function per message. The function's arguments come from the message's variables:
+
+```ocaml
+val inbox_count : n:int -> Locale.t -> string
+val budget_pace : spent:Money.t -> budget:Money.t -> status:string -> Locale.t -> string
+```
+
+The build then fails if:
+- a message ID is used in code but missing from a locale;
+- two locales disagree on a message's variables or their types;
+- a `.match` has no `*` fallback, or is missing a plural category that the locale needs.
+
+A translation bug becomes a type error instead of a blank label in production.
+
+**Plural rules and formatting.** The CLDR plural rules for `en` and `sv` (`one` for the integer 1, `other` for everything else) are part of the generator. So are the formatting functions MF2 messages use: `:integer`, `:number`, `:currency`, `:date`.
+- `sv`: `1 240,50 kr`, `25 okt.`
+- `en`: `SEK 1,240.50`, `Oct 25`
+
+The generator writes plain OCaml with no runtime dependencies, so the same code works on the server and in the js_of_ocaml client.
+
+**Choosing the language:** from the user's `locale` setting, falling back to `Accept-Language` and then to `en`. MCP replies stay in English with machine-readable fields, because the agent translates for the user anyway.
+
+**Names are data:** account and category names are stored as entered, not translated. The seeded chart of accounts is created in the creator's language.
+
+**Tooling:** the `.mf2` files are plain text with one message per ID, so an LLM can draft new locales, and `mf2c --check` validates them in CI.
 
 ## 12. LLM features (OpenRouter)
 
@@ -488,14 +562,14 @@ Analytics are SQL aggregations over `transfer` grouped by `value_date`. With a f
 ## 17. Open questions
 
 1. **Handelsbanken CSV:** I need an anonymised export, a few rows with the amounts changed. One is being prepared. It also decides whether the transaction date and the booking date are separate columns, which §6.7 depends on.
-2. **Investment exports:** should Avanza's and Montrose's CSV exports be in v1, or only Handelsbanken's?
 
 Resolved:
 - **Admin:** from the PocketID `groups` claim.
 - **Household posting:** every active member may post to household accounts.
 - **Months:** a configurable pay cycle, defaulting to the 25th.
 - **Phone:** a first-class target.
-- **Translations:** gettext with `en` and `sv`.
+- **Translations:** MessageFormat 2, compiled to typed OCaml, with `en` and `sv`.
+- **Investment imports:** Avanza and Montrose are out of scope for v1.
 - **Savings goals:** there can be several.
 - **Matching manual entries:** same transaction date and the same amount.
 - **Shared code:** copied from kcal for now, extracted later.
