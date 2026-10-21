@@ -11,6 +11,7 @@ dev-repo: "git+https://github.com/aktersnurra/cashflow.ml.git"
 depends: [
   "ocaml" {>= "5.5"}
   "dune" {>= "3.24"}
+  "base"
   "ptime"
   "uuidm" {>= "0.9.9"}
   "sqlite3"
