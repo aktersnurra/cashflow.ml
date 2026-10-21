@@ -1,4 +1,12 @@
 (* The ledger over some store: the SQLite store in production, the in-memory one in tests. *)
+module Account = Cashflow_core.Account
+module Date = Cashflow_core.Date
+module Idempotency_key = Cashflow_core.Idempotency_key
+module Ledger_core = Cashflow_core.Ledger_core
+module Ledger_event = Cashflow_core.Ledger_event
+module Transfer = Cashflow_core.Transfer
+module Transfer_id = Cashflow_core.Transfer_id
+
 module type STORE = sig
   type t
 

@@ -1,3 +1,5 @@
+module Str_compat = Cashflow_core.Str_compat
+
 open Test_service_support
 
 let claims ?(scopes = [ "ledger:read"; "ledger:write" ]) ?(groups = None) ?nonce subject : Oidc.claims =

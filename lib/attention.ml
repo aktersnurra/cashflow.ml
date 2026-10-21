@@ -5,6 +5,20 @@
    Card kinds are a GADT indexed by their payload, so a card can only be built with the right data
    and [payload_json] must handle every kind. What a user did with a card (snoozed it, resolved it)
    is a small state machine whose transitions are typed the same way. *)
+
+module Access = Cashflow_core.Access
+module Account_id = Cashflow_core.Account_id
+module Account_info = Cashflow_core.Account_info
+module Analytics = Cashflow_core.Analytics
+module Currency = Cashflow_core.Currency
+module Cycle = Cashflow_core.Cycle
+module Date = Cashflow_core.Date
+module Household = Cashflow_core.Household
+module Household_id = Cashflow_core.Household_id
+module Transfer = Cashflow_core.Transfer
+module Transfer_id = Cashflow_core.Transfer_id
+module User_id = Cashflow_core.User_id
+
 open Sql
 
 type import_due = { account : Account_info.t; last_import : Ptime.t option; days : int option }

@@ -1,4 +1,8 @@
 (* Account details and tags, and queries over accounts with them. *)
+
+module Account = Cashflow_core.Account
+module Account_info = Cashflow_core.Account_info
+
 open Sql
 
 let role = map ~name:"account role" text ~to_db:Account_info.role_to_string ~of_db:Account_info.role_of_string

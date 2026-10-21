@@ -2,6 +2,21 @@
    the month review, and a sentence on what drove unusual spending. Neither ever posts a transfer or decides what is shown. The model sees
    merchant text, amounts, dates and category names for suggestions, and computed totals for
    summaries: never account names, numbers, balances or another member's data. *)
+module Access = Cashflow_core.Access
+module Account = Cashflow_core.Account
+module Account_id = Cashflow_core.Account_id
+module Account_info = Cashflow_core.Account_info
+module Amount = Cashflow_core.Amount
+module Analytics = Cashflow_core.Analytics
+module Currency = Cashflow_core.Currency
+module Cycle = Cashflow_core.Cycle
+module Date = Cashflow_core.Date
+module Owner = Cashflow_core.Owner
+module Statement_format = Cashflow_core.Statement_format
+module Suggest = Cashflow_core.Suggest
+module Transfer = Cashflow_core.Transfer
+module User_id = Cashflow_core.User_id
+
 let max_rows = 60
 
 let suggest_categories (service : Service.t) access ~(bank_account : Account_info.t) (rows : (int * Statement_format.row) list) =

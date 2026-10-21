@@ -2,6 +2,25 @@
    wherever the row sits now (at first, an uncategorized account) to the chosen account, with the
    row's own date, so the bank account's balance never changes. Keys carry the item's revision, so
    a retry is safe and a later recategorisation is a new transfer. *)
+
+module Access = Cashflow_core.Access
+module Account = Cashflow_core.Account
+module Account_id = Cashflow_core.Account_id
+module Account_info = Cashflow_core.Account_info
+module Amount = Cashflow_core.Amount
+module Currency = Cashflow_core.Currency
+module Date = Cashflow_core.Date
+module Household = Cashflow_core.Household
+module Idempotency_key = Cashflow_core.Idempotency_key
+module Ledger_core = Cashflow_core.Ledger_core
+module Ledger_error = Cashflow_core.Ledger_error
+module Ledger_event = Cashflow_core.Ledger_event
+module Owner = Cashflow_core.Owner
+module Suggest = Cashflow_core.Suggest
+module Transfer = Cashflow_core.Transfer
+module Transfer_id = Cashflow_core.Transfer_id
+module User_id = Cashflow_core.User_id
+
 let ( let* ) = Result.bind
 
 type item_view = { item : Import_store.item; transfer : Service.transfer_view; suggested : Account_info.t option; candidate : Service.transfer_view option }

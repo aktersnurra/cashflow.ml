@@ -1,3 +1,6 @@
+module Account_id = Cashflow_core.Account_id
+module Transfer_id = Cashflow_core.Transfer_id
+
 open Hegel
 open Test_support
 

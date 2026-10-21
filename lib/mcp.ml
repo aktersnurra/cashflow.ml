@@ -1,6 +1,8 @@
 (* MCP over JSON-RPC: the protocol handling follows kcal's lib/mcp.ml; the tools are generated
    from the Commands table. Mistakes the model can fix come back as tool results with isError,
    which clients show to the model, rather than as protocol errors. *)
+module Analytics = Cashflow_core.Analytics
+
 let log_src = Logs.Src.create "cashflow.mcp" ~doc:"MCP JSON-RPC handling"
 module Log = (val Logs.src_log log_src : Logs.LOG)
 

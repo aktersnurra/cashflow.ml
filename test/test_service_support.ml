@@ -1,3 +1,13 @@
+module Access = Cashflow_core.Access
+module Account = Cashflow_core.Account
+module Account_info = Cashflow_core.Account_info
+module Amount = Cashflow_core.Amount
+module Date = Cashflow_core.Date
+module Idempotency_key = Cashflow_core.Idempotency_key
+module Ledger_core = Cashflow_core.Ledger_core
+module Ledger_error = Cashflow_core.Ledger_error
+module Transfer = Cashflow_core.Transfer
+
 let now = Option.get (Ptime.of_date_time ((2026, 10, 21), ((10, 0, 0), 0)))
 let make_service () = Service.make ~now:(fun () -> now) (Store_sqlite.open_memory ())
 let key value = Result.get_ok (Idempotency_key.of_string value)

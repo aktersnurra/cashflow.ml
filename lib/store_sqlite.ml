@@ -1,5 +1,10 @@
 (* The ledger's SQLite store. Statements are typed (see Sql), so the columns below and the
    constructors that decode them can't drift apart without a compile error. *)
+module Account = Cashflow_core.Account
+module Currency = Cashflow_core.Currency
+module Ledger_core = Cashflow_core.Ledger_core
+module Transfer = Cashflow_core.Transfer
+
 open Sql
 
 type t = Sql.db

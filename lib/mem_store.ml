@@ -1,4 +1,12 @@
 (* An in-memory store for tests. *)
+module Account = Cashflow_core.Account
+module Account_id = Cashflow_core.Account_id
+module Idempotency_key = Cashflow_core.Idempotency_key
+module Ledger_core = Cashflow_core.Ledger_core
+module Owner = Cashflow_core.Owner
+module Transfer = Cashflow_core.Transfer
+module Transfer_id = Cashflow_core.Transfer_id
+
 type t = {
   accounts : (Account_id.t, Account.t) Hashtbl.t;
   accounts_by_key : (string, Account.t) Hashtbl.t;

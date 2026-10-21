@@ -1,5 +1,9 @@
 (* HTTP routing as a pure function from request to response, so every route is tested without a
    socket; [run] puts it behind httpun (as kcal's lib/http_adapter.ml does). *)
+
+module Access = Cashflow_core.Access
+module I18n_locale = Cashflow_core.I18n_locale
+
 let log_src = Logs.Src.create "cashflow.http" ~doc:"HTTP request handling"
 module Log = (val Logs.src_log log_src : Logs.LOG)
 

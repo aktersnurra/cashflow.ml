@@ -1,3 +1,14 @@
+module Account = Cashflow_core.Account
+module Amount = Cashflow_core.Amount
+module Currency = Cashflow_core.Currency
+module Date = Cashflow_core.Date
+module Idempotency_key = Cashflow_core.Idempotency_key
+module Ledger_core = Cashflow_core.Ledger_core
+module Ledger_error = Cashflow_core.Ledger_error
+module Ledger_event = Cashflow_core.Ledger_event
+module Owner = Cashflow_core.Owner
+module Transfer = Cashflow_core.Transfer
+
 let sek = Result.get_ok (Currency.make ~code:"SEK" ~scale:2)
 let eur = Result.get_ok (Currency.make ~code:"EUR" ~scale:2)
 let me = Owner.User (Id_generator.user ())

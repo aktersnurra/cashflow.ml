@@ -1,5 +1,27 @@
 (* Use cases, shared by the MCP tools and the web API. Every function takes an Access.t and checks
    what it allows before touching anything. *)
+module Access = Cashflow_core.Access
+module Account = Cashflow_core.Account
+module Account_id = Cashflow_core.Account_id
+module Account_info = Cashflow_core.Account_info
+module Amount = Cashflow_core.Amount
+module Chart = Cashflow_core.Chart
+module Currency = Cashflow_core.Currency
+module Date = Cashflow_core.Date
+module Household = Cashflow_core.Household
+module Household_id = Cashflow_core.Household_id
+module I18n_locale = Cashflow_core.I18n_locale
+module Idempotency_key = Cashflow_core.Idempotency_key
+module Ledger_core = Cashflow_core.Ledger_core
+module Ledger_error = Cashflow_core.Ledger_error
+module Ledger_event = Cashflow_core.Ledger_event
+module Owner = Cashflow_core.Owner
+module Time = Cashflow_core.Time
+module Transfer = Cashflow_core.Transfer
+module Transfer_id = Cashflow_core.Transfer_id
+module User = Cashflow_core.User
+module User_id = Cashflow_core.User_id
+
 let ( let* ) = Result.bind
 
 type error = [ `Forbidden of string | `Not_found of string | `Invalid of string ]

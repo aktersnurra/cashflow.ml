@@ -1,5 +1,12 @@
 (* Reading transfers for people. A transfer is visible when at least one of its accounts belongs to
    an owner the reader may use: their own personal scope, or their active household. *)
+module Access = Cashflow_core.Access
+module Account_id = Cashflow_core.Account_id
+module Date = Cashflow_core.Date
+module Household_id = Cashflow_core.Household_id
+module Transfer = Cashflow_core.Transfer
+module User_id = Cashflow_core.User_id
+
 open Sql
 
 type filter = {

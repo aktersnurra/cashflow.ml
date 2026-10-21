@@ -1,3 +1,9 @@
+module Account_id = Cashflow_core.Account_id
+module Analytics = Cashflow_core.Analytics
+module Household = Cashflow_core.Household
+module Owner = Cashflow_core.Owner
+module Transfer_id = Cashflow_core.Transfer_id
+
 open Hegel
 open Test_service_support
 

@@ -1,3 +1,10 @@
+module Account_id = Cashflow_core.Account_id
+module Analytics = Cashflow_core.Analytics
+module Currency = Cashflow_core.Currency
+module Household = Cashflow_core.Household
+module Owner = Cashflow_core.Owner
+module User_id = Cashflow_core.User_id
+
 open Test_service_support
 
 let field path json =

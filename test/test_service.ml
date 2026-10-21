@@ -1,3 +1,9 @@
+module Cycle = Cashflow_core.Cycle
+module Holidays = Cashflow_core.Holidays
+module Household = Cashflow_core.Household
+module Ledger_event = Cashflow_core.Ledger_event
+module Pay_cycle_setting = Cashflow_core.Pay_cycle_setting
+
 open Test_service_support
 
 let test_sign_in_seeds_the_chart_once () =

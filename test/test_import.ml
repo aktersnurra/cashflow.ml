@@ -1,3 +1,12 @@
+module Account_id = Cashflow_core.Account_id
+module Csv = Cashflow_core.Csv
+module Household = Cashflow_core.Household
+module Owner = Cashflow_core.Owner
+module Statement_format = Cashflow_core.Statement_format
+module Str_compat = Cashflow_core.Str_compat
+module Transfer_id = Cashflow_core.Transfer_id
+module User_id = Cashflow_core.User_id
+
 open Test_service_support
 
 let field path json = List.fold_left (fun json name -> match json with `Assoc fields -> Option.value (List.assoc_opt name fields) ~default:`Null | _ -> `Null) json path

@@ -1,6 +1,24 @@
 (* JSON for domain values, shared by MCP and the web API. Money is an exact decimal string in the
    currency's major unit ("1240.50"); the minor-unit integer is never exposed to callers, so
    nobody has to know a currency's scale. *)
+module Account = Cashflow_core.Account
+module Account_id = Cashflow_core.Account_id
+module Account_info = Cashflow_core.Account_info
+module Amount = Cashflow_core.Amount
+module Currency = Cashflow_core.Currency
+module Cycle = Cashflow_core.Cycle
+module Date = Cashflow_core.Date
+module Decimal = Cashflow_core.Decimal
+module Household = Cashflow_core.Household
+module Household_id = Cashflow_core.Household_id
+module Ledger_core = Cashflow_core.Ledger_core
+module Ledger_error = Cashflow_core.Ledger_error
+module Pay_cycle_setting = Cashflow_core.Pay_cycle_setting
+module Transfer = Cashflow_core.Transfer
+module Transfer_id = Cashflow_core.Transfer_id
+module User = Cashflow_core.User
+module User_id = Cashflow_core.User_id
+
 type t = Yojson.Safe.t
 
 let decimal = Decimal.format

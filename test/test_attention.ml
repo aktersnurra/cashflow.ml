@@ -1,3 +1,5 @@
+module Str_compat = Cashflow_core.Str_compat
+
 open Test_service_support
 
 let kinds service access = List.map (fun (Attention.Card c) -> Attention.kind_name c.kind) (Attention.feed service access)

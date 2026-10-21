@@ -127,12 +127,18 @@ by this client.
 
 ## Layout
 
-- `lib/ledger_core.ml`, `lib/ledger.ml`: the ledger's rules, pure, and `Ledger.Make (Store)`
+`lib/core/` is the native-only wrapped `cashflow_core` library, exposed as
+`Cashflow_core.<Module>`. It has no direct system IO dependencies. Legacy ledger
+callbacks can still be IO-backed by callers; this is not a referential-transparency
+guarantee for production writes. The remaining `lib/` is the transitional flat
+`cashflow` library, which depends on core, never the reverse.
+
+- `lib/core/ledger_core.ml`, `lib/ledger.ml`: the ledger's rules and `Ledger.Make (Store)`
 - `lib/sql.ml`, `lib/db_guard.ml`: typed SQLite statements (a printf-style GADT), and request fibers taking turns with the connection
-- `lib/service.ml`, `lib/access.ml`: use cases, and the capability that scopes them to what a user may see
-- `lib/statement_format.ml`, `lib/xlsx.ml`, `lib/csv.ml`: bank formats, and reading spreadsheets and CSV into cells
-- `lib/import.ml`, `lib/inbox.ml`, `lib/suggest.ml`: the statement pipeline and triage
-- `lib/analytics.ml`, `lib/insights.ml`, `lib/query.ml`: analytics, and the query GADT the MCP tools come from
+- `lib/service.ml`, `lib/core/access.ml`: use cases, and the capability that scopes them to what a user may see
+- `lib/core/statement_format.ml`, `lib/core/xlsx.ml`, `lib/core/csv.ml`: bank formats, and reading spreadsheets and CSV into cells
+- `lib/import.ml`, `lib/inbox.ml`, `lib/core/suggest.ml`: the statement pipeline and triage
+- `lib/core/analytics.ml`, `lib/insights.ml`, `lib/query.ml`: analytics, and the query GADT the MCP tools come from
 - `lib/attention.ml`: the landing page's feed
 - `lib/commands.ml`, `lib/mcp.ml`, `lib/http_server.ml`, `lib/web_auth.ml`: the outside world
 - `web/`: the Bonsai UI; `locales/`: its messages; `tools/mf2c`: the message compiler

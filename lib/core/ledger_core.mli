@@ -1,5 +1,7 @@
-(** The ledger's rules, as pure functions over a read-only view of stored state. Nothing here
-    performs I/O: the store reads through a {!view} and writes back an {!applied} result, which
+(** The ledger's rules over a read-only view of stored state. This module performs no direct
+    I/O, but the legacy {!view} and {!env} callbacks can be backed by I/O in callers; this
+    interface does not guarantee referential transparency for production writes. Deterministic
+    callbacks make core-only calculations reproducible. The store writes back an {!applied} result, which
     only this module can construct, so nothing unvalidated ever reaches storage. *)
 
 type view = {

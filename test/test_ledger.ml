@@ -1,3 +1,5 @@
+module Account_id = Cashflow_core.Account_id
+
 open Test_support
 
 module Suite (S : STORE) = struct

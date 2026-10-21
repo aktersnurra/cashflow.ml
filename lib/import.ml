@@ -5,6 +5,25 @@
    Each stage takes the previous one's result and either refines it or stops with an error, so a
    stage can be tested on its own, and a bank sync can reuse everything after [decode]. Running
    the pipeline is the preview; [confirm] runs it again inside a transaction and posts the result. *)
+
+module Access = Cashflow_core.Access
+module Account = Cashflow_core.Account
+module Account_id = Cashflow_core.Account_id
+module Account_info = Cashflow_core.Account_info
+module Amount = Cashflow_core.Amount
+module Csv = Cashflow_core.Csv
+module Currency = Cashflow_core.Currency
+module Date = Cashflow_core.Date
+module Idempotency_key = Cashflow_core.Idempotency_key
+module Ledger_core = Cashflow_core.Ledger_core
+module Ledger_error = Cashflow_core.Ledger_error
+module Ledger_event = Cashflow_core.Ledger_event
+module Statement_format = Cashflow_core.Statement_format
+module Suggest = Cashflow_core.Suggest
+module Transfer = Cashflow_core.Transfer
+module Transfer_id = Cashflow_core.Transfer_id
+module Xlsx = Cashflow_core.Xlsx
+
 let ( let* ) = Result.bind
 let ( >=> ) f g x = Result.bind (f x) g
 

@@ -1,3 +1,12 @@
+module Access = Cashflow_core.Access
+module Account_id = Cashflow_core.Account_id
+module Csv = Cashflow_core.Csv
+module Date = Cashflow_core.Date
+module Ledger_core = Cashflow_core.Ledger_core
+module Statement_format = Cashflow_core.Statement_format
+module Time = Cashflow_core.Time
+module Xlsx = Cashflow_core.Xlsx
+
 let with_config path f =
   match Config.load path with
   | Error reason -> Logs.err (fun m -> m "invalid configuration: %s" reason); 1

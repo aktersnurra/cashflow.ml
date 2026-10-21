@@ -1,4 +1,10 @@
 (* Budgets, savings goals and reconciliation checkpoints. *)
+module Account_id = Cashflow_core.Account_id
+module Analytics = Cashflow_core.Analytics
+module Cycle = Cashflow_core.Cycle
+module Date = Cashflow_core.Date
+module Owner = Cashflow_core.Owner
+
 open Sql
 
 let budget_row =

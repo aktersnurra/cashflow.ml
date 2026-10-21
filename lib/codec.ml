@@ -1,4 +1,19 @@
 (* Column encodings for domain types, shared by every SQLite module. *)
+
+module Account = Cashflow_core.Account
+module Account_id = Cashflow_core.Account_id
+module Amount = Cashflow_core.Amount
+module Date = Cashflow_core.Date
+module Household = Cashflow_core.Household
+module Household_id = Cashflow_core.Household_id
+module Id = Cashflow_core.Id
+module Idempotency_key = Cashflow_core.Idempotency_key
+module Owner = Cashflow_core.Owner
+module Transfer = Cashflow_core.Transfer
+module Transfer_id = Cashflow_core.Transfer_id
+module User = Cashflow_core.User
+module User_id = Cashflow_core.User_id
+
 open Sql
 
 let id (type a) (module I : Id.S with type t = a) name = map ~name text ~to_db:I.to_string ~of_db:I.of_string

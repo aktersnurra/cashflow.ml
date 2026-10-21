@@ -1,3 +1,8 @@
+module Account_id = Cashflow_core.Account_id
+module Household_id = Cashflow_core.Household_id
+module Transfer_id = Cashflow_core.Transfer_id
+module User_id = Cashflow_core.User_id
+
 open Base
 
 let now_ms () =

@@ -1,3 +1,6 @@
+module Account_id = Cashflow_core.Account_id
+module Str_compat = Cashflow_core.Str_compat
+
 open Test_service_support
 
 let prompts = ref []

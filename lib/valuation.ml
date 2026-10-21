@@ -1,6 +1,13 @@
 (* Investment accounts (Avanza, Montrose) are tracked by contributions plus an occasional market
    value: the difference to the ledger is posted against unrealized gains (§3.7), so net worth
    follows the market while income and spending never do. *)
+module Account_id = Cashflow_core.Account_id
+module Amount = Cashflow_core.Amount
+module Currency = Cashflow_core.Currency
+module Date = Cashflow_core.Date
+module Idempotency_key = Cashflow_core.Idempotency_key
+module Transfer = Cashflow_core.Transfer
+
 let ( let* ) = Result.bind
 
 let set_market_value (service : Service.t) access ~account_id ~value ~on_date =

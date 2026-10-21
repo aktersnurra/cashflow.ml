@@ -1,4 +1,10 @@
 (* Import batches, their rows, inbox items and categorisation rules. *)
+module Account = Cashflow_core.Account
+module Account_id = Cashflow_core.Account_id
+module Date = Cashflow_core.Date
+module Suggest = Cashflow_core.Suggest
+module Transfer_id = Cashflow_core.Transfer_id
+
 open Sql
 
 type batch = {

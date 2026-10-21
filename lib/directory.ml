@@ -1,4 +1,10 @@
 (* Users, households and memberships. *)
+
+module Household = Cashflow_core.Household
+module I18n_locale = Cashflow_core.I18n_locale
+module Pay_cycle_setting = Cashflow_core.Pay_cycle_setting
+module User = Cashflow_core.User
+
 open Sql
 
 let pay_cycle = map ~name:"pay cycle" text ~to_db:Pay_cycle_setting.to_string ~of_db:Pay_cycle_setting.of_string

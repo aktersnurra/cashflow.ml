@@ -2,6 +2,10 @@
    itself (the backend-for-frontend pattern): the browser only ever holds an HttpOnly session
    cookie and never sees a token. The login state is bound to the browser with a short-lived
    cookie, the ID token's nonce is checked, and only hashes of session tokens are stored. *)
+module Access = Cashflow_core.Access
+module User = Cashflow_core.User
+module User_id = Cashflow_core.User_id
+
 open Sql
 
 let log_src = Logs.Src.create "cashflow.web_auth" ~doc:"Web sign-in and sessions"

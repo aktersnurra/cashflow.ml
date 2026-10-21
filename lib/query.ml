@@ -2,6 +2,16 @@
    gives its name, description, argument schema, parser and encoder; the MCP tools and the web
    API's /api/query routes are both generated from [all]. Adding a query is one constructor, one
    case in [run] (the compiler insists) and one descriptor. *)
+module Access = Cashflow_core.Access
+module Account_id = Cashflow_core.Account_id
+module Account_info = Cashflow_core.Account_info
+module Analytics = Cashflow_core.Analytics
+module Currency = Cashflow_core.Currency
+module Cycle = Cashflow_core.Cycle
+module Date = Cashflow_core.Date
+module Household = Cashflow_core.Household
+module User_id = Cashflow_core.User_id
+
 let ( let* ) = Result.bind
 
 type common = { scope : Analytics.scope; currency : string option }

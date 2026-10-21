@@ -1,3 +1,8 @@
+module Account_id = Cashflow_core.Account_id
+module Transfer_id = Cashflow_core.Transfer_id
+module User_id = Cashflow_core.User_id
+module Household_id = Cashflow_core.Household_id
+
 let check_generator generate to_string of_string equal () =
   let first = generate () and second = generate () in
   Alcotest.(check bool) "distinct" false (equal first second);

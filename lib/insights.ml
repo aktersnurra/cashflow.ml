@@ -1,5 +1,21 @@
 (* Analytics for a signed-in user: resolves the scope's owners, currency and pay cycle, loads the
    transfers they may see, and runs the pure functions in Analytics. *)
+module Access = Cashflow_core.Access
+module Account = Cashflow_core.Account
+module Account_id = Cashflow_core.Account_id
+module Account_info = Cashflow_core.Account_info
+module Amount = Cashflow_core.Amount
+module Analytics = Cashflow_core.Analytics
+module Currency = Cashflow_core.Currency
+module Cycle = Cashflow_core.Cycle
+module Date = Cashflow_core.Date
+module Household = Cashflow_core.Household
+module Owner = Cashflow_core.Owner
+module Pay_cycle_setting = Cashflow_core.Pay_cycle_setting
+module Transfer = Cashflow_core.Transfer
+module User = Cashflow_core.User
+module User_id = Cashflow_core.User_id
+
 let ( let* ) = Result.bind
 
 type ctx = {

@@ -2,6 +2,23 @@
    the web UI calls the same commands through /api/commands/<name>, so a use case exists once and
    both clients get the same validation and the same JSON. Analytics queries (Query.all) are
    included as read commands. *)
+module Access = Cashflow_core.Access
+module Account = Cashflow_core.Account
+module Account_id = Cashflow_core.Account_id
+module Account_info = Cashflow_core.Account_info
+module Amount = Cashflow_core.Amount
+module Currency = Cashflow_core.Currency
+module Household = Cashflow_core.Household
+module Household_id = Cashflow_core.Household_id
+module I18n_locale = Cashflow_core.I18n_locale
+module Idempotency_key = Cashflow_core.Idempotency_key
+module Owner = Cashflow_core.Owner
+module Pay_cycle_setting = Cashflow_core.Pay_cycle_setting
+module Suggest = Cashflow_core.Suggest
+module Time = Cashflow_core.Time
+module Transfer = Cashflow_core.Transfer
+module Transfer_id = Cashflow_core.Transfer_id
+
 let ( let* ) = Result.bind
 
 type scope = Read | Write | Admin
