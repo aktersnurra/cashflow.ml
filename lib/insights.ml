@@ -122,6 +122,24 @@ let recurring ctx =
   let last = ctx.today in
   Analytics.recurring_payments (book ctx) (transfers ctx ~first:(Date.add_days last (-400)) ~last)
 
+(* Unbudgeted spending already well past a usual whole cycle, against the three cycles before. *)
+let unusual_spending ctx =
+  let cycles = recent_cycles ctx 4 in
+  let history = List.filteri (fun i _ -> i < 3) cycles and current = current_cycle ctx in
+  let first, _ = span cycles in
+  let threshold = Int64.of_float (100. *. (10. ** float_of_int (Currency.scale ctx.currency))) in
+  Analytics.unusual_spending (book ctx) ~current ~today:ctx.today ~history ~threshold (transfers ctx ~first ~last:ctx.today)
+
+(* This cycle's spending in one category, largest first. *)
+let category_spending ctx category =
+  let current = current_cycle ctx in
+  transfers ctx ~first:current.first ~last:ctx.today
+  |> List.filter (fun (t : Transfer.t) -> Analytics.posted t && Account_id.equal t.debit_account_id category && t.code <> Reclassify)
+  |> List.sort (fun (a : Transfer.t) (b : Transfer.t) -> Amount.compare b.amount a.amount)
+
+(* Accounts the bills still due before payday would overdraw. *)
+let shortfalls ctx = Analytics.shortfalls (book ctx) ~today:ctx.today ~until:(current_cycle ctx).last (recurring ctx)
+
 let budget_owner ctx = match ctx.scope with Analytics.Household -> List.hd ctx.owners | Me | Family -> Access.personal ctx.access
 
 type budget_report = { report_cycle : Cycle.t; lines : Analytics.budget_line list }

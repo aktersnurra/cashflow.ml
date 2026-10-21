@@ -71,6 +71,8 @@ cashflow void-expired   # daily, from cron
 ```
 
 Configuration is code: one typed S-expression file, `/usr/local/etc/cashflow.sexp` by default (or `--config FILE`, or `$CASHFLOW_CONFIG`). Start from [`cashflow.example.sexp`](cashflow.example.sexp) and check it with `cashflow check-config`.
+
+`cashflow read-statement FILE` reads a bank export (.csv, or Handelsbanken's .xlsx) the way an import would and prints the format, the account it is for and every row, without touching the database.
 - **Parsing:** the file is read with derived converters, so a misspelt field is an error that names its line and column. Missing optional fields take their defaults.
 - **Secrets:** a secret is `(Inline "...")`, `(File /path)` or `(Env NAME)`, so the file itself can live in git with the rest of the jail's configuration.
 

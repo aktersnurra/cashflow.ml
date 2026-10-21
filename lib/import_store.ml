@@ -59,6 +59,24 @@ let created_transfers =
   stmt "SELECT transfer_id FROM import_rows WHERE batch_id = ? AND status IN ('new', 'matched') AND transfer_id IS NOT NULL ORDER BY row_index"
     (text @-> nil) (many (row Codec.(transfer_id @-> nil) Fun.id))
 
+(* An active import that counts some of this one's rows as already there: by fingerprint, as the
+   other side of a manual move this one posted, or by
+   the user's "already imported" on a row with the same day and amount (which of the identical
+   rows it meant can't be known, so any of them counts). *)
+let dependent_batch =
+  stmt
+    ("SELECT " ^ batch_columns
+   ^ " FROM import_batches WHERE undone_at IS NULL AND id <> ?1 AND id IN ( \
+      SELECT batch_id FROM import_rows WHERE status IN ('duplicate', 'confirmed_leg') AND \
+        transfer_id IN (SELECT transfer_id FROM import_rows WHERE batch_id = ?1 AND status IN ('new', 'matched')) \
+      UNION \
+      SELECT r.batch_id FROM import_rows r JOIN transfers t ON t.id = r.transfer_id \
+      WHERE r.status = 'decided_duplicate' AND EXISTS ( \
+        SELECT 1 FROM import_rows mine JOIN transfers u ON u.id = mine.transfer_id \
+        WHERE mine.batch_id = ?1 AND mine.status IN ('new', 'matched') AND u.value_date = t.value_date AND u.amount = t.amount)) \
+      ORDER BY created_at LIMIT 1")
+    (text @-> nil) (opt batch_row)
+
 let find_active_batch db ~account_id ~sha = run db active_batch_for_file account_id sha
 let find_batch db id = run db batch_by_id id
 let batches db ~account_id ~limit = run db batches_of_account account_id limit
@@ -69,6 +87,7 @@ let save_batch db ~user_id (b : batch) =
 let save_row db ~batch_id ~index ~fingerprint ~transfer_id ~status = run db insert_row batch_id index fingerprint transfer_id status
 let undo_batch db ~now id = run db mark_undone now id
 let batch_transfers db id = run db created_transfers id
+let dependent db id = run db dependent_batch id
 
 (* The ledger balance of an account after every posted transfer up to a date. *)
 let balance_on =

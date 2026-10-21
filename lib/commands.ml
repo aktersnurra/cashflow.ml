@@ -443,9 +443,18 @@ let decisions fields =
   | Some (`List items) -> List.fold_right (fun item acc -> let* acc = acc in let* d = one item in Ok (d :: acc)) items (Ok [])
   | Some _ -> invalid "decisions must be a list"
 
+(* The file as text (CSV), or base64 for a binary one (an .xlsx). *)
 let import_request fields =
   let* account_id = account_id "account_id" fields in
-  let* content = required_string "content" fields in
+  let* text = arg (A.string "content" fields) in
+  let* encoded = arg (A.string "content_base64" fields) in
+  let* content =
+    match text, encoded with
+    | Some text, None -> Ok text
+    | None, Some b64 -> (match Base64.decode (String.trim b64) with Ok bytes -> Ok bytes | Error (`Msg _) -> invalid "content_base64 isn't valid base64")
+    | None, None -> invalid "content or content_base64 is required"
+    | Some _, Some _ -> invalid "give content or content_base64, not both"
+  in
   let* file_name = arg (A.string "file_name" fields) in
   let* decisions = decisions fields in
   Ok { Import.account_id; file_name; content; decisions }
@@ -459,13 +468,16 @@ let batch_json (b : Import_store.batch) =
 
 let import_statement =
   command "import_statement" Write
-    "Import a bank statement CSV into an account. Without confirm it only previews: which rows are new, which are duplicates of earlier \
+    "Import a bank statement (CSV, or a Handelsbanken .xlsx export) into an account. Without confirm it only previews: which rows are new, which are duplicates of earlier \
      imports, which confirm pending manual entries, and whether the balance will agree with the bank. With confirm: true it posts the \
      new rows; uncategorised ones go to the inbox. A file without running balances can have ambiguous rows: on its first or last day, \
      identical (same day, text and amount) to rows already imported. Ask the user whether each is already imported or a new \
-     purchase, and pass the answers as decisions; confirm refuses until every ambiguous row is decided."
-    ~required:[ "account_id"; "content" ]
-    [ string_prop "account_id" "The bank account or card the statement belongs to."; string_prop "content" "The CSV file's text.";
+     purchase, and pass the answers as decisions; confirm refuses until every ambiguous row is decided. For an account with nothing \
+     before the file, the preview suggests an opening balance from the bank's running balance; offer to set it with \
+     set_opening_balance so the balance check agrees."
+    ~required:[ "account_id" ]
+    [ string_prop "account_id" "The bank account or card the statement belongs to."; string_prop "content" "A CSV file's text.";
+      string_prop "content_base64" "An .xlsx file, base64-encoded (instead of content).";
       string_prop "file_name" "The file's name, for the import history.";
       ( "decisions",
         `Assoc
@@ -488,7 +500,9 @@ let import_statement =
         Ok
           (`Assoc
              [ ("status", `String (if Option.is_some p.already_imported then "already_imported" else "preview")); ("format", `String p.decoded_file.format);
-               ("rows", `List (List.map (planned_json currency) p.rows)); ("balance_check", balance_json currency p.balance) ])
+               ("rows", `List (List.map (planned_json currency) p.rows)); ("balance_check", balance_json currency p.balance);
+               ( "suggested_opening_balance",
+                 Json.option (fun (date, balance) -> `Assoc [ ("date", Json.date date); ("balance", Json.money currency balance) ]) p.opening ) ])
       else
         let* result = Import.confirm ctx request in
         match result with

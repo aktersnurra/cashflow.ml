@@ -14,6 +14,7 @@ type t = {
   static_dir : string;
   openrouter_api_key : string option;
   openrouter_model : string;
+  log_level : Logs.level option;  (** [None] silences logging *)
 }
 
 module File = struct
@@ -33,6 +34,8 @@ module File = struct
   type web = { client_id : string; client_secret : secret } [@@deriving sexp]
   type openrouter = { api_key : secret; model : string [@default "anthropic/claude-haiku-5.5"] } [@@deriving sexp]
 
+  type log_level = Quiet | Error | Warning | Info | Debug [@@deriving sexp]
+
   type t = {
     database : string;
     listen : string;  (** host:port of the private listener behind the reverse proxy *)
@@ -41,6 +44,7 @@ module File = struct
     web : web option; [@sexp.option]  (** the web UI's OIDC client; without it only MCP is served *)
     static_dir : string; [@default "/usr/local/share/cashflow/web"]
     openrouter : openrouter option; [@sexp.option]
+    log_level : log_level; [@default Info]
   }
   [@@deriving sexp]
 end
@@ -75,7 +79,8 @@ let resolve (file : File.t) =
     { database_path = file.database; listen_address = file.listen; public_base_url; oidc_issuer = file.oidc.issuer; oidc_audience = file.oidc.audience;
       web_client_id = Option.map (fun (w : File.web) -> w.client_id) file.web; web_client_secret; admin_group = file.oidc.admin_group;
       static_dir = file.static_dir; openrouter_api_key;
-      openrouter_model = Option.fold ~none:"anthropic/claude-haiku-5.5" ~some:(fun (o : File.openrouter) -> o.model) file.openrouter }
+      openrouter_model = Option.fold ~none:"anthropic/claude-haiku-5.5" ~some:(fun (o : File.openrouter) -> o.model) file.openrouter;
+      log_level = (match file.log_level with Quiet -> None | Error -> Some Logs.Error | Warning -> Some Warning | Info -> Some Info | Debug -> Some Debug) }
 
 (* "lib/config.ml.File.t_of_sexp: extra fields: statc_dir" reads as "unknown field statc_dir". *)
 let describe exn =

@@ -70,7 +70,7 @@ let test_categories_recurring_and_budgets () =
   | _ -> Alcotest.fail "no categories");
   (match field [ "payments" ] (query service alice "recurring_payments" []) with
   | `List [ spotify ] ->
-      Alcotest.(check string) "merchant" "spotify ab" (str [ "merchant" ] spotify);
+      Alcotest.(check string) "merchant, as written" "Spotify AB" (str [ "merchant" ] spotify);
       Alcotest.(check string) "cadence" "monthly" (str [ "cadence" ] spotify);
       Alcotest.(check string) "next" "2026-11-02" (str [ "next_expected" ] spotify)
   | other -> Alcotest.failf "expected spotify, got %s" (Yojson.Safe.to_string other));

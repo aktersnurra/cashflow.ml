@@ -27,9 +27,12 @@ action.pair = Para ihop
 action.skip = Hoppa över
 action.settle = Gör upp
 action.adjust = Bokför skillnaden
+action.move_money = Flytta pengar
+action.see_spending = Visa utgifter
 action.choose_file = Välj en fil
 action.already_imported = Redan importerad
 action.new_row = Ny
+action.set_opening_balance = Använd som ingående saldo
 action.close = Stäng
 action.add = Lägg till
 action.open_account = Öppna konto
@@ -51,13 +54,13 @@ card.invitation.body = Gå med för att se och dela hushållets konton.
 card.mismatch.title = {$account} skiljer {$difference :currency}
 card.mismatch.body = Banken angav {$statement :currency} den {$date :date}; bokföringen säger {$ledger :currency}.
 card.import.title = Dags att importera {$account}
-card.import.never = Inget kontoutdrag importerat än. Ladda ner CSV-filen från banken och släpp den här.
+card.import.never = Inget kontoutdrag importerat än. Ladda ner transaktionslistan från banken (Excel eller CSV) och släpp den här.
 card.import.days =
   .input {$days :integer}
   .match $days
   one {{Senaste importen var i går.}}
   * {{Senaste importen var för {$days} dagar sedan.}}
-card.import.drop = Släpp en CSV-fil här
+card.import.drop = Släpp bankens Excel- eller CSV-fil här
 card.import.reading = Läser {$file}…
 card.import.new =
   .input {$count :integer}
@@ -79,6 +82,7 @@ card.import.ambiguous =
   .match $count
   one {{1 rad ser ut som en som redan är importerad: samma dag, text och belopp. Är den det?}}
   * {{{$count} rader ser ut som sådana som redan är importerade: samma dag, text och belopp. Är de det?}}
+card.import.opening = Inget är bokfört före den här filen. Enligt bankens saldo fanns {$balance :currency} på kontot den {$date :date}.
 card.import.balance_ok = Saldot kommer att stämma med banken: {$balance :currency}.
 card.import.balance_off = Bokföringen skulle skilja {$difference :currency} från bankens {$balance :currency}.
 card.import.already = Den här filen är redan importerad.
@@ -109,6 +113,11 @@ card.goal.title = {$goal} halkar efter
 card.goal.body = {$saved :currency} av {$target :currency}. Lägg undan {$required :currency} i månaden för att nå målet.
 card.recurring.changed = {$merchant} gick från {$previous :currency} till {$last :currency}
 card.recurring.new = Ny återkommande betalning ({$cadence}): {$merchant}
+card.shortfall.title = {$account} kan bli kort före lönen
+card.shortfall.body = {$due :currency} i räkningar ska fortfarande dras och {$available :currency} finns kvar, {$short :currency} saknas.
+card.shortfall.item = {$merchant}, {$amount :currency} runt {$date :date}
+card.unusual.title = {$category} är högre än vanligt
+card.unusual.body = {$spent :currency} hittills den här perioden; en hel period brukar kosta {$usual :currency}.
 card.overview.title = {$month} hittills
 
 label.income = Inkomster

@@ -29,7 +29,7 @@ let page ~(ctx : Ctx.t) graph =
                   Ui.div ~cls:"kpis"
                     [ Ui.kpi (Msg.label_income locale) (Fmt.format_money locale ~code:c (J.field "income" cur));
                       Ui.kpi (Msg.label_spending locale) (Fmt.format_money locale ~code:c (J.field "spending" cur));
-                      Ui.kpi ~tone:"positive" (Msg.label_savings locale) (Fmt.format_money locale ~code:c (J.field "savings" cur));
+                      Ui.kpi ~tone:(Fmt.sign_tone (J.field "savings" cur)) (Msg.label_savings locale) (Fmt.format_money locale ~code:c (J.field "savings" cur));
                       Ui.kpi (Msg.label_savings_rate locale) (J.str ~default:"–" (J.field "savings_rate" cur)) ]
               | None -> Vdom.Node.none);
               Ui.card ~title:(Msg.label_income locale ^ " / " ^ Msg.label_spending locale)

@@ -17,6 +17,9 @@ module type S = sig
   (** Whether a file looks like this format. *)
 
   val parse : scale:int -> Csv.table -> (row list, string) result
+
+  val account_hint : Csv.table -> string option
+  (** The last four digits of the account number the file says it is for, if it says. *)
 end
 
 (* Amounts as Swedish and English banks print them: "1 234,56", "-1234.56", "1.234,56", "−12,00". *)
@@ -44,10 +47,14 @@ let parse_amount ~scale text =
   in
   Json.parse_decimal ~scale normalized
 
+(* Spreadsheets can store a date as a day number counted from 1899-12-30. *)
+let excel_epoch = Option.get (Date.of_ymd 1899 12 30)
+
 let parse_date text =
   let text = String.trim text in
   match Date.of_string text with
   | Ok date -> Some date
+  | Error _ when String.length text = 5 && String.for_all (fun c -> c >= '0' && c <= '9') text -> Some (Date.add_days excel_epoch (int_of_string text))
   | Error _ -> (
       (* Also accept YYYYMMDD and YYYY/MM/DD. *)
       let digits = String.concat "" (String.split_on_char '/' text) in
@@ -89,6 +96,7 @@ let find_header table =
 module Generic : S = struct
   let name = "generic"
   let detect table = Option.is_some (find_header table)
+  let account_hint _ = None
 
   let parse ~scale table =
     match find_header table with
@@ -123,8 +131,36 @@ module Generic : S = struct
         go 0 [] rows
 end
 
-(* Specific formats go first; the generic reader is the fallback. A Handelsbanken module goes
-   here once its export format is known. *)
-let formats : (module S) list = [ (module Generic) ]
+(* Handelsbanken's account export (.xlsx, or the same cells as CSV): a preamble with the bank's
+   name, the export time, the account's name and number, its type, clearing number, balance and
+   period; then Reskontradatum, Transaktionsdatum, Text, Belopp and Saldo, newest first. The
+   columns are ones the generic reader knows; what this adds is recognising the file and reading
+   the account number, so a file can't be imported into the wrong account. *)
+module Handelsbanken : S = struct
+  let name = "handelsbanken"
+  let first_cell table = List.find_map (function c :: _ when String.trim c <> "" -> Some (String.trim c) | _ -> None) table
+  let detect table = first_cell table = Some "Handelsbanken" && Generic.detect table
+
+  (* The preamble line naming the account: its name followed by the number in groups of digits
+     ("Lönekonto 123 456 789"). The clearing number has its own labelled cell, so a cell with a
+     label (a colon) is never the account. *)
+  let account_hint table =
+    let header = match find_header table with Some (i, _) -> i | None -> List.length table in
+    let digits cell =
+      let words = String.split_on_char ' ' (String.trim cell) in
+      let rec trailing acc = function w :: rest when w <> "" && String.for_all (fun c -> c >= '0' && c <= '9') w -> trailing (w :: acc) rest | _ -> acc in
+      String.concat "" (trailing [] (List.rev words))
+    in
+    List.filteri (fun i _ -> i < header) table
+    |> List.concat
+    |> List.find_map (fun cell ->
+           let d = digits cell in
+           if String.contains cell ':' || String.length d < 6 then None else Some (String.sub d (String.length d - 4) 4))
+
+  let parse = Generic.parse
+end
+
+(* Specific formats go first; the generic reader is the fallback. *)
+let formats : (module S) list = [ (module Handelsbanken); (module Generic) ]
 let detect table = List.find_opt (fun (module F : S) -> F.detect table) formats
 let names = List.map (fun (module F : S) -> F.name) formats

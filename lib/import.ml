@@ -66,6 +66,9 @@ type preview = {
   rows : planned list;
   already_imported : Import_store.batch option;
   balance : balance_check option;
+  opening : (Date.t * int64) option;
+      (** for an account with nothing before the file: the balance the bank's running balances say
+          it had the day before the first row, to set as its opening balance *)
 }
 
 let max_file_bytes = 5 * 1024 * 1024
@@ -77,9 +80,14 @@ let decode ctx (request : request) =
     let* account = Service.find_account ctx.service ctx.access request.account_id in
     if account.account.kind <> Asset && account.account.kind <> Liability then Error (`Invalid "statements import into bank accounts or cards")
     else
-      let table = Csv.parse request.content in
+      let* table = if Xlsx.is_xlsx request.content then Result.map_error (fun e -> `Unreadable e) (Xlsx.table request.content) else Ok (Csv.parse request.content) in
       match Statement_format.detect table with
       | None -> Error (`Unreadable "no header row with a date and an amount column was found")
+      | Some (module F) when (match F.account_hint table, account.details.number_last4 with Some a, Some b -> a <> b | _ -> false) ->
+          Error
+            (`Invalid
+              (Printf.sprintf "this statement is for account ****%s, but %s is ****%s" (Option.get (F.account_hint table)) account.account.name
+                 (Option.get account.details.number_last4)))
       | Some (module F) -> (
           match F.parse ~scale:(Currency.scale account.account.currency) table with
           | Error reason -> Error (`Unreadable reason)
@@ -236,12 +244,19 @@ let suggest_with_llm ?answered (d, rows) =
 (* The balance after the file's last row. Banks list rows newest or oldest first; the running
    balances say which (each one is the previous plus the row's amount, in time order), and when
    they can't, the dates do. *)
+let rec in_time_order = function
+  | (a : Statement_format.row) :: (b :: _ as rest) -> (
+      match a.balance, b.balance with Some x, Some y -> Int64.equal y (Int64.add x b.amount) && in_time_order rest | _ -> false)
+  | [ _ ] | [] -> true
+
+(* The first row in time, when the running balances say which end that is. *)
+let oldest_row (rows : Statement_format.row list) =
+  match rows, List.rev rows with
+  | first :: _ :: _, last :: _ -> if in_time_order rows then Some first else if in_time_order (List.rev rows) then Some last else None
+  | [ only ], _ -> Some only
+  | _ -> None
+
 let closing_balance (rows : Statement_format.row list) =
-  let rec in_time_order = function
-    | (a : Statement_format.row) :: (b :: _ as rest) -> (
-        match a.balance, b.balance with Some x, Some y -> Int64.equal y (Int64.add x b.amount) && in_time_order rest | _ -> false)
-    | [ _ ] | [] -> true
-  in
   match rows, List.rev rows with
   | first :: _, last :: _ ->
       let closing =
@@ -277,7 +292,15 @@ let check_balance (d, rows) =
           in
           Some { on_date; statement_balance = Int64.mul sign statement_balance; ledger_balance = Int64.add existing added })
   in
-  Ok { decoded_file = d; rows; already_imported; balance }
+  let opening =
+    match oldest_row d.rows with
+    | Some ({ balance = Some after; _ } as first) ->
+        let day_before = Date.add_days first.booking_date (-1) in
+        let opening = Int64.sub after first.amount in
+        if Int64.equal opening 0L || not (Int64.equal (Import_store.posted_balance_on db account day_before) 0L) then None else Some (day_before, opening)
+    | _ -> None
+  in
+  Ok { decoded_file = d; rows; already_imported; balance; opening }
 
 let pipeline ?answered ctx = decode ctx >=> fingerprint >=> classify >=> suggest >=> suggest_with_llm ?answered >=> check_balance
 let preview ctx request = pipeline ctx request
@@ -448,6 +471,14 @@ let undo ctx ~batch_id =
   match Import_store.find_batch db batch_id with
   | None -> Error (`Not_found "import")
   | Some batch when batch.undone -> Ok batch
+  | Some batch when Option.is_some (Import_store.dependent db batch_id) ->
+      (* Undoing it would take rows out of the ledger that a later import still counts as there,
+         and re-uploading that file would be refused as already imported. *)
+      let later = Option.get (Import_store.dependent db batch_id) in
+      Error
+        (`Invalid
+          (Printf.sprintf "a later import (%s) overlaps this one; undo that first"
+             (Option.value later.file_name ~default:(Ptime.to_rfc3339 ~tz_offset_s:0 later.created_at))))
   | Some batch -> (
       let* _ = Service.find_account ctx.service ctx.access batch.account_id in
       let view = Store_sqlite.view db in

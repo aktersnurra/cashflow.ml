@@ -28,9 +28,12 @@ action.pair = Pair
 action.skip = Skip
 action.settle = Settle up
 action.adjust = Post the difference
+action.move_money = Move money
+action.see_spending = See spending
 action.choose_file = Choose a file
 action.already_imported = Already imported
 action.new_row = New
+action.set_opening_balance = Set as opening balance
 action.close = Close
 action.add = Add
 action.open_account = Open account
@@ -52,13 +55,13 @@ card.invitation.body = Join to see and share the household's accounts.
 card.mismatch.title = {$account} is {$difference :currency} off
 card.mismatch.body = The bank said {$statement :currency} on {$date :date}; the ledger says {$ledger :currency}.
 card.import.title = Time to import {$account}
-card.import.never = No statement imported yet. Download the CSV from your bank and drop it here.
+card.import.never = No statement imported yet. Download the transaction list from your bank (Excel or CSV) and drop it here.
 card.import.days =
   .input {$days :integer}
   .match $days
   one {{Last import was yesterday.}}
   * {{Last import was {$days} days ago.}}
-card.import.drop = Drop a CSV file here
+card.import.drop = Drop the bank's Excel or CSV file here
 card.import.reading = Reading {$file}…
 card.import.new =
   .input {$count :integer}
@@ -80,6 +83,7 @@ card.import.ambiguous =
   .match $count
   one {{1 row looks like one already imported: the same day, text and amount. Is it?}}
   * {{{$count} rows look like ones already imported: the same day, text and amount. Are they?}}
+card.import.opening = Nothing is recorded before this file. The bank's balance says the account held {$balance :currency} on {$date :date}.
 card.import.balance_ok = The balance will match the bank: {$balance :currency}.
 card.import.balance_off = The ledger would be {$difference :currency} off from the bank's {$balance :currency}.
 card.import.already = This file was already imported.
@@ -110,6 +114,11 @@ card.goal.title = {$goal} is falling behind
 card.goal.body = {$saved :currency} of {$target :currency}. Set aside {$required :currency} a month to make it.
 card.recurring.changed = {$merchant} went from {$previous :currency} to {$last :currency}
 card.recurring.new = New {$cadence} payment: {$merchant}
+card.shortfall.title = {$account} may run short before payday
+card.shortfall.body = {$due :currency} in bills is still due and {$available :currency} is left, {$short :currency} short.
+card.shortfall.item = {$merchant}, {$amount :currency} around {$date :date}
+card.unusual.title = {$category} is higher than usual
+card.unusual.body = {$spent :currency} so far this cycle; a whole cycle usually costs {$usual :currency}.
 card.overview.title = {$month} so far
 
 label.income = Income

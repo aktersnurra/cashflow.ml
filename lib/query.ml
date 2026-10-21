@@ -254,7 +254,7 @@ let recurring =
                 (List.map
                    (fun (r : Analytics.recurring) ->
                      `Assoc
-                       [ ("merchant", `String r.merchant); ("cadence", `String (Analytics.cadence_to_string r.cadence));
+                       [ ("merchant", `String r.merchant_name); ("cadence", `String (Analytics.cadence_to_string r.cadence));
                          ("typical_amount", money ctx r.typical_amount); ("last_amount", money ctx r.last_amount);
                          ("price_changed", `Bool (Analytics.price_changed r)); ("last_date", Json.date r.last_date);
                          ("next_expected", Json.date r.next_expected); ("occurrences", `Int r.occurrences);

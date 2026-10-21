@@ -38,28 +38,46 @@ let read_file (file : File.file Js.t) =
         let bytes =
           match Js.Opt.to_option (File.CoerceTo.arrayBuffer reader##.result) with Some buffer -> Typed_array.String.of_arrayBuffer buffer | None -> ""
         in
-        Ivar.fill_if_empty ivar (to_utf8 bytes);
+        Ivar.fill_if_empty ivar bytes;
         Js._false);
   reader##readAsArrayBuffer file;
   Ivar.read ivar
 
 let read_effect = Effect.of_deferred_fun read_file
 
+(* A spreadsheet (a zip) goes as base64; a CSV as text, converted to UTF-8 if it was Latin-1. *)
+let content_args bytes =
+  if String.is_prefix bytes ~prefix:"PK\003\004" then [ ("content_base64", `String (Js.to_string (Dom_html.window##btoa (Js.bytestring bytes)))) ]
+  else [ ("content", `String (to_utf8 bytes)) ]
+
 let first_file (files : File.fileList Js.t) = Js.Opt.to_option (files##item 0)
 
 let component ~(ctx : Ctx.t) ~(account_id : string Bonsai.t) graph =
   let phase, set_phase = Bonsai.state Idle graph in
   let dragging, set_dragging = Bonsai.state false graph in
-  let start =
+  let preview =
     let%arr set_phase and account_id in
+    fun ~name ~content ->
+      let%bind.Effect () = set_phase (Previewing name) in
+      let args = `Assoc ([ ("account_id", `String account_id); ("file_name", `String name) ] @ content_args content) in
+      match%bind.Effect Api.run "import_statement" args with
+      | Ok preview -> set_phase (Preview { file = name; content; preview; decisions = [] })
+      | Error message -> set_phase (Failed message)
+  in
+  let start =
+    let%arr set_phase and preview in
     fun (file : File.file Js.t) ->
       let name = Js.to_string file##.name in
       let%bind.Effect () = set_phase (Reading name) in
       let%bind.Effect content = read_effect file in
-      let%bind.Effect () = set_phase (Previewing name) in
-      let args = `Assoc [ ("account_id", `String account_id); ("content", `String content); ("file_name", `String name) ] in
-      match%bind.Effect Api.run "import_statement" args with
-      | Ok preview -> set_phase (Preview { file = name; content; preview; decisions = [] })
+      preview ~name ~content
+  in
+  (* Sets the opening balance the bank's figures imply, then previews again so the check agrees. *)
+  let set_opening =
+    let%arr set_phase and preview and account_id in
+    fun ~name ~content ~date ~balance ->
+      match%bind.Effect Api.run "set_opening_balance" (`Assoc [ ("account_id", `String account_id); ("date", date); ("balance", balance) ]) with
+      | Ok _ -> preview ~name ~content
       | Error message -> set_phase (Failed message)
   in
   let confirm =
@@ -68,13 +86,13 @@ let component ~(ctx : Ctx.t) ~(account_id : string Bonsai.t) graph =
       let%bind.Effect () = set_phase (Importing file) in
       let decisions = `List (List.map decisions ~f:(fun (row, decision) -> `Assoc [ ("row", `Int row); ("decision", `String decision) ])) in
       let args =
-        `Assoc [ ("account_id", `String account_id); ("content", `String content); ("file_name", `String file); ("decisions", decisions); ("confirm", `Bool true) ]
+        `Assoc ([ ("account_id", `String account_id); ("file_name", `String file); ("decisions", decisions); ("confirm", `Bool true) ] @ content_args content)
       in
       match%bind.Effect Api.run "import_statement" args with
       | Ok result -> Effect.Many [ set_phase (Done result); changed ]
       | Error message -> set_phase (Failed message)
   in
-  let%arr phase and set_phase and dragging and set_dragging and start and confirm and locale = ctx.locale and session = ctx.session and navigate = ctx.navigate in
+  let%arr phase and set_phase and dragging and set_dragging and start and confirm and set_opening and locale = ctx.locale and session = ctx.session and navigate = ctx.navigate in
   let currency = J.str ~default:"SEK" (J.path [ "user"; "default_currency" ] session) in
   let drop_zone label =
     Vdom.Node.label
@@ -88,7 +106,7 @@ let component ~(ctx : Ctx.t) ~(account_id : string Bonsai.t) graph =
       [ Ui.span ~cls:"dropzone-label" [ Ui.text label ];
         Vdom.Node.input
           ~attrs:
-            [ Vdom.Attr.type_ "file"; Vdom.Attr.create "accept" ".csv,text/csv,text/plain";
+            [ Vdom.Attr.type_ "file"; Vdom.Attr.create "accept" ".csv,.xlsx,text/csv,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
               Vdom.Attr.on_file_input (fun _ files -> match first_file files with Some f -> start f | None -> Effect.Ignore) ]
           () ]
   in
@@ -123,6 +141,13 @@ let component ~(ctx : Ctx.t) ~(account_id : string Bonsai.t) graph =
              else
                [ Ui.div ~cls:"warning"
                    [ Ui.text (Msg.card_import_balance_off ~difference:{ statement with minor = Int64.(statement.minor - ledger.minor) } ~balance:statement locale) ] ])
+        @ (match J.field "suggested_opening_balance" preview with
+          | `Null -> []
+          | opening ->
+              let date = J.field "date" opening and balance = J.field "balance" opening in
+              [ Ui.div ~cls:"opening"
+                  [ Ui.muted (Msg.card_import_opening ~balance:(Fmt.money_json ~code:currency balance) ~date:(Fmt.date_json date) locale);
+                    Ui.button (Msg.action_set_opening_balance locale) (set_opening ~name:file ~content ~date ~balance) ] ])
         @ (if List.is_empty ambiguous || already then []
            else
              [ Ui.div ~cls:"warning" [ Ui.text (Msg.card_import_ambiguous ~count:(List.length ambiguous) locale) ];

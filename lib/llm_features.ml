@@ -1,5 +1,5 @@
-(* What the LLM is used for (§12): category suggestions for imported rows, and a few sentences for
-   the month review. Neither ever posts a transfer or decides what is shown. The model sees
+(* What the LLM is used for (§12): category suggestions for imported rows, a few sentences for
+   the month review, and a sentence on what drove unusual spending. Neither ever posts a transfer or decides what is shown. The model sees
    merchant text, amounts, dates and category names for suggestions, and computed totals for
    summaries: never account names, numbers, balances or another member's data. *)
 let max_rows = 60
@@ -90,6 +90,48 @@ let month_summary (service : Service.t) access ~(cycle : Cycle.t) ~currency ~(su
           in
           let result = llm.complete ~system ~user:(Yojson.Safe.to_string figures) in
           Service.log_llm_call service access ~purpose:"month_summary" ~items:1 ~ok:(Result.is_ok result);
+          match result with
+          | Ok text when String.trim text <> "" ->
+              let text = String.trim text in
+              Sql.run service.db cache_put key text llm.model (service.now ());
+              Some text
+          | _ -> None))
+
+(* One sentence on what drove a category's unusual spending, from that category's transactions
+   this cycle (merchant text, dates and amounts). Cached per user, category, cycle, amount and
+   language, so it is written again only when the spending changes. *)
+let unusual_spending (service : Service.t) access ~(cycle : Cycle.t) ~currency ~(unusual : Analytics.unusual) ~(transactions : Transfer.t list) =
+  match service.assistant with
+  | None -> None
+  | Some llm -> (
+      let user = Access.user access in
+      let key =
+        Printf.sprintf "unusual:%s:%s:%s:%Ld:%s" (User_id.to_string user.id) (Account_id.to_string unusual.unusual_category.account.id) (Cycle.label cycle)
+          unusual.spent_so_far user.locale
+      in
+      match Sql.run service.db cache_get key with
+      | Some text -> Some text
+      | None -> (
+          let m = Json.money currency in
+          let figures =
+            `Assoc
+              [ ("category", `String unusual.unusual_category.account.name); ("currency", `String (Currency.code currency));
+                ("spent_this_cycle", m unusual.spent_so_far); ("usual_whole_cycle", m unusual.usual);
+                ( "transactions",
+                  `List
+                    (List.map
+                       (fun (t : Transfer.t) ->
+                         `Assoc [ ("date", Json.date t.value_date); ("text", `String t.memo.description); ("amount", m (Amount.to_int64 t.amount)) ])
+                       (List.filteri (fun i _ -> i < 15) transactions)) ) ]
+          in
+          let language = if String.starts_with ~prefix:"sv" user.locale then "Swedish" else "English" in
+          let system =
+            Printf.sprintf
+              "Write one short, plain sentence in %s saying what made this category's spending higher than usual, naming the \
+               transactions or merchants that explain most of it. Use only the figures given. No advice, no greetings, no markdown." language
+          in
+          let result = llm.complete ~system ~user:(Yojson.Safe.to_string figures) in
+          Service.log_llm_call service access ~purpose:"unusual_spending" ~items:1 ~ok:(Result.is_ok result);
           match result with
           | Ok text when String.trim text <> "" ->
               let text = String.trim text in

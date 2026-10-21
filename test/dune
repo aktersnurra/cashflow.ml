@@ -27,7 +27,7 @@
  (name test_import)
  (enabled_if (= %{context_name} default))
  (modules test_import test_service_support)
- (libraries alcotest cashflow yojson))
+ (libraries alcotest cashflow yojson zipc))
 
 (test
  (name test_http)
@@ -39,7 +39,7 @@
  (name test_attention)
  (enabled_if (= %{context_name} default))
  (modules test_attention test_service_support)
- (libraries alcotest cashflow))
+ (libraries alcotest cashflow yojson))
 
 (test
  (name test_llm)
@@ -59,6 +59,13 @@
  (modules test_config)
  (libraries alcotest cashflow sexplib unix)
  (deps ../cashflow.example.sexp))
+
+(tests
+ (names test_import_properties test_service_properties)
+ (enabled_if (= %{context_name} default))
+ (modules test_import_properties test_service_properties test_service_support)
+ (libraries alcotest cashflow hegel)
+ (preprocess (pps ppx_hegel_test)))
 
 (test
  (name test_sql)
