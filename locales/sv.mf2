@@ -1,0 +1,185 @@
+# Användargränssnittets texter på svenska.
+
+app.name = Cashflow
+nav.home = Hem
+nav.inbox = Inkorg
+nav.accounts = Konton
+nav.budgets = Budget
+nav.household = Hushåll
+nav.insights = Insikter
+nav.settings = Inställningar
+nav.add = Lägg till
+
+action.sign_in = Logga in
+action.sign_out = Logga ut
+action.snooze = Senare
+action.done = Klar
+action.cancel = Avbryt
+action.save = Spara
+action.import = Importera
+action.undo = Ångra
+action.accept = Gå med
+action.decline = Avböj
+action.review = Granska
+action.categorize = Välj kategori
+action.share = Delad med hushållet
+action.pair = Para ihop
+action.skip = Hoppa över
+action.settle = Gör upp
+action.adjust = Bokför skillnaden
+action.choose_file = Välj en fil
+action.close = Stäng
+action.add = Lägg till
+action.open_account = Öppna konto
+action.invite = Bjud in
+action.create_household = Skapa hushåll
+action.reverse = Återför
+action.void = Stryk posten
+action.keep = Behåll
+action.count = Räkna
+
+command.placeholder = Skriv ett kommando eller sök…
+command.go_to = Gå till {$page}
+
+signin.title = Din ekonomi i en blick
+signin.body = Logga in med ditt Pocket ID-konto för att se dina konton, utgifter och ditt sparande.
+
+card.invitation.title = {$household} har bjudit in dig
+card.invitation.body = Gå med för att se och dela hushållets konton.
+card.mismatch.title = {$account} skiljer {$difference :currency}
+card.mismatch.body = Banken angav {$statement :currency} den {$date :date}; bokföringen säger {$ledger :currency}.
+card.import.title = Dags att importera {$account}
+card.import.never = Inget kontoutdrag importerat än. Ladda ner CSV-filen från banken och släpp den här.
+card.import.days =
+  .input {$days :integer}
+  .match $days
+  one {{Senaste importen var i går.}}
+  * {{Senaste importen var för {$days} dagar sedan.}}
+card.import.drop = Släpp en CSV-fil här
+card.import.reading = Läser {$file}…
+card.import.new =
+  .input {$count :integer}
+  .match $count
+  one {{1 ny transaktion}}
+  * {{{$count} nya transaktioner}}
+card.import.duplicates =
+  .input {$count :integer}
+  .match $count
+  one {{1 redan importerad}}
+  * {{{$count} redan importerade}}
+card.import.matched =
+  .input {$count :integer}
+  .match $count
+  one {{1 bekräftar en post du lagt in}}
+  * {{{$count} bekräftar poster du lagt in}}
+card.import.balance_ok = Saldot kommer att stämma med banken: {$balance :currency}.
+card.import.balance_off = Bokföringen skulle skilja {$difference :currency} från bankens {$balance :currency}.
+card.import.already = Den här filen är redan importerad.
+card.import.done =
+  .input {$count :integer}
+  .match $count
+  0 {{Importerat. Allt är kategoriserat.}}
+  one {{Importerat. 1 transaktion att granska.}}
+  * {{Importerat. {$count} transaktioner att granska.}}
+card.inbox.title =
+  .input {$count :integer}
+  .match $count
+  one {{1 transaktion att kategorisera}}
+  * {{{$count} transaktioner att kategorisera}}
+card.inbox.body = Förslagen är klara; de flesta tar en knapptryckning.
+card.unmatched.title = Inte på kontoutdraget: {$description}
+card.unmatched.body = Du lade in {$amount :currency} den {$date :date}, men bankens kontoutdrag visar den inte.
+card.review.title = Så gick {$month}
+card.budget.over = {$category} är över budget
+card.budget.ahead = {$category} går fortare än planerat
+card.budget.body = {$spent :currency} av {$budget :currency}; i jämn takt vore det {$expected :currency} i dag.
+card.contributions.title = Din överföring till hushållet
+card.contributions.body = {$remaining :currency} kvar att föra över av {$contribution :currency} den här månaden.
+card.settle.title = Hushållet är skyldigt {$name} {$amount :currency}
+card.cash.title = Räkna kontanterna i {$account}
+card.cash.body = Inga kontantutgifter inlagda sedan {$since :date}.
+card.goal.title = {$goal} halkar efter
+card.goal.body = {$saved :currency} av {$target :currency}. Lägg undan {$required :currency} i månaden för att nå målet.
+card.recurring.changed = {$merchant} gick från {$previous :currency} till {$last :currency}
+card.recurring.new = Ny återkommande betalning ({$cadence}): {$merchant}
+card.overview.title = {$month} hittills
+
+label.income = Inkomster
+label.spending = Utgifter
+label.savings = Sparat
+label.savings_rate = Sparkvot
+label.provisional = Ännu inte avstämt mot banken
+label.balance = Saldo
+label.pending = Väntande
+label.category = Kategori
+label.date = Datum
+label.amount = Belopp
+label.description = Beskrivning
+label.from = Från
+label.to = Till
+label.personal = Privat
+label.household = Hushåll
+label.family = Familj
+label.net_worth = Nettoförmögenhet
+label.runway = Buffert
+label.runway_months = {$months :number} månader
+label.budget = Budget
+label.spent = Använt
+label.left = {$left :currency} kvar
+label.over = {$over :currency} över
+label.suggested = Förslag: {$category}
+label.uncategorized = Okategoriserat
+label.last_import = Senaste import {$date :date}
+label.never_imported = Aldrig importerat
+label.reconciled = Avstämt
+label.members = Medlemmar
+label.invitation_pending = Inbjuden
+label.email = E-post
+label.name = Namn
+label.kind = Typ
+label.currency = Valuta
+label.language = Språk
+label.timezone = Tidszon
+label.cycle_start = Månaden börjar dag
+label.cycle_last_banking_day = sista bankdagen
+label.cycle_adjust = Om det är en helg eller helgdag
+label.cycle_previous = ta bankdagen före
+label.cycle_next = ta bankdagen efter
+label.cycle_none = behåll dagen
+label.contribution = Bidrag
+label.transferred = Överfört
+label.recurring = Återkommande betalningar
+label.largest = Största transaktionerna
+label.categories = Utgifter per kategori
+label.goals = Sparmål
+label.compared = mot {$previous :currency} förra månaden
+
+inbox.title = Inkorg
+inbox.empty = Inget att kategorisera. Snyggt.
+inbox.keys = j / k för att flytta · enter för att godta · c för att välja · s delad · p para ihop · x hoppa över
+inbox.pick_category = Välj en kategori
+inbox.pick_pair = Vilken transaktion är andra sidan?
+
+accounts.title = Konton
+accounts.empty = Inga konton än.
+accounts.bank = Bankkonton och kort
+accounts.categories = Kategorier
+
+budgets.title = Budget
+budgets.empty = Ingen budget än. Sätt en för en kategori för att se takten.
+budgets.set = Månadsbudget för {$category}
+
+household.title = Hushåll
+household.none = Du är inte med i något hushåll än.
+household.plan = Överföringar den här månaden
+household.invite_hint = De behöver ha loggat in en gång.
+
+insights.title = Insikter
+
+settings.title = Inställningar
+
+add.title = Lägg till en transaktion
+add.pending_note = Kontot bekräftas av kontoutdrag, så posten väntar tills kontoutdraget kommer.
+
+error.generic = Något gick fel: {$message}
+error.offline = Når inte servern. Försöker igen…

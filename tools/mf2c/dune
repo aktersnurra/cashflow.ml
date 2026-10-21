@@ -1,0 +1,8 @@
+(library
+ (name mf2)
+ (modules mf2))
+
+(executable
+ (name main)
+ (modules main)
+ (libraries mf2))

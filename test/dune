@@ -38,3 +38,8 @@
  (name test_llm)
  (modules test_llm test_service_support)
  (libraries alcotest cashflow yojson))
+
+(test
+ (name test_mf2)
+ (modules test_mf2)
+ (libraries alcotest mf2 cashflow_msg mf2_runtime))
