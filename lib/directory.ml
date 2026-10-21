@@ -35,20 +35,26 @@ let update_settings =
     Codec.(text @-> text @-> text @-> pay_cycle @-> user_id @-> nil)
     exec
 
-type claims = { issuer : string; subject : string; display_name : string; email : string option; is_admin : bool }
+(* What the identity provider said. MCP access tokens often carry only the subject, so a field is
+   optional and an absent one leaves the stored value alone. *)
+type claims = { issuer : string; subject : string; display_name : string option; email : string option; is_admin : bool option }
 
 (* Users are created on first sign-in. Name, email and admin rights follow the identity
-   provider, so they are refreshed on every sign-in. *)
+   provider, so they are refreshed whenever a sign-in carries them. *)
 let resolve_user db ~now (claims : claims) =
   Sql.transaction db (fun () ->
       match run db user_by_identity claims.issuer claims.subject with
       | Some user ->
-          if user.display_name <> claims.display_name || user.email <> claims.email || user.is_admin <> claims.is_admin then
-            run db refresh_user claims.display_name claims.email claims.is_admin user.id;
+          let display_name = Option.value claims.display_name ~default:user.display_name in
+          let email = match claims.email with Some _ as email -> email | None -> user.email in
+          let is_admin = Option.value claims.is_admin ~default:user.is_admin in
+          if user.display_name <> display_name || user.email <> email || user.is_admin <> is_admin then
+            run db refresh_user display_name email is_admin user.id;
           (Option.get (run db user_by_id user.id), `Existing)
       | None ->
           let id = User_id.fresh () in
-          run db insert_user id claims.issuer claims.subject claims.display_name claims.email claims.is_admin now;
+          let display_name = Option.value claims.display_name ~default:(Option.value claims.email ~default:claims.subject) in
+          run db insert_user id claims.issuer claims.subject display_name claims.email (Option.value claims.is_admin ~default:false) now;
           (Option.get (run db user_by_id id), `Created))
 
 let find_user db id = run db user_by_id id

@@ -172,6 +172,21 @@ CREATE TABLE categorisation_rules (
 );
 CREATE INDEX categorisation_rules_owner_idx ON categorisation_rules(owner_kind, owner_id);
 |}
+    );
+    ( 4,
+      {|
+-- Web sessions. Only a hash of the session token is stored, so a copy of the database can't be
+-- used to sign in.
+CREATE TABLE sessions (
+  token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), csrf_token TEXT NOT NULL,
+  created_at TEXT NOT NULL, last_seen_at TEXT NOT NULL, expires_at TEXT NOT NULL
+);
+CREATE INDEX sessions_user_idx ON sessions(user_id);
+CREATE TABLE login_attempts (
+  state_hash TEXT PRIMARY KEY, code_verifier TEXT NOT NULL, nonce TEXT NOT NULL, return_to TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+|}
     ) ]
 
 let latest_version = List.fold_left (fun latest (version, _) -> max latest version) 0 migrations

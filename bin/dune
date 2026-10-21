@@ -1,0 +1,4 @@
+(executable
+ (name cashflow)
+ (public_name cashflow)
+ (libraries cashflow cmdliner eio_main logs))
