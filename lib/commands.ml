@@ -404,7 +404,14 @@ let planned_json currency (p : Import.planned) =
   `Assoc
     [ ("row", `Int (p.index + 1)); ("date", Json.date p.row.booking_date); ("description", `String p.row.description);
       ("amount", Json.money currency p.row.amount);
-      ("status", `String (match p.status with New -> "new" | Duplicate _ -> "duplicate" | Matched _ -> "confirms_pending"));
+      ( "status",
+        `String
+          (match p.status with
+          | New -> "new"
+          | Duplicate _ | Decided_duplicate _ -> "duplicate"
+          | Matched _ -> "confirms_pending"
+          | Ambiguous _ -> "ambiguous") );
+      ("already_imported_alike", match p.status with Ambiguous existing -> `Int (List.length existing) | _ -> `Null);
       ("suggested_category_id", Json.option (fun (s : Suggest.suggestion) -> `String (Account_id.to_string s.category_id)) p.suggestion);
       ("auto_categorized", `Bool (match p.suggestion with Some s -> s.auto_apply | None -> false));
       ("near_pending_id", Json.option (fun (t : Transfer.t) -> `String (Transfer_id.to_string t.id)) p.near_pending) ]
@@ -416,11 +423,27 @@ let balance_json currency = function
         [ ("date", Json.date b.on_date); ("statement_balance", Json.money currency b.statement_balance); ("ledger_balance", Json.money currency b.ledger_balance);
           ("agrees", `Bool (Int64.equal b.statement_balance b.ledger_balance)) ]
 
+(* [{"row": 3, "decision": "new"}, ...], rows numbered from 1 as the preview shows them. *)
+let decisions fields =
+  let one = function
+    | `Assoc d -> (
+        match List.assoc_opt "row" d, List.assoc_opt "decision" d with
+        | Some (`Int row), Some (`String "duplicate") when row >= 1 -> Ok (row - 1, Import.Is_duplicate)
+        | Some (`Int row), Some (`String "new") when row >= 1 -> Ok (row - 1, Import.Is_new)
+        | _ -> invalid "each decision is {\"row\": <row>, \"decision\": \"duplicate\" or \"new\"}")
+    | _ -> invalid "decisions must be a list of objects"
+  in
+  match List.assoc_opt "decisions" fields with
+  | None | Some `Null -> Ok []
+  | Some (`List items) -> List.fold_right (fun item acc -> let* acc = acc in let* d = one item in Ok (d :: acc)) items (Ok [])
+  | Some _ -> invalid "decisions must be a list"
+
 let import_request fields =
   let* account_id = account_id "account_id" fields in
   let* content = required_string "content" fields in
   let* file_name = arg (A.string "file_name" fields) in
-  Ok { Import.account_id; file_name; content }
+  let* decisions = decisions fields in
+  Ok { Import.account_id; file_name; content; decisions }
 
 let batch_json (b : Import_store.batch) =
   `Assoc
@@ -433,10 +456,22 @@ let import_statement =
   command "import_statement" Write
     "Import a bank statement CSV into an account. Without confirm it only previews: which rows are new, which are duplicates of earlier \
      imports, which confirm pending manual entries, and whether the balance will agree with the bank. With confirm: true it posts the \
-     new rows; uncategorised ones go to the inbox."
+     new rows; uncategorised ones go to the inbox. A file without running balances can have ambiguous rows: on its first or last day, \
+     identical (same day, text and amount) to rows already imported. Ask the user whether each is already imported or a new \
+     purchase, and pass the answers as decisions; confirm refuses until every ambiguous row is decided."
     ~required:[ "account_id"; "content" ]
     [ string_prop "account_id" "The bank account or card the statement belongs to."; string_prop "content" "The CSV file's text.";
       string_prop "file_name" "The file's name, for the import history.";
+      ( "decisions",
+        `Assoc
+          [ ("type", `String "array");
+            ( "items",
+              `Assoc
+                [ ("type", `String "object");
+                  ( "properties",
+                    `Assoc [ ("row", `Assoc [ ("type", `String "integer") ]); ("decision", `Assoc [ ("type", `String "string"); ("enum", `List [ `String "duplicate"; `String "new" ]) ]) ] );
+                  ("required", `List [ `String "row"; `String "decision" ]) ] );
+            ("description", `String "For each ambiguous row of the preview: duplicate (already imported) or new.") ] );
       ("confirm", `Assoc [ ("type", `String "boolean"); ("description", `String "Post the rows; otherwise only preview.") ]) ]
     (fun service access fields ->
       let* request = import_request fields in

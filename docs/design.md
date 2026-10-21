@@ -264,7 +264,7 @@ To settle up, a transfer from the household account to personal checking clears 
 
 ```
 drop CSV ─▶ detect format ─▶ parse rows ─▶ match account ─▶ fingerprint & dedupe
-        ─▶ preview (n new · m duplicates · balance check) ─▶ confirm
+        ─▶ preview (n new · m duplicates · k to decide · balance check) ─▶ confirm
         ─▶ post new rows against Expense:Uncategorized ─▶ auto-categorise ─▶ Inbox
 ```
 
@@ -276,14 +276,25 @@ drop CSV ─▶ detect format ─▶ parse rows ─▶ match account ─▶ fing
 
 There is one parser module per format, behind a common signature (`detect`, `parse`, `account_hint`). The first one is Handelsbanken. I need an anonymised sample of its export, because the columns, the date format, the decimal separator and the encoding all decide the parser (§17). Avanza and Montrose imports are out of scope for v1. Adding one later means writing one format module: it maps deposits, withdrawals, dividends and fees to transfers, ignores individual trades, and reuses the rest of the pipeline.
 
-### 6.3 Row fingerprint and duplicates
+### 6.3 Row identity and duplicates
 
-`fingerprint = sha256(account_id ‖ value_date ‖ amount ‖ normalised description ‖ running_balance ‖ occurrence)`
+A row's identity is the strongest of these the format provides:
 
-- **The running balance makes rows unique:** two identical coffees on the same day have different balances after them.
-- **Fallback:** when a format has no running-balance column, `occurrence` (the row's position among otherwise identical rows that day within the file) keeps rows apart.
-- **Idempotency:** the fingerprint is used as the idempotency key, so a row that has already been imported is skipped.
-- **Overlapping exports:** files that overlap each other are therefore safe.
+1. **The bank's own reference** for the transaction: unique by definition.
+2. **The running balance:** two identical coffees on the same day have different balances after them.
+3. **Position:** the row's occurrence among otherwise identical rows that day (same date, amount and normalised text).
+
+`fingerprint = sha256(account_id ‖ value_date ‖ amount ‖ normalised description ‖ running_balance ‖ reference ‖ occurrence)`, and it is the row's idempotency key, so a row already in the ledger is never posted twice.
+
+**Position is only an identity on a day the file covers in full.** A file-local counter tells rows apart within one export, but it can't match rows across exports that hold different subsets of a day. Import a one-row export with a 35 kr coffee, then another export with only a second, identical coffee that day: both rows are occurrence 0, and the second purchase would be silently dropped as a duplicate. So:
+
+- **Complete days:** a day is complete in a file when it lies strictly between the file's first and last dates (a format that declares its statement period can widen this to the period, up to the day before the export). On a complete day the file holds every identical row, so the first *m* are the ones already imported and the rest are new.
+- **Edge days:** the first and last days of a file may be cut off. A positional row there that matches nothing already imported is new.
+- **Ambiguous rows:** a positional row on an edge day that collides with rows already imported can't be decided from the data. The preview marks it **ambiguous** ("looks like one already imported: same day, text and amount"), and the import is not confirmed until each ambiguous row is decided: *already imported* or *new*. Over MCP, `import_statement` refuses with the list of ambiguous rows until it gets the decisions.
+- **New rows take the next free occurrence**, so a later complete-day export lines up with what is in the ledger.
+- **Undo:** an import whose rows a later import counted as already there, by fingerprint or by an *already imported* decision on the same day, can't be undone until the later one is.
+
+Formats with a running balance or a reference never need a decision. Rows that only position identifies are the cost of a format with neither, and the Handelsbanken export decides which case applies (§17).
 
 ### 6.4 Uncategorised rows and the Inbox
 

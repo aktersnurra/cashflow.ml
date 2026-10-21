@@ -4,7 +4,9 @@
                                           \-> Failed (from anywhere)
 
    The preview is the server's dry run (new rows, duplicates, entries it confirms, whether the
-   balance will agree); nothing is posted until Import is pressed. *)
+   balance will agree); nothing is posted until Import is pressed. Rows the server can't place
+   (ambiguous: identical to rows already imported, on a day the file may not cover in full) need a
+   decision each before Import is enabled. *)
 open! Core
 open! Async_kernel
 open! Bonsai_web.Cont
@@ -15,7 +17,7 @@ type phase =
   | Idle
   | Reading of string
   | Previewing of string
-  | Preview of { file : string; content : string; preview : J.t }
+  | Preview of { file : string; content : string; preview : J.t; decisions : (int * string) list }  (** row -> duplicate | new *)
   | Importing of string
   | Done of J.t
   | Failed of string
@@ -57,14 +59,17 @@ let component ~(ctx : Ctx.t) ~(account_id : string Bonsai.t) graph =
       let%bind.Effect () = set_phase (Previewing name) in
       let args = `Assoc [ ("account_id", `String account_id); ("content", `String content); ("file_name", `String name) ] in
       match%bind.Effect Api.run "import_statement" args with
-      | Ok preview -> set_phase (Preview { file = name; content; preview })
+      | Ok preview -> set_phase (Preview { file = name; content; preview; decisions = [] })
       | Error message -> set_phase (Failed message)
   in
   let confirm =
     let%arr set_phase and account_id and changed = ctx.changed in
-    fun ~file ~content ->
+    fun ~file ~content ~decisions ->
       let%bind.Effect () = set_phase (Importing file) in
-      let args = `Assoc [ ("account_id", `String account_id); ("content", `String content); ("file_name", `String file); ("confirm", `Bool true) ] in
+      let decisions = `List (List.map decisions ~f:(fun (row, decision) -> `Assoc [ ("row", `Int row); ("decision", `String decision) ])) in
+      let args =
+        `Assoc [ ("account_id", `String account_id); ("content", `String content); ("file_name", `String file); ("decisions", decisions); ("confirm", `Bool true) ]
+      in
       match%bind.Effect Api.run "import_statement" args with
       | Ok result -> Effect.Many [ set_phase (Done result); changed ]
       | Error message -> set_phase (Failed message)
@@ -92,8 +97,17 @@ let component ~(ctx : Ctx.t) ~(account_id : string Bonsai.t) graph =
   | Reading file | Previewing file | Importing file -> Ui.div ~cls:"import-progress" [ Ui.div ~cls:"shimmer" []; Ui.muted (Msg.card_import_reading ~file locale) ]
   | Failed message ->
       Ui.div ~cls:"import-result error" [ Ui.p (Msg.error_generic ~message locale); Ui.button (Msg.action_close locale) (set_phase Idle) ]
-  | Preview { file; content; preview } ->
+  | Preview { file; content; preview; decisions } ->
       let rows = J.list (J.field "rows" preview) in
+      let ambiguous = List.filter rows ~f:(fun r -> String.equal (J.str (J.field "status" r)) "ambiguous") in
+      let undecided = List.exists ambiguous ~f:(fun r -> not (List.Assoc.mem decisions ~equal:Int.equal (J.int (J.field "row" r)))) in
+      let decide row decision =
+        set_phase (Preview { file; content; preview; decisions = (row, decision) :: List.Assoc.remove decisions ~equal:Int.equal row })
+      in
+      let choice row decision label =
+        let chosen = Option.equal String.equal (List.Assoc.find decisions ~equal:Int.equal row) (Some decision) in
+        Ui.button ~kind:(if chosen then "active" else "") label (decide row decision)
+      in
       let count status = List.count rows ~f:(fun r -> String.equal (J.str (J.field "status" r)) status) in
       let balance = J.field "balance_check" preview in
       let already = String.equal (J.str (J.field "status" preview)) "already_imported" in
@@ -109,9 +123,22 @@ let component ~(ctx : Ctx.t) ~(account_id : string Bonsai.t) graph =
              else
                [ Ui.div ~cls:"warning"
                    [ Ui.text (Msg.card_import_balance_off ~difference:{ statement with minor = Int64.(statement.minor - ledger.minor) } ~balance:statement locale) ] ])
+        @ (if List.is_empty ambiguous || already then []
+           else
+             [ Ui.div ~cls:"warning" [ Ui.text (Msg.card_import_ambiguous ~count:(List.length ambiguous) locale) ];
+               Ui.div ~cls:"list"
+                 (List.map ambiguous ~f:(fun r ->
+                      let row = J.int (J.field "row" r) in
+                      Ui.div ~cls:"row"
+                        [ Ui.div
+                            [ Ui.div ~cls:"row-title" [ Ui.text (J.str (J.field "description" r)) ];
+                              Ui.div ~cls:"row-sub" [ Ui.text (Fmt.format_date locale (J.field "date" r) ^ " · " ^ Fmt.format_money locale ~code:currency (J.field "amount" r)) ] ];
+                          Ui.div ~cls:"segmented"
+                            [ choice row "duplicate" (Msg.action_already_imported locale); choice row "new" (Msg.action_new_row locale) ] ])) ])
         @ [ (if already then Ui.muted (Msg.card_import_already locale) else Vdom.Node.none);
             Ui.div ~cls:"actions"
-              [ Ui.button ~kind:"primary" ~disabled:already (Msg.action_import locale) (confirm ~file ~content); Ui.button (Msg.action_cancel locale) (set_phase Idle) ] ])
+              [ Ui.button ~kind:"primary" ~disabled:(already || undecided) (Msg.action_import locale) (confirm ~file ~content ~decisions);
+                Ui.button (Msg.action_cancel locale) (set_phase Idle) ] ])
   | Done result ->
       let inbox = J.int (J.field "inbox" result) in
       Ui.div ~cls:"import-result ok"
