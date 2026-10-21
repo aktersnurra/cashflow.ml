@@ -112,6 +112,7 @@ let spending_by_category book ~first ~last ?compare_to transfers =
     current
 
 let category_trend book category ~cycles transfers =
+  let sign = match book.inside category with Some info when not (Account.debit_normal info.account.kind) -> -1L | _ -> 1L in
   List.map
     (fun (cycle : Cycle.t) ->
       let total =
@@ -123,8 +124,7 @@ let category_trend book category ~cycles transfers =
             else total)
           0L transfers
       in
-      ignore book;
-      (cycle, total))
+      (cycle, Int64.mul sign total))
     cycles
 
 (* Assets minus liabilities after each date, from every posted transfer up to it. *)
@@ -313,6 +313,7 @@ type budget = { category_id : Account_id.t; monthly_amount : int64; rollover : b
 type budget_line = {
   line_category : Account_info.t;
   budgeted : int64;
+  rollover : bool;
   carried : int64;  (** rolled over from earlier cycles: positive when underspent *)
   spent : int64;
   expected_by_now : int64;
@@ -363,7 +364,7 @@ let budget_status book ~(cycle : Cycle.t) ~budgets ~previous_cycles ~today ~budg
             else if Int64.compare (Int64.mul spent 100L) (Int64.mul expected 115L) > 0 then `Ahead_of_pace
             else `On_pace
           in
-          Some { line_category = category; budgeted = budget.monthly_amount; carried; spent; expected_by_now = expected; status })
+          Some { line_category = category; budgeted = budget.monthly_amount; rollover = budget.rollover; carried; spent; expected_by_now = expected; status })
     budgets
 
 (* Contribution planning: split a target in proportion to income. Rounded to whole currency
