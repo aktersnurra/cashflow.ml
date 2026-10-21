@@ -29,5 +29,12 @@
  (log_level Info)
 
  ;; Optional: category suggestions and month summaries through OpenRouter.
- ;; (openrouter ((api_key (Env OPENROUTER_API_KEY)) (model anthropic/claude-haiku-5.5)))
+ ;; Remove #; to enable. Every request requires ZDR and denies data collection.
+ ;; provider_only is optional; these are its defaults. An empty list is refused.
+ ;; If no allowed ZDR endpoint serves the model, AI features stay unavailable;
+ ;; requests never retry with weaker privacy restrictions.
+ #;(openrouter
+    ((api_key (Env OPENROUTER_API_KEY))
+     (model anthropic/claude-haiku-5.5)
+     (provider_only (google-vertex amazon-bedrock azure))))
  )

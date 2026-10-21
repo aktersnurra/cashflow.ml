@@ -2,6 +2,8 @@
    [File.t] with derived converters. Unknown or misspelt fields are errors, missing optional ones
    take their defaults, and secrets can live outside the file. [t] is the resolved form the server
    uses. *)
+let default_openrouter_provider_only = [ "google-vertex"; "amazon-bedrock"; "azure" ]
+
 type t = {
   database_path : string;
   listen_address : string;
@@ -14,6 +16,7 @@ type t = {
   static_dir : string;
   openrouter_api_key : string option;
   openrouter_model : string;
+  openrouter_provider_only : string list;
   log_level : Logs.level option;  (** [None] silences logging *)
 }
 
@@ -32,7 +35,12 @@ module File = struct
   [@@deriving sexp]
 
   type web = { client_id : string; client_secret : secret } [@@deriving sexp]
-  type openrouter = { api_key : secret; model : string [@default "anthropic/claude-haiku-5.5"] } [@@deriving sexp]
+  type openrouter = {
+    api_key : secret;
+    model : string; [@default "anthropic/claude-haiku-5.5"]
+    provider_only : string list; [@default default_openrouter_provider_only]
+  }
+  [@@deriving sexp]
 
   type log_level = Quiet | Error | Warning | Info | Debug [@@deriving sexp]
 
@@ -72,6 +80,11 @@ let resolve (file : File.t) =
     check (String.starts_with ~prefix:"https://" file.public_url || String.starts_with ~prefix:"http://127.0.0.1" file.public_url || String.starts_with ~prefix:"http://localhost" file.public_url)
       "public_url must be https (or http on localhost, for development)"
   in
+  let* () =
+    match file.openrouter with
+    | Some o -> check (o.provider_only <> []) "openrouter.provider_only must not be empty"
+    | None -> Ok ()
+  in
   let* web_client_secret = match file.web with Some web -> Result.map Option.some (read_secret web.client_secret) | None -> Ok None in
   let* openrouter_api_key = match file.openrouter with Some o -> Result.map Option.some (read_secret o.api_key) | None -> Ok None in
   let public_base_url = if String.ends_with ~suffix:"/" file.public_url then String.sub file.public_url 0 (String.length file.public_url - 1) else file.public_url in
@@ -80,6 +93,7 @@ let resolve (file : File.t) =
       web_client_id = Option.map (fun (w : File.web) -> w.client_id) file.web; web_client_secret; admin_group = file.oidc.admin_group;
       static_dir = file.static_dir; openrouter_api_key;
       openrouter_model = Option.fold ~none:"anthropic/claude-haiku-5.5" ~some:(fun (o : File.openrouter) -> o.model) file.openrouter;
+      openrouter_provider_only = Option.fold ~none:default_openrouter_provider_only ~some:(fun (o : File.openrouter) -> o.provider_only) file.openrouter;
       log_level = (match file.log_level with Quiet -> None | Error -> Some Logs.Error | Warning -> Some Warning | Info -> Some Info | Debug -> Some Debug) }
 
 (* "lib/config.ml.File.t_of_sexp: extra fields: statc_dir" reads as "unknown field statc_dir". *)

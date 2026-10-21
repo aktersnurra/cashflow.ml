@@ -55,8 +55,63 @@ let test_no_network_inside_the_import_transaction () =
   | [ item ] -> Alcotest.(check bool) "suggestion kept" true (Option.is_some item.item.suggested_account_id)
   | _ -> Alcotest.fail "expected one inbox item"
 
+let openrouter_config fields =
+  match Config.parse
+    (Printf.sprintf
+       {|((database /tmp/test.sqlite3) (listen 127.0.0.1:8081) (public_url https://cashflow.example)
+          (oidc ((issuer https://id.example) (audience https://cashflow.example)))
+          (openrouter ((api_key (Inline test-key)) (model test-model) %s)))|} fields)
+  with Ok config -> config | Error e -> Alcotest.fail e
+
+(* Privacy restrictions belong in the HTTP request, not just the configuration. *)
+let test_openrouter_privacy_policy () =
+  let requests = ref [] in
+  let post ~uri:_ ~headers:_ ~body =
+    requests := Yojson.Safe.from_string body :: !requests;
+    Ok {|{"choices":[{"message":{"content":"Groceries"}}]}|}
+  in
+  let config = openrouter_config "" in
+  let assistant = Llm.openrouter ~post ~api_key:"test-key" ~model:config.openrouter_model ~provider_only:config.openrouter_provider_only in
+  Alcotest.(check (result string string)) "completion" (Ok "Groceries") (assistant.complete ~system:"Classify" ~user:"ICA");
+  Alcotest.(check int) "one request" 1 (List.length !requests);
+  let open Yojson.Safe.Util in
+  let request = List.hd !requests in
+  Alcotest.(check string) "model" "test-model" (member "model" request |> to_string);
+  let provider = member "provider" request in
+  Alcotest.(check bool) "zero data retention" true (member "zdr" provider = `Bool true);
+  Alcotest.(check string) "no data collection" "deny" (member "data_collection" provider |> to_string);
+  Alcotest.(check (list string)) "only approved providers"
+    [ "google-vertex"; "amazon-bedrock"; "azure" ] (member "only" provider |> to_list |> List.map to_string)
+
+let test_openrouter_does_not_relax_policy () =
+  let requests = ref [] in
+  let post ~uri:_ ~headers:_ ~body = requests := Yojson.Safe.from_string body :: !requests; Error "HTTP 404 Not Found" in
+  let config = openrouter_config "(provider_only (amazon-bedrock))" in
+  let assistant = Llm.openrouter ~post ~api_key:"test-key" ~model:config.openrouter_model ~provider_only:config.openrouter_provider_only in
+  Alcotest.(check (result string string)) "no eligible endpoint is an error" (Error "HTTP 404 Not Found")
+    (assistant.complete ~system:"Classify" ~user:"ICA");
+  Alcotest.(check int) "no relaxed-policy retry" 1 (List.length !requests);
+  let open Yojson.Safe.Util in
+  let provider = member "provider" (List.hd !requests) in
+  Alcotest.(check bool) "failed request still requires ZDR" true (member "zdr" provider = `Bool true);
+  Alcotest.(check (list string)) "custom allowlist remains in effect" [ "amazon-bedrock" ]
+    (member "only" provider |> to_list |> List.map to_string);
+  Alcotest.(check string) "no collection even on failure" "deny" (member "data_collection" provider |> to_string)
+
+let test_openrouter_empty_allowlist_sends_nothing () =
+  let sent = ref false in
+  let post ~uri:_ ~headers:_ ~body:_ = sent := true; Error "request was sent" in
+  let assistant = Llm.openrouter ~post ~api_key:"test-key" ~model:"test-model" ~provider_only:[] in
+  Alcotest.(check (result string string)) "empty allowlist refused"
+    (Error "OpenRouter provider allowlist must not be empty") (assistant.complete ~system:"Classify" ~user:"ICA");
+  Alcotest.(check bool) "financial data never sent" false !sent
+
 let () =
   Alcotest.run "llm"
     [ ( "features",
         [ Alcotest.test_case "suggestions and privacy" `Quick test_suggestions_and_privacy;
-          Alcotest.test_case "no network inside the import transaction" `Quick test_no_network_inside_the_import_transaction ] ) ]
+          Alcotest.test_case "no network inside the import transaction" `Quick test_no_network_inside_the_import_transaction ] );
+      ( "openrouter",
+        [ Alcotest.test_case "privacy policy in requests" `Quick test_openrouter_privacy_policy;
+          Alcotest.test_case "never relax the policy" `Quick test_openrouter_does_not_relax_policy;
+          Alcotest.test_case "empty allowlist sends nothing" `Quick test_openrouter_empty_allowlist_sends_nothing ] ) ]
