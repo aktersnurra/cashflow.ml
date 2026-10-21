@@ -41,6 +41,7 @@ let call service access ~scopes ~request_id name arguments =
   | Some c -> (
       match Commands.execute service access ~scopes c arguments with
       | Ok value -> Ok (response ~id:request_id (text_result value))
+      | Error (`Storage_unavailable _) -> Ok (rpc_error ~id:request_id (-32603) "Internal error")
       | Error (`Forbidden reason) -> Ok (response ~id:request_id (tool_error ("not allowed: " ^ reason)))
       | Error error -> Ok (response ~id:request_id (tool_error (Import.error_to_string error)))
       | exception Sql.Sql_error message ->

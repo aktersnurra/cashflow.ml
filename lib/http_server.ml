@@ -140,6 +140,7 @@ let logout deps (request : request) =
 let api_status = function
   | `Forbidden _ -> 403
   | `Not_found _ -> 404
+  | `Storage_unavailable _ -> 500
   | `Invalid _ | `Unreadable _ -> 422
 
 (* State-changing calls carry the session's CSRF token in a header, which another site can't read
@@ -157,6 +158,7 @@ let api_command deps (request : request) name =
         | Some command, Ok args -> (
             match Commands.execute deps.service access ~scopes:(web_scopes access) command args with
             | Ok value -> json 200 value
+            | Error (`Storage_unavailable _) -> error_json 500 "internal error"
             | Error error -> error_json (api_status error) (Import.error_to_string error)
             | exception Sql.Sql_error message ->
                 Log.err (fun m -> m "command=%s storage error: %s" name message);

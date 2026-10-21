@@ -324,10 +324,40 @@ let test_budget_rollover_report () =
       | _ -> Alcotest.fail "expected one budget line")
     [ (0, "true"); (-1, "false") ]
 
+let test_cashflow_query_boundary () =
+  let service, alice, _ = scenario () in
+  List.iter (fun scope ->
+    let legacy = ok (Insights.context service alice ~scope ()) in
+    let expected = Query.cashflow_summary.encode legacy (Insights.cashflow_summary legacy ~cycles:2) in
+    let module W = Cashflow_workflow in
+    let first, last = Insights.span (Insights.recent_cycles legacy 2) in
+    let facts : W.Cashflow_facts.t = { accounts=Insights.accounts legacy;
+      transfers=Insights.transfers legacy ~first ~last; reconciled_through=Insights.reconciled_through legacy } in
+    let scripted = W.Effects.run { W.Effects.handle = (fun (type a) (op : a W.Effect_ops.t) : a -> match op with
+      | Now -> now
+      | Resolve_currency code -> Result.map_error (fun _ -> W.Reporting_error.Unknown_currency code) (Service.currency service code)
+      | Load_cashflow _ -> Ok facts) } (fun () -> W.Reporting.cashflow_summary ~access:alice ~scope ~cycles:2 ()) in
+    let scripted = match scripted with Ok report -> report | Error _ -> Alcotest.fail "scripted report failed" in
+    Alcotest.(check string) "live/scripted parity" (Yojson.Safe.to_string expected)
+      (Yojson.Safe.to_string (Query.cashflow_summary.encode legacy scripted.cycles));
+    let calls = ref 0 in
+    let service = { service with now = (fun () -> incr calls; now) } in
+    let actual = query service alice "cashflow_summary" ["scope", `String (Analytics.scope_to_string scope); "cycles", `Int 2] in
+    Alcotest.(check string) "complete legacy parity" (Yojson.Safe.to_string expected) (Yojson.Safe.to_string actual);
+    Alcotest.(check int) "one captured clock sample" 1 !calls) [Analytics.Me; Household; Family];
+  let alone = sign_in service "alone" in
+  let common : Query.common = { scope=Me; currency=Some "BAD" } in
+  Alcotest.(check bool) "unsupported currency" true
+    (Query.run service alone (Query.Cashflow_summary (common, 1)) = Error (`Invalid "unknown currency BAD"));
+  let common = { common with scope=Household } in
+  Alcotest.(check bool) "household before currency" true
+    (Query.run service alone (Query.Cashflow_summary (common, 1)) = Error (`Invalid "you don't belong to a household, so use scope \"me\""))
+
 let () =
   Alcotest.run "analytics"
     [ ( "insights",
-        [ Alcotest.test_case "cashflow by scope" `Quick test_cashflow_by_scope;
+        [ Alcotest.test_case "cashflow query boundary" `Quick test_cashflow_query_boundary;
+          Alcotest.test_case "cashflow by scope" `Quick test_cashflow_by_scope;
           Alcotest.test_case "categories, recurring and budgets" `Quick test_categories_recurring_and_budgets;
           Alcotest.test_case "contribution plan" `Quick test_contribution_plan;
           Alcotest.test_case "net worth with a loan" `Quick test_net_worth_with_a_loan;

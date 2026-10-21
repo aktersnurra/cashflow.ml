@@ -24,12 +24,13 @@ module User_id = Cashflow_core.User_id
 
 let ( let* ) = Result.bind
 
-type error = [ `Forbidden of string | `Not_found of string | `Invalid of string ]
+type error = [ `Forbidden of string | `Not_found of string | `Invalid of string | `Storage_unavailable of Cashflow_workflow.Reporting_error.operation ]
 
 let error_to_string : [< error ] -> string = function
   | `Forbidden reason -> "forbidden: " ^ reason
   | `Not_found what -> what ^ " not found"
   | `Invalid reason -> reason
+  | `Storage_unavailable _ -> "internal error"
 
 type t = { db : Sql.db; now : unit -> Ptime.t; assistant : Llm.t option  (** off unless an API key is configured *) }
 

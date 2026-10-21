@@ -41,13 +41,32 @@ let amount_arg (ctx : Insights.ctx) name text =
 
 let run : type a. Service.t -> Access.t -> a t -> (a * Insights.ctx, [> Service.error ]) result =
  fun service access query ->
+  match query with
+  | Cashflow_summary (common, cycles) ->
+      let module W = Cashflow_workflow in
+      let result = Reporting_live.run ~db:service.db ~access ~now:service.now (fun () ->
+        W.Reporting.cashflow_summary ~access ~scope:common.scope ?currency:common.currency ~cycles ()) in
+      let* report = Result.map_error (function
+        | W.Reporting_error.Unknown_currency code -> `Invalid ("unknown currency " ^ code)
+        | Household_required -> `Invalid "you don't belong to a household, so use scope \"me\""
+        | Access_denied -> `Forbidden "access denied"
+        | Invalid_range _ -> `Invalid "from_date is after to_date"
+        | Storage_unavailable operation -> `Storage_unavailable operation) result in
+      let context = report.W.Reporting.context in
+      let ctx : Insights.ctx = { service; access = W.Reporting_context.access context;
+        scope = W.Reporting_context.scope context; owners = W.Reporting_context.owners context;
+        currency = W.Reporting_context.currency context; setting = W.Reporting_context.setting context;
+        today = W.Reporting_context.today context } in
+      Ok (report.cycles, ctx)
+  | _ ->
   let common = common_of query in
   (* A plain match rather than let*, so the result type each constructor fixes reaches the branches. *)
   match Insights.context service access ~scope:common.scope ?currency:common.currency () with
   | Error _ as error -> error
   | Ok ctx -> (
   match query with
-  | Cashflow_summary (_, cycles) -> Ok ((Insights.cashflow_summary ctx ~cycles), ctx)
+  (* Handled above; Insights.cashflow_summary remains only for the transitional attention path. *)
+  | Cashflow_summary _ -> assert false
   | Spending_by_category (_, period, compare_previous) -> Ok ((Insights.spending_by_category ctx ~period ~compare_previous), ctx)
   | Category_trend (_, category, cycles) -> let* trend = Insights.category_trend ctx ~category ~cycles in Ok (trend, ctx)
   | Net_worth (_, cycles) -> Ok ((Insights.net_worth ctx ~cycles), ctx)

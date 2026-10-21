@@ -163,10 +163,62 @@ let test_static_paths_stay_inside () =
   Alcotest.(check int) "traversal" 404 (Http_server.handle deps (request "/assets/../../etc/passwd")).status;
   Alcotest.(check int) "unknown api route" 404 (Http_server.handle deps (request "/api/nothing")).status
 
+let test_reporting_envelopes () =
+  let deps = deps () in
+  let access = sign_in deps.service "alice" in
+  let token = Web_auth.create_session deps.service.db ~now (Access.user access) in
+  let _, csrf = Option.get (Web_auth.session deps.service ~now token) in
+  let http args = Http_server.handle deps (request ~meth:POST "/api/commands/cashflow_summary"
+    ~headers:["cookie", "cashflow_session=" ^ token; "x-csrf-token", csrf; "content-type", "application/json"]
+    ~body:(Yojson.Safe.to_string args)) in
+  let check_json label expected actual = Alcotest.(check string) label (Yojson.Safe.to_string expected) (Yojson.Safe.to_string actual) in
+  let success = Yojson.Safe.from_string {|{"scope":"me","currency":"SEK","cycles":[{"cycle":"2026-10","first":"2026-09-25","last":"2026-10-22","income":"0.00","spending":"0.00","transfers_in":"0.00","transfers_out":"0.00","savings":"0.00","savings_rate":null,"reconciled":false}]}|} in
+  let listed = member "tools" (member "result" (body_json (rpc deps "tools/list" (`Assoc [])))) in
+  let descriptor = match listed with
+    | `List tools -> List.find (fun t -> member "name" t = `String "cashflow_summary") tools
+    | _ -> Alcotest.fail "missing tools" in
+  let schema = member "inputSchema" descriptor in
+  Alcotest.(check string) "schema type" "\"object\"" (Yojson.Safe.to_string (member "type" schema));
+  check_json "schema required" (`List []) (member "required" schema);
+  check_json "schema additional properties" (`Bool false) (member "additionalProperties" schema);
+  let properties = match member "properties" schema with `Assoc fields -> fields | _ -> Alcotest.fail "missing schema properties" in
+  Alcotest.(check (list string)) "cashflow schema names" ["scope"; "currency"; "cycles"] (List.map fst properties);
+  List.iter (fun (name,kind) -> check_json ("schema " ^ name) (`String kind) (member "type" (List.assoc name properties)))
+    ["scope","string"; "currency","string"; "cycles","integer"];
+  let args = `Assoc ["cycles", `Int 1] in
+  let response = http args in
+  Alcotest.(check int) "HTTP success" 200 response.status;
+  check_json "complete HTTP success" success (body_json response);
+  let response, _ = tool deps "cashflow_summary" args in
+  check_json "complete MCP success"
+    (`Assoc ["jsonrpc", `String "2.0"; "id", `Int 1; "result", `Assoc ["resultType", `String "complete";
+      "content", `List [`Assoc ["type", `String "text"; "text", `String (Yojson.Safe.to_string success)]];
+      "structuredContent", success]]) (body_json response);
+  List.iter (fun (args,message) ->
+    let response = http args in
+    Alcotest.(check int) "HTTP validation" 422 response.status;
+    check_json "complete HTTP validation" (`Assoc ["error", `String message]) (body_json response);
+    let response, _ = tool deps "cashflow_summary" args in
+    check_json "complete MCP validation"
+      (`Assoc ["jsonrpc", `String "2.0"; "id", `Int 1; "result", `Assoc ["resultType", `String "complete";
+        "content", `List [`Assoc ["type", `String "text"; "text", `String message]];
+        "isError", `Bool true]]) (body_json response))
+    [`Assoc ["currency", `String "BAD"], "unknown currency BAD";
+     `Assoc ["scope", `String "household"], "you don't belong to a household, so use scope \"me\""];
+  (* Only report storage is broken; session and bearer authentication remain intact. *)
+  Sql.exec_script deps.service.db "ALTER TABLE currencies RENAME TO unavailable_currencies";
+  let response = http args in
+  Alcotest.(check int) "HTTP storage status" 500 response.status;
+  check_json "complete HTTP storage" (`Assoc ["error", `String "internal error"]) (body_json response);
+  let response, _ = tool deps "cashflow_summary" args in
+  Alcotest.(check int) "MCP transport" 200 response.status;
+  check_json "complete MCP storage" (Yojson.Safe.from_string {|{"jsonrpc":"2.0","id":1,"error":{"code":-32603,"message":"Internal error"}}|}) (body_json response)
+
 let () =
   Alcotest.run "http"
     [ ( "routes",
-        [ Alcotest.test_case "health and metadata" `Quick test_health_and_metadata;
+        [ Alcotest.test_case "reporting envelopes" `Quick test_reporting_envelopes;
+          Alcotest.test_case "health and metadata" `Quick test_health_and_metadata;
           Alcotest.test_case "mcp requires a token" `Quick test_mcp_requires_a_token; Alcotest.test_case "mcp tools" `Quick test_mcp_tools;
           Alcotest.test_case "mcp scopes" `Quick test_mcp_scopes; Alcotest.test_case "web login and csrf" `Quick test_web_login_and_csrf;
           Alcotest.test_case "login return paths" `Quick test_login_return_paths;

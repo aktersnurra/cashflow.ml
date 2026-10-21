@@ -21,7 +21,7 @@
  (name test_analytics)
  (enabled_if (= %{context_name} default))
  (modules test_analytics test_service_support)
- (libraries alcotest cashflow cashflow_core yojson))
+ (libraries alcotest cashflow cashflow_core cashflow_workflow yojson))
 
 (test
  (name test_xlsx)
@@ -96,6 +96,12 @@
  (enabled_if (= %{context_name} default))
  (modules test_reporting)
  (libraries alcotest cashflow_workflow cashflow_core))
+
+(test
+ (name test_reporting_live)
+ (enabled_if (= %{context_name} default))
+ (modules test_reporting_live test_service_support)
+ (libraries alcotest cashflow cashflow_core cashflow_workflow eio eio_main))
 
 (test
  (name test_id_generator)
