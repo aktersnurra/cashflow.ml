@@ -62,26 +62,9 @@ let cycle_at ctx offset =
 
 let span cycles = ((List.hd cycles : Cycle.t).first, (List.nth cycles (List.length cycles - 1) : Cycle.t).last)
 
-(* The earliest date every statement-backed balance-sheet account is reconciled through; an
-   owner without any has nothing to reconcile against, so nothing counts as reconciled. *)
 let reconciled_through ctx =
   let book = book ctx in
-  let statement_accounts =
-    List.filter
-      (fun (info : Account_info.t) -> info.details.statement_backed && Option.is_some (book.inside info.account.id))
-      (accounts ctx)
-  in
-  match statement_accounts with
-  | [] -> None
-  | accounts ->
-      List.fold_left
-        (fun through (info : Account_info.t) ->
-          match through, Planning_store.reconciled_through ctx.service.db info.account.id ~ledger_balance_on:(Import_store.posted_balance_on ctx.service.db info.account) with
-          | Some (Some a), Some b -> Some (Some (Date.min a b))
-          | None, b -> Some b
-          | _, None | Some None, _ -> Some None)
-        None accounts
-      |> Option.join
+  Reconciliation.reconciled_through ctx.service.db ~accounts:(accounts ctx) ~book
 
 let cashflow_summary ctx ~cycles =
   let cycles = recent_cycles ctx cycles in

@@ -25,14 +25,7 @@ let load_cashflow db access request =
       let accounts = List.concat_map (Account_store.for_owner db) (Access.owners access) in
       let transfers = Transfer_query.between db access ~first:(Cashflow_request.first request) ~last:(Cashflow_request.last request) in
       let book = Analytics.make_book ~accounts ~owners:(Reporting_context.owners context) ~currency:(Reporting_context.currency context) in
-      let statement_accounts = List.filter (fun (info : Account_info.t) ->
-        info.details.statement_backed && Option.is_some (book.inside info.account.id)) accounts in
-      let reconciled_through =
-        List.fold_left (fun through (info : Account_info.t) ->
-          match through, Planning_store.reconciled_through db info.account.id ~ledger_balance_on:(Import_store.posted_balance_on db info.account) with
-          | Some (Some a), Some b -> Some (Some (Date.min a b))
-          | None, b -> Some b
-          | _, None | Some None, _ -> Some None) None statement_accounts |> Option.join in
+      let reconciled_through = Reconciliation.reconciled_through db ~accounts ~book in
       Ok { Cashflow_facts.accounts; transfers; reconciled_through }))
 
 let run ~db ~access ~(now : unit -> Ptime.t) f =

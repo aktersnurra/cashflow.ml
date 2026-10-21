@@ -98,6 +98,12 @@
  (libraries alcotest cashflow_workflow cashflow_core))
 
 (test
+ (name test_reconciliation)
+ (enabled_if (= %{context_name} default))
+ (modules test_reconciliation test_service_support)
+ (libraries alcotest cashflow cashflow_core))
+
+(test
  (name test_reporting_live)
  (enabled_if (= %{context_name} default))
  (modules test_reporting_live test_service_support)
