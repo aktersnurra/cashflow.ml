@@ -69,7 +69,7 @@ let card_view ~(ctx : Ctx.t) (key : string Bonsai.t) (card : J.t Bonsai.t) graph
             [ Ui.div ~cls:"kpis"
                 [ Ui.kpi (Msg.label_income locale) (Fmt.format_money locale ~code:currency (J.field "income" summary));
                   Ui.kpi (Msg.label_spending locale) (Fmt.format_money locale ~code:currency (J.field "spending" summary));
-                  Ui.kpi ~tone:"positive" (Msg.label_savings locale) (Fmt.format_money locale ~code:currency (J.field "savings" summary));
+                  Ui.kpi ~tone:(Fmt.sign_tone (J.field "savings" summary)) (Msg.label_savings locale) (Fmt.format_money locale ~code:currency (J.field "savings" summary));
                   Ui.kpi (Msg.label_savings_rate locale) (J.str ~default:"–" (J.field "savings_rate" summary)) ] ])
         ~actions:[ done_ ] ()
   | "budget_alert" ->
@@ -82,6 +82,26 @@ let card_view ~(ctx : Ctx.t) (key : string Bonsai.t) (card : J.t Bonsai.t) graph
           [ Ui.meter ~marker:(if Float.(budget > 0.) then Some (expected /. budget) else None) (if Float.(budget > 0.) then spent /. budget else 0.);
             Ui.muted (Msg.card_budget_body ~spent:(money (J.field "spent" data)) ~budget:(money (J.field "budget" data)) ~expected:(money (J.field "expected_by_now" data)) locale) ]
         ~actions:[ done_; later ] ()
+  | "shortfall" ->
+      let m json = money ~code:account_currency json in
+      Ui.card ~tone:"warning" ~title:(Msg.card_shortfall_title ~account:(J.str (J.path [ "account"; "name" ] data)) locale)
+        ~body:
+          (Ui.muted (Msg.card_shortfall_body ~due:(m (J.field "due" data)) ~available:(m (J.field "available" data)) ~short:(m (J.field "short_by" data)) locale)
+          :: List.map (J.list (J.field "upcoming" data)) ~f:(fun u ->
+                 Ui.muted (Msg.card_shortfall_item ~merchant:(J.str (J.field "merchant" u)) ~amount:(m (J.field "amount" u)) ~date:(Fmt.date_json (J.field "expected" u)) locale)))
+        ~actions:[ Ui.button ~kind:"primary" (Msg.action_move_money locale) (navigate Route.Add); done_; later ] ()
+  | "unusual_spend" ->
+      let category = J.str (J.path [ "category"; "name" ] data) in
+      let spent = Fmt.to_float (J.field "spent" data) and usual = Fmt.to_float (J.field "usual" data) in
+      Ui.card
+        ~eyebrow:(if String.equal (J.str (J.field "scope" data)) "household" then Msg.label_household locale else Msg.label_personal locale)
+        ~title:(Msg.card_unusual_title ~category locale)
+        ~body:
+          ((match J.str_opt (J.field "text" data) with Some text -> [ Ui.p text ] | None -> [])
+          @ [ (* Past the usual whole cycle, so the bar runs over; the marker is where the usual ends. *)
+              Ui.meter ~marker:(if Float.(spent > 0.) then Some (usual /. spent) else None) (if Float.(usual > 0.) then spent /. usual else 2.);
+              Ui.muted (Msg.card_unusual_body ~spent:(money (J.field "spent" data)) ~usual:(money (J.field "usual" data)) locale) ])
+        ~actions:[ Ui.button (Msg.action_see_spending locale) (navigate Route.Insights); done_; later ] ()
   | "contributions_due" ->
       Ui.card ~title:(Msg.card_contributions_title locale)
         ~body:[ Ui.muted (Msg.card_contributions_body ~remaining:(money (J.field "remaining" data)) ~contribution:(money (J.field "contribution" data)) locale) ]
@@ -118,7 +138,7 @@ let card_view ~(ctx : Ctx.t) (key : string Bonsai.t) (card : J.t Bonsai.t) graph
              [ Ui.div ~cls:"kpis"
                  [ Ui.kpi (Msg.label_income locale) (Fmt.format_money locale ~code (J.field "income" summary));
                    Ui.kpi (Msg.label_spending locale) (Fmt.format_money locale ~code (J.field "spending" summary));
-                   Ui.kpi ~tone:"positive" (Msg.label_savings locale) (Fmt.format_money locale ~code (J.field "savings" summary)) ];
+                   Ui.kpi ~tone:(Fmt.sign_tone (J.field "savings" summary)) (Msg.label_savings locale) (Fmt.format_money locale ~code (J.field "savings" summary)) ];
                (if J.bool (J.field "reconciled" summary) then Vdom.Node.none else Ui.muted (Msg.label_provisional locale)) ])
         ~actions:[ Ui.button (Msg.nav_insights locale) (navigate Route.Insights) ] ()
   | _ -> Vdom.Node.none

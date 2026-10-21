@@ -421,6 +421,8 @@ Home is a ranked feed of cards. The server works out which cards to show from fa
 - contribution progress
 - whether the previous month has been reviewed
 - new or changed recurring payments
+- recurring payments still due before payday, against the paying account's balance
+- spending in categories without a budget compared with the three cycles before
 
 **Cards, from highest priority to lowest:**
 
@@ -430,8 +432,10 @@ Home is a ranked feed of cards. The server works out which cards to show from fa
 | Reconciliation mismatch | a checkpoint failed | `Shown → Adjusted / Investigating (snoozed)` |
 | Import | any account has had no import for more than N days (default 7) | `Stale → Uploading → Preview → Imported(n) → Inbox` handoff |
 | Inbox | Inbox count > 0 | `Pending(n) → Triaging → Clear` (then the card disappears) |
+| Short before payday | the recurring payments expected from an account before payday (including any up to five days overdue) are more than what is left in it after pending reservations | `Shown → Done / Snoozed` |
 | Month review | a new month has started and the previous one hasn't been reviewed | `Ready → Reviewing → Reviewed` |
 | Budget alert | a category is more than 15% over pace | `Shown → Acknowledged` (stays acknowledged until the category gets worse) |
+| Unusual spending | a category without a budget has already spent 1.5 times what a whole cycle usually costs (the average of the three cycles before, where it appears in at least two), and at least 100 in the currency more; the LLM adds a sentence on which transactions drove it | `Shown → Done / Snoozed` |
 | Contributions | it's the cycle start and contributions haven't been transferred | `Due → Partially done → Done` |
 | Settle-up | open balance > 0 | `Open → Settled` |
 | Unmatched entry | a pending manual entry wasn't found on the bank statement (§6.7) | `Shown → Voided / Waiting / Moved to cash` |

@@ -13,6 +13,8 @@ type count_cash = { cash : Account_info.t; since : Date.t }
 type overview = { cycle : Cycle.t; summary : Analytics.cycle_summary option; currency : Currency.t }
 type month_review = { reviewed : Cycle.t; review_summary : Analytics.cycle_summary option; review_currency : Currency.t; text : string option }
 
+type unusual = { unusual : Analytics.unusual; unusual_currency : Currency.t; scope : Analytics.scope; explanation : string option }
+
 type _ kind =
   | Invitation : Household.t kind
   | Reconciliation_mismatch : mismatch kind
@@ -20,6 +22,8 @@ type _ kind =
   | Inbox : int kind
   | Month_review : month_review kind
   | Budget_alert : (Analytics.budget_line * Currency.t) kind
+  | Shortfall : (Analytics.shortfall * Currency.t) kind
+  | Unusual_spend : unusual kind
   | Contributions_due : (Insights.member_plan * Currency.t) kind
   | Settle_up : (Insights.owed list * Currency.t) kind
   | Unmatched_entry : Service.transfer_view kind
@@ -35,6 +39,8 @@ let kind_name : type a. a kind -> string = function
   | Inbox -> "inbox"
   | Month_review -> "month_review"
   | Budget_alert -> "budget_alert"
+  | Shortfall -> "shortfall"
+  | Unusual_spend -> "unusual_spend"
   | Contributions_due -> "contributions_due"
   | Settle_up -> "settle_up"
   | Unmatched_entry -> "unmatched_entry"
@@ -50,8 +56,10 @@ let priority : type a. a kind -> int = function
   | Import_due -> 20
   | Inbox -> 30
   | Unmatched_entry -> 35
+  | Shortfall -> 32
   | Month_review -> 40
   | Budget_alert -> 50
+  | Unusual_spend -> 55
   | Contributions_due -> 60
   | Settle_up -> 70
   | Count_cash -> 75
@@ -223,6 +231,27 @@ let feed (service : Service.t) access =
                     | State (Resolved note) when note_rank note >= status_rank line.status -> ()
                     | _ -> add Budget_alert key (line, ctx.currency))
                 report.lines;
+              (* Budgeted categories already have alerts of their own. *)
+              let budgeted (u : Analytics.unusual) =
+                List.exists (fun (l : Analytics.budget_line) -> Account_id.equal l.line_category.account.id u.unusual_category.account.id) report.lines
+              in
+              List.iter
+                (fun (u : Analytics.unusual) ->
+                  if not (budgeted u) then
+                    let key = Printf.sprintf "unusual:%s:%s" (Account_id.to_string u.unusual_category.account.id) (Cycle.label report.report_cycle) in
+                    let explanation =
+                      match current_state db user.id key ~today with
+                      | State Shown ->
+                          Llm_features.unusual_spending service access ~cycle:report.report_cycle ~currency:ctx.currency ~unusual:u
+                            ~transactions:(Insights.category_spending ctx u.unusual_category.account.id)
+                      | State (Snoozed _ | Resolved _) -> None
+                    in
+                    add Unusual_spend key { unusual = u; unusual_currency = ctx.currency; scope; explanation })
+                (Insights.unusual_spending ctx);
+              List.iter
+                (fun (s : Analytics.shortfall) ->
+                  add Shortfall (Printf.sprintf "shortfall:%s:%s" (Account_id.to_string s.short_account.account.id) (Cycle.label report.report_cycle)) (s, ctx.currency))
+                (Insights.shortfalls ctx);
               List.iter
                 (fun (g : Insights.goal_progress) -> if not g.on_track then add Goal_off_track ("goal:" ^ g.goal.goal_id ^ ":" ^ Cycle.label current) (g, ctx.currency))
                 (Insights.goals ctx))
@@ -300,6 +329,20 @@ let payload_json : type a. a kind -> a -> Yojson.Safe.t =
       `Assoc
         [ ("category", Json.account_ref l.line_category); ("budget", Json.money c (Int64.add l.budgeted l.carried)); ("spent", Json.money c l.spent);
           ("expected_by_now", Json.money c l.expected_by_now); ("status", `String (status_note l.status)) ]
+  | Shortfall, (s, c) ->
+      `Assoc
+        [ ("account", Json.account s.short_account); ("available", Json.money c s.available); ("due", Json.money c s.due);
+          ("short_by", Json.money c (Int64.sub s.due s.available));
+          ( "upcoming",
+            `List
+              (List.map
+                 (fun (r : Analytics.recurring) -> `Assoc [ ("merchant", `String r.merchant_name); ("amount", Json.money c r.typical_amount); ("expected", Json.date r.next_expected) ])
+                 s.upcoming) ) ]
+  | Unusual_spend, u ->
+      let m = Json.money u.unusual_currency in
+      `Assoc
+        [ ("category", Json.account_ref u.unusual.unusual_category); ("scope", `String (Analytics.scope_to_string u.scope));
+          ("spent", m u.unusual.spent_so_far); ("usual", m u.unusual.usual); ("text", Json.option (fun t -> `String t) u.explanation) ]
   | Contributions_due, (m, c) ->
       `Assoc [ ("contribution", Json.money c m.contribution); ("transferred", Json.money c m.contributed); ("remaining", Json.money c (Int64.sub m.contribution m.contributed)) ]
   | Settle_up, (owed, c) ->
@@ -312,7 +355,7 @@ let payload_json : type a. a kind -> a -> Yojson.Safe.t =
           ("required_monthly", Json.option (Json.money c) g.required_monthly); ("monthly_amount", Json.option (Json.money c) g.goal.monthly_amount) ]
   | Recurring_change, (r, c) ->
       `Assoc
-        [ ("merchant", `String r.merchant); ("cadence", `String (Analytics.cadence_to_string r.cadence)); ("last_amount", Json.money c r.last_amount);
+        [ ("merchant", `String r.merchant_name); ("cadence", `String (Analytics.cadence_to_string r.cadence)); ("last_amount", Json.money c r.last_amount);
           ("previous_amount", Json.money c r.previous_amount); ("price_changed", `Bool (Analytics.price_changed r)); ("next_expected", Json.date r.next_expected) ]
   | Overview, o ->
       `Assoc
@@ -332,7 +375,8 @@ let commands =
   let open Commands in
     [ command "get_attention_feed" Read
         "What needs attention now, most important first: invitations, reconciliation mismatches, statements due for import, the inbox, \
-         unconfirmed manual entries, the month review, budget alerts, contributions due, settle-up, goals off track and new or \
+         unconfirmed manual entries, accounts the bills due before payday would overdraw, the month \
+         review, budget alerts, unusual spending in categories without a budget, contributions due, settle-up, goals off track and new or \
          changed subscriptions, ending with an overview of the current pay cycle."
         []
         (fun service access _ -> Ok (`Assoc [ ("cards", `List (List.map card_json (feed service access))) ]));

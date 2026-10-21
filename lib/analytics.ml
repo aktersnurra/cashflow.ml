@@ -177,7 +177,8 @@ type cadence = Weekly | Monthly | Quarterly | Yearly
 let cadence_to_string = function Weekly -> "weekly" | Monthly -> "monthly" | Quarterly -> "quarterly" | Yearly -> "yearly"
 
 type recurring = {
-  merchant : string;
+  merchant : string;  (** normalised, for grouping and keys *)
+  merchant_name : string;  (** as the latest charge wrote it, for display *)
   cadence : cadence;
   typical_amount : int64;
   last_amount : int64;
@@ -186,6 +187,7 @@ type recurring = {
   next_expected : Date.t;
   occurrences : int;
   category : Account_info.t option;
+  paid_from : Account_id.t;  (** the account the latest charge came out of *)
 }
 
 let merchant_key (t : Transfer.t) =
@@ -233,7 +235,8 @@ let recurring_payments book transfers =
         | Some (cadence, step) ->
             let last = List.nth charges (count - 1) and previous = List.nth charges (count - 2) in
             let typical = median Int64.compare (List.map amount charges) in
-            { merchant; cadence; typical_amount = typical; last_amount = amount last; previous_amount = amount previous;
+            let merchant_name = String.trim (match last.memo.counterparty with Some c when String.trim c <> "" -> c | _ -> last.memo.description) in
+            { merchant; merchant_name; cadence; typical_amount = typical; last_amount = amount last; previous_amount = amount previous;
               last_date = last.value_date;
               next_expected =
                 (match cadence with
@@ -241,7 +244,7 @@ let recurring_payments book transfers =
                 | Quarterly -> add_months last.value_date 3
                 | Yearly -> add_months last.value_date 12
                 | Weekly -> Date.add_days last.value_date step); occurrences = count;
-              category = book.inside last.debit_account_id }
+              category = book.inside last.debit_account_id; paid_from = last.credit_account_id }
             :: acc)
     groups []
   |> List.sort (fun a b -> Int64.compare b.typical_amount a.typical_amount)
@@ -250,6 +253,51 @@ let recurring_payments book transfers =
 let price_changed r =
   let diff = Int64.abs (Int64.sub r.last_amount r.previous_amount) in
   Int64.compare (Int64.mul diff 50L) r.previous_amount > 0
+
+(* Spending that stands out: a category already well past what a whole cycle usually costs, in
+   [history] (complete cycles), by at least [threshold]. Comparing the cycle so far with whole
+   cycles keeps it quiet early in a cycle, when partial figures are noisy. A category needs to
+   appear in two of the history cycles to have a usual. *)
+type unusual = { unusual_category : Account_info.t; spent_so_far : int64; usual : int64 }
+
+let unusual_spending book ~(current : Cycle.t) ~today ~(history : Cycle.t list) ~threshold transfers =
+  let totals first last = totals_by_account book Expense ~first ~last transfers in
+  let past = List.map (fun (c : Cycle.t) -> totals c.first c.last) history in
+  let total_in totals id = Option.map snd (List.find_opt (fun ((i : Account_info.t), _) -> Account_id.equal i.account.id id) totals) in
+  List.filter_map
+    (fun ((info : Account_info.t), spent) ->
+      let seen = List.filter_map (fun totals -> total_in totals info.account.id) past in
+      if List.length seen < 2 then None
+      else
+        let usual = Int64.div (List.fold_left Int64.add 0L seen) (Int64.of_int (List.length history)) in
+        if Int64.compare (Int64.mul spent 2L) (Int64.mul usual 3L) > 0 && Int64.compare (spent -: usual) threshold >= 0 then
+          Some { unusual_category = info; spent_so_far = spent; usual }
+        else None)
+    (totals current.first (Date.min today current.last))
+
+(* An account the recurring payments still due before [until] would take below zero. Payments
+   expected up to a few days ago count too: the charge may simply not be imported yet. *)
+type shortfall = { short_account : Account_info.t; available : int64; due : int64; upcoming : recurring list }
+
+let shortfalls book ~today ~until recurring =
+  let due_soon r = Date.compare (Date.add_days today (-5)) r.next_expected <= 0 && Date.compare r.next_expected until <= 0 in
+  let by_account = Hashtbl.create 8 in
+  List.iter
+    (fun r -> if due_soon r then Hashtbl.replace by_account r.paid_from (r :: Option.value (Hashtbl.find_opt by_account r.paid_from) ~default:[]))
+    recurring;
+  Hashtbl.fold
+    (fun account_id upcoming acc ->
+      match book.inside account_id with
+      | Some info when info.account.kind = Asset && not (is_investment info) ->
+          let b = info.account.balances in
+          (* What is left once the pending card reservations go through. *)
+          let available = b.debits_posted -: b.credits_posted -: b.credits_pending in
+          let due = List.fold_left (fun sum r -> sum +: r.typical_amount) 0L upcoming in
+          if Int64.compare due available > 0 then
+            { short_account = info; available; due; upcoming = List.sort (fun a b -> Date.compare a.next_expected b.next_expected) upcoming } :: acc
+          else acc
+      | _ -> acc)
+    by_account []
 
 (* Budgets *)
 

@@ -34,3 +34,6 @@ let month_label locale cycle =
         let names = [| "January"; "February"; "March"; "April"; "May"; "June"; "July"; "August"; "September"; "October"; "November"; "December" |] in
         names.(month - 1) ^ " " ^ y)
   | _ -> cycle
+
+(* Saving is good news; dipping into savings isn't. *)
+let sign_tone amount = if Float.is_negative (to_float amount) then "negative" else "positive"

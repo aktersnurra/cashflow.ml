@@ -39,7 +39,7 @@
  (name test_attention)
  (enabled_if (= %{context_name} default))
  (modules test_attention test_service_support)
- (libraries alcotest cashflow))
+ (libraries alcotest cashflow yojson))
 
 (test
  (name test_llm)
