@@ -21,6 +21,14 @@ let late_october =
 2026-10-15;2026-10-15;SPOTIFY;-119,00;9 762,00
 |}
 
+let status_name (p : Import.planned) =
+  match p.status with
+  | New -> "new"
+  | Duplicate _ | Decided_duplicate _ -> "duplicate"
+  | Matched _ -> "matched"
+  | Confirms_leg _ -> "confirms_leg"
+  | Ambiguous _ -> "ambiguous"
+
 let request ?(decisions = []) account_id content : Import.request = { account_id; file_name = Some "export.csv"; content; decisions }
 
 let imported = function
@@ -52,7 +60,7 @@ let test_import_matches_dedupes_and_checks_the_balance () =
   ignore (ok (Service.add_entry service alice { (entry "ica by hand" ~from_account:checking ~to_account:groceries 250_00) with value_date = date "2026-10-19" }));
   let ctx = Import.context service alice in
   let preview = ok_import (Import.preview ctx (request checking october)) in
-  let statuses = List.map (fun (p : Import.planned) -> match p.status with New -> "new" | Duplicate _ | Decided_duplicate _ -> "duplicate" | Matched _ -> "matched" | Ambiguous _ -> "ambiguous") preview.rows in
+  let statuses = List.map (fun (p : Import.planned) -> status_name p) preview.rows in
   Alcotest.(check (list string)) "statuses" [ "matched"; "new"; "new"; "new" ] statuses;
   (match preview.balance with
   | Some b -> Alcotest.(check int64) "the ledger will agree with the bank" b.statement_balance b.ledger_balance
@@ -76,7 +84,7 @@ let test_identical_rows_without_balances () =
   let service, alice, checking = setup () in
   let ctx = Import.context service alice in
   let statuses csv ?decisions () =
-    List.map (fun (p : Import.planned) -> match p.status with New -> "new" | Duplicate _ | Decided_duplicate _ -> "duplicate" | Matched _ -> "matched" | Ambiguous _ -> "ambiguous")
+    List.map (fun (p : Import.planned) -> status_name p)
       (ok_import (Import.preview ctx (request ?decisions checking csv))).rows
   in
   let coffee = "Datum;Text;Belopp\n2026-10-20;KAFFE;-35,00\n" in
@@ -234,6 +242,27 @@ let test_pairing_a_contribution () =
   (* Gross flows keep both moves, as for any reversed contribution; what she saved is as after the import. *)
   Alcotest.(check (list string)) "and alice's books net out" [ "2000.00"; "0.00"; "1000.00"; "1000.00" ] (flows "me")
 
+(* A move entered by hand between two accounts whose statements are both imported: the first
+   statement posts it, the second only confirms its own side. *)
+let test_manual_move_confirmed_by_both_statements () =
+  let service, alice, checking = setup () in
+  let savings = open_checking service alice ~statement_backed:true "Savings" in
+  ignore (ok (Service.add_entry service alice { (entry "to savings" ~from_account:checking ~to_account:savings 1_000_00) with value_date = date "2026-10-02" }));
+  let ctx = Import.context service alice in
+  let statuses account csv = List.map status_name (ok_import (Import.preview ctx (request account csv))).rows in
+  let checking_csv = "Datum;Text;Belopp\n2026-10-02;TILL SPARKONTO;-1000,00\n" in
+  let savings_csv = "Datum;Text;Belopp\n2026-10-02;FRÅN LÖNEKONTO;1000,00\n" in
+  Alcotest.(check (list string)) "checking posts it" [ "matched" ] (statuses checking checking_csv);
+  ignore (imported (Import.confirm ctx (request checking checking_csv)));
+  Alcotest.(check (list string)) "savings confirms it" [ "confirms_leg" ] (statuses savings savings_csv);
+  let summary = imported (Import.confirm ctx (request savings savings_csv)) in
+  Alcotest.(check (list int64)) "moved once" [ -1_000_00L; 1_000_00L ] [ balance service alice checking; balance service alice savings ];
+  Alcotest.(check int) "nothing to triage" 0 (Inbox.count service alice);
+  (* Undoing the savings import only forgets the confirmation. *)
+  ignore (ok_import (Import.undo ctx ~batch_id:summary.batch.batch_id));
+  Alcotest.(check (list int64)) "still moved once" [ -1_000_00L; 1_000_00L ] [ balance service alice checking; balance service alice savings ];
+  Alcotest.(check (list string)) "and savings can confirm it again" [ "confirms_leg" ] (statuses savings (savings_csv ^ "\n"))
+
 let test_reconcile () =
   let service, alice, checking = setup () in
   ignore (imported (Import.confirm (Import.context service alice) (request checking october)));
@@ -255,4 +284,5 @@ let () =
           Alcotest.test_case "rules auto-apply" `Quick test_rules_auto_apply ] );
       ( "inbox",
         [ Alcotest.test_case "pair and share" `Quick test_pair_and_share; Alcotest.test_case "undo after share" `Quick test_undo_after_share;
-          Alcotest.test_case "pairing a contribution" `Quick test_pairing_a_contribution; Alcotest.test_case "reconcile" `Quick test_reconcile ] ) ]
+          Alcotest.test_case "pairing a contribution" `Quick test_pairing_a_contribution;
+          Alcotest.test_case "a manual move confirmed by both statements" `Quick test_manual_move_confirmed_by_both_statements; Alcotest.test_case "reconcile" `Quick test_reconcile ] ) ]

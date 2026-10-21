@@ -409,7 +409,7 @@ let planned_json currency (p : Import.planned) =
           (match p.status with
           | New -> "new"
           | Duplicate _ | Decided_duplicate _ -> "duplicate"
-          | Matched _ -> "confirms_pending"
+          | Matched _ | Confirms_leg _ -> "confirms_pending"
           | Ambiguous _ -> "ambiguous") );
       ("already_imported_alike", match p.status with Ambiguous existing -> `Int (List.length existing) | _ -> `Null);
       ("suggested_category_id", Json.option (fun (s : Suggest.suggestion) -> `String (Account_id.to_string s.category_id)) p.suggestion);

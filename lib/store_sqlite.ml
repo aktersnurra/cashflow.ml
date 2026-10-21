@@ -97,6 +97,16 @@ let open_pending_transfers =
       ORDER BY t.seq")
     nil (many transfer_row)
 
+(* Posted manual entries touching an account whose side on that account no statement has
+   confirmed yet: the other side's statement posted them (see Import.classify). *)
+let unconfirmed_posts =
+  stmt
+    ("SELECT " ^ transfer_columns
+   ^ " FROM transfers t WHERE t.kind = 'post_pending' AND (t.debit_account_id = ?1 OR t.credit_account_id = ?1) \
+      AND NOT EXISTS (SELECT 1 FROM transfers r WHERE r.reverses = t.id) \
+      AND NOT EXISTS (SELECT 1 FROM statement_legs l WHERE l.entry_id = t.pending_id AND l.account_id = ?1) ORDER BY t.seq")
+    Codec.(account_id @-> nil) (many transfer_row)
+
 let insert_transfer =
   stmt
     "INSERT INTO transfers (id, scope_kind, scope_id, idempotency_key, debit_account_id, credit_account_id, amount, \
@@ -138,6 +148,7 @@ let write db applied =
 let accounts db = run db all_accounts
 let transfers db = run db all_transfers
 let open_pending db = run db open_pending_transfers
+let unconfirmed_posts_on db account_id = run db unconfirmed_posts account_id
 
 let open_memory () =
   let db = Sql.open_db ":memory:" in

@@ -204,3 +204,10 @@ let remove_rule db owner id =
 let record_triage db ~item transfer = run db insert_triage item transfer
 let triage_transfers db item = run db triage_of_item item
 let triaged_items db transfer = run db items_of_triage transfer
+
+let insert_leg = stmt "INSERT OR IGNORE INTO statement_legs (entry_id, account_id, batch_id) VALUES (?, ?, ?)" Codec.(transfer_id @-> account_id @-> text @-> nil) exec
+let delete_legs = stmt "DELETE FROM statement_legs WHERE batch_id = ?" (text @-> nil) exec
+
+(* A statement row on [account] confirmed the manual entry [entry]. *)
+let confirm_leg db ~entry ~account ~batch_id = run db insert_leg entry account batch_id
+let forget_legs db ~batch_id = run db delete_legs batch_id
