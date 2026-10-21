@@ -101,6 +101,14 @@ let test_identical_rows_without_balances () =
   Alcotest.(check (list int)) "said to be already imported" [ 1; 2 ] [ summary.batch.new_count; summary.batch.duplicate_count ];
   Alcotest.(check int64) "so only the ICA is added" (-409_00L) (balance service alice checking)
 
+(* A one-day file listed oldest first: the running balances, not the dates, say which row closes it. *)
+let test_closing_balance_oldest_first () =
+  let service, alice, checking = setup () in
+  let csv = "Datum;Text;Belopp;Saldo\n2026-10-20;KAFFE;-35,00;-35,00\n2026-10-20;KAFFE;-35,00;-70,00\n" in
+  match (imported (Import.confirm (Import.context service alice) (request checking csv))).balance with
+  | Some b -> Alcotest.(check (list int64)) "agrees" [ -70_00L; -70_00L ] [ b.statement_balance; b.ledger_balance ]
+  | None -> Alcotest.fail "no balance check"
+
 let test_categorize_learn_and_undo () =
   let service, alice, checking = setup () in
   let ctx = Import.context service alice in
@@ -182,6 +190,7 @@ let () =
       ( "pipeline",
         [ Alcotest.test_case "matches, dedupes and checks the balance" `Quick test_import_matches_dedupes_and_checks_the_balance;
           Alcotest.test_case "identical rows without balances" `Quick test_identical_rows_without_balances;
+          Alcotest.test_case "closing balance, oldest first" `Quick test_closing_balance_oldest_first;
           Alcotest.test_case "categorise, learn and undo" `Quick test_categorize_learn_and_undo;
           Alcotest.test_case "rules auto-apply" `Quick test_rules_auto_apply ] );
       ( "inbox",
