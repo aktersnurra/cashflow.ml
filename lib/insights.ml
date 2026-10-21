@@ -223,7 +223,10 @@ let contribution_plan ctx ~target ~incomes =
       members
   in
   (* Net contributions this cycle: money returned to a member, including reversals and undone
-     imported pairs, takes back what they contributed. *)
+     imported pairs, takes back what they contributed.
+     Future settle-up must clear the household payable and personal receivable with linked entries
+     within each owner's books (design §4.6); a direct household-to-member posting here would
+     instead count as a returned contribution, regardless of its transfer code. *)
   let view = Store_sqlite.view ctx.service.db in
   let contributed member =
     let belongs_to_member id =
