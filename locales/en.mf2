@@ -1,0 +1,234 @@
+# The UI's messages in English, the reference locale. Ids are stable; every other locale must
+# have the same ids with the same variables. See tools/mf2c for the syntax supported.
+
+app.name = Cashflow
+nav.home = Home
+nav.inbox = Inbox
+nav.accounts = Accounts
+nav.budgets = Budgets
+nav.household = Household
+nav.insights = Insights
+nav.settings = Settings
+nav.add = Add
+
+action.sign_in = Sign in
+action.sign_out = Sign out
+action.snooze = Later
+action.done = Done
+action.cancel = Cancel
+action.save = Save
+action.import = Import
+action.undo = Undo
+action.accept = Accept
+action.decline = Decline
+action.review = Review
+action.categorize = Choose category
+action.share = Shared with household
+action.pair = Pair
+action.skip = Skip
+action.settle = Settle up
+action.adjust = Post the difference
+action.choose_file = Choose a file
+action.already_imported = Already imported
+action.new_row = New
+action.close = Close
+action.add = Add
+action.open_account = Open account
+action.invite = Invite
+action.create_household = Create household
+action.reverse = Reverse
+action.void = Cancel entry
+action.keep = Keep
+action.count = Count
+
+command.placeholder = Type a command or search…
+command.go_to = Go to {$page}
+
+signin.title = Your money, at a glance
+signin.body = Sign in with your Pocket ID account to see your accounts, spending and savings.
+
+card.invitation.title = {$household} invited you
+card.invitation.body = Join to see and share the household's accounts.
+card.mismatch.title = {$account} is {$difference :currency} off
+card.mismatch.body = The bank said {$statement :currency} on {$date :date}; the ledger says {$ledger :currency}.
+card.import.title = Time to import {$account}
+card.import.never = No statement imported yet. Download the CSV from your bank and drop it here.
+card.import.days =
+  .input {$days :integer}
+  .match $days
+  one {{Last import was yesterday.}}
+  * {{Last import was {$days} days ago.}}
+card.import.drop = Drop a CSV file here
+card.import.reading = Reading {$file}…
+card.import.new =
+  .input {$count :integer}
+  .match $count
+  one {{1 new transaction}}
+  * {{{$count} new transactions}}
+card.import.duplicates =
+  .input {$count :integer}
+  .match $count
+  one {{1 already imported}}
+  * {{{$count} already imported}}
+card.import.matched =
+  .input {$count :integer}
+  .match $count
+  one {{1 confirms an entry you made}}
+  * {{{$count} confirm entries you made}}
+card.import.ambiguous =
+  .input {$count :integer}
+  .match $count
+  one {{1 row looks like one already imported: the same day, text and amount. Is it?}}
+  * {{{$count} rows look like ones already imported: the same day, text and amount. Are they?}}
+card.import.balance_ok = The balance will match the bank: {$balance :currency}.
+card.import.balance_off = The ledger would be {$difference :currency} off from the bank's {$balance :currency}.
+card.import.already = This file was already imported.
+card.import.done =
+  .input {$count :integer}
+  .match $count
+  0 {{Imported. Everything is categorised.}}
+  one {{Imported. 1 transaction to review.}}
+  * {{Imported. {$count} transactions to review.}}
+card.inbox.title =
+  .input {$count :integer}
+  .match $count
+  one {{1 transaction to categorise}}
+  * {{{$count} transactions to categorise}}
+card.inbox.body = Suggestions are ready; most take one keystroke.
+card.unmatched.title = Not on the statement: {$description}
+card.unmatched.body = You entered {$amount :currency} on {$date :date}, but the bank's statement doesn't show it.
+card.review.title = How {$month} went
+card.budget.over = {$category} is over budget
+card.budget.ahead = {$category} is ahead of pace
+card.budget.body = {$spent :currency} of {$budget :currency}; pace expects {$expected :currency} by today.
+card.contributions.title = Your household transfer
+card.contributions.body = {$remaining :currency} left to transfer of {$contribution :currency} this month.
+card.settle.title = The household owes {$name} {$amount :currency}
+card.cash.title = Count the cash in {$account}
+card.cash.body = No cash spending entered since {$since :date}.
+card.goal.title = {$goal} is falling behind
+card.goal.body = {$saved :currency} of {$target :currency}. Set aside {$required :currency} a month to make it.
+card.recurring.changed = {$merchant} went from {$previous :currency} to {$last :currency}
+card.recurring.new = New {$cadence} payment: {$merchant}
+card.overview.title = {$month} so far
+
+label.income = Income
+label.spending = Spending
+label.savings = Saved
+label.savings_rate = Savings rate
+label.provisional = Not yet reconciled with the bank
+label.balance = Balance
+label.pending = Pending
+label.category = Category
+label.date = Date
+label.amount = Amount
+label.description = Description
+label.from = From
+label.to = To
+label.personal = Personal
+label.household = Household
+label.family = Family
+label.net_worth = Net worth
+label.runway = Runway
+label.runway_months = {$months :number} months
+label.budget = Budget
+label.spent = Spent
+label.left = {$left :currency} left
+label.over = {$over :currency} over
+label.suggested = Suggested: {$category}
+label.uncategorized = Uncategorised
+label.last_import = Last import {$date :date}
+label.never_imported = Never imported
+label.reconciled = Reconciled
+label.members = Members
+label.invitation_pending = Invited
+label.email = Email
+label.name = Name
+label.kind = Kind
+label.currency = Currency
+label.language = Language
+label.timezone = Time zone
+label.cycle_start = Months start on day
+label.cycle_last_banking_day = the last banking day
+label.cycle_adjust = If that's a weekend or holiday
+label.cycle_previous = use the banking day before
+label.cycle_next = use the banking day after
+label.cycle_none = keep the day
+label.contribution = Contribution
+label.transferred = Transferred
+label.recurring = Recurring payments
+label.largest = Largest transactions
+label.categories = Spending by category
+label.goals = Savings goals
+label.compared = vs {$previous :currency} last month
+
+inbox.title = Inbox
+inbox.empty = Nothing to categorise. Nice.
+inbox.keys = j / k to move · enter to accept · c to choose · s shared · p pair · x skip
+inbox.pick_category = Choose a category
+inbox.pick_pair = Which transaction is the other side?
+
+accounts.title = Accounts
+accounts.empty = No accounts yet.
+accounts.bank = Bank accounts and cards
+accounts.categories = Categories
+
+budgets.title = Budgets
+budgets.empty = No budgets yet. Set one for a category to see your pace.
+budgets.set = Monthly budget for {$category}
+
+household.title = Household
+household.none = You're not in a household yet.
+household.plan = Transfers this month
+household.invite_hint = They need to have signed in once.
+
+insights.title = Insights
+
+settings.title = Settings
+
+add.title = Add a transaction
+add.pending_note = This account is confirmed by bank statements, so the entry stays pending until the statement arrives.
+
+error.generic = Something went wrong: {$message}
+error.offline = Can't reach the server. Retrying…
+
+label.statement_balance = Statement balance
+label.transactions = Transactions
+label.imports = Imports
+label.rollover = Roll over what's left
+label.target = Target
+label.target_date = Target date
+label.monthly_amount = Per month
+label.opening_balance = Opening balance
+label.market_value = Market value
+label.statement_backed = Import bank statements for this account
+label.last4 = Last four digits
+label.institution = Bank
+label.owner = Owner
+label.no_overdraft = Can't go below zero
+label.kind_asset = Bank account or savings
+label.kind_liability = Card or loan
+label.kind_expense = Expense category
+label.kind_income = Income category
+label.transfers_out = Moved to other books
+label.search = Search
+label.undone = Undone
+label.scope = Whose books
+label.this_month = This month
+label.previous = Previous month
+action.reconcile = Reconcile
+action.set_budget = Set budget
+action.new_goal = New goal
+action.apply = Apply
+action.earmark = Set aside
+settings.saved = Saved.
+household.invited = Invited {$name}.
+add.saved = Added.
+add.saved_pending = Added. It will be confirmed when the bank statement is imported.
+palette.add = Add a transaction
+palette.account = Open {$account}
+inbox.share_pick = Which household category?
+inbox.no_pairs = No transaction with the same amount the other way within three days.
+budgets.no_budget = No budget
+goals.empty = No savings goals yet.
+accounts.no_transactions = No transactions yet. Import a statement or add one.

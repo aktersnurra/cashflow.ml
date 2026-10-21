@@ -1,0 +1,12 @@
+; The UI's messages, compiled from MessageFormat 2 into a typed module. A translation that is
+; missing, or disagrees with English about a message's arguments, fails the build here.
+(rule
+ (targets msg.ml)
+ (deps (glob_files *.mf2))
+ (action (with-stdout-to msg.ml (run %{exe:../tools/mf2c/main.exe} %{dep:en.mf2} %{dep:sv.mf2}))))
+
+(library
+ (name cashflow_msg)
+ (wrapped false)
+ (modules msg)
+ (libraries mf2_runtime))

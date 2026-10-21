@@ -13,6 +13,24 @@ depends: [
   "dune" {>= "3.24"}
   "ptime"
   "uuidm" {>= "0.9.9"}
+  "sqlite3"
+  "yojson"
+  "digestif"
+  "eio"
+  "eio_main"
+  "eio_posix"
+  "cohttp-eio"
+  "tls-eio"
+  "httpun-eio"
+  "jose"
+  "mirage-crypto"
+  "mirage-crypto-rng"
+  "x509"
+  "base64"
+  "uri"
+  "domain-name"
+  "cmdliner"
+  "logs"
   "alcotest" {with-test}
   "hegel" {with-test}
   "ppx_hegel_test" {with-test}

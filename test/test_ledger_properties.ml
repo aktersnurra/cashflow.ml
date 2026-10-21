@@ -1,13 +1,16 @@
 open Hegel
 open Test_support
 
+module Machine (S : STORE) = struct
+  include Make (S)
+
 (* A model-based test of the ledger: random batches of transfers, pending posts and voids,
    reversals and retries, over a few accounts with balance limits. Keys come from a small pool so
    that retries and key collisions are common, and amounts are small enough that the limits are
    hit. The invariants are checked after every step. *)
 
 type state = {
-  store : Mem_store.t;
+  store : S.t;
   env : Ledger_core.env;
   accounts : Account_id.t array;
   transfers : Transfer_id.t Stateful.Pool.t;  (** every transfer created so far *)
@@ -16,7 +19,7 @@ type state = {
 }
 
 let init tc =
-  let store = Mem_store.create () and env = env () in
+  let store = S.create () and env = env () in
   let no_overdraft = { Account.no_flags with credits_must_not_exceed_debits = true } in
   let accounts =
     [| open_account store env "checking" Asset ~flags:no_overdraft; open_account store env "savings" Asset;
@@ -81,14 +84,14 @@ module%hegel_state_machine Ledger_machine = struct
   let submit tc state =
     let scope = if draw tc (booleans ~p:0.2 ()) then household else me in
     let events = List.init (draw tc (integers ~min_value:1 ~max_value:4 ())) (fun _ -> draw_event tc state) in
-    let before = List.length (Mem_store.transfers state.store) in
+    let before = List.length (S.transfers state.store) in
     let results = submit_ok state.store state.env ~scope events in
     check_chains_are_atomic events results;
     (* The store holds exactly the transfers reported as created, so a failed chain left nothing behind. *)
     let reported = List.length (List.filter_map created_transfer results) in
-    assert (List.length (Mem_store.transfers state.store) = before + reported);
+    assert (List.length (S.transfers state.store) = before + reported);
     (* Everything reported as created or existing is in the store afterwards. *)
-    let stored = Mem_store.transfers state.store in
+    let stored = S.transfers state.store in
     List.iter
       (function
         | Ok (Ledger_core.Created (t : Transfer.t) | Exists t) -> assert (List.exists (fun (s : Transfer.t) -> Transfer_id.equal s.id t.id) stored)
@@ -108,17 +111,17 @@ module%hegel_state_machine Ledger_machine = struct
   (* Resubmitting a batch that fully succeeded changes nothing and reports every event as existing. *)
   let retry tc state =
     let scope, events = draw_silent tc (Stateful.Pool.values_reusable state.succeeded) in
-    let before = List.length (Mem_store.transfers state.store) in
+    let before = List.length (S.transfers state.store) in
     let results = submit_ok state.store state.env ~scope events in
     assert (List.for_all (function Ok (Ledger_core.Exists _) -> true | _ -> false) results);
-    assert (List.length (Mem_store.transfers state.store) = before)
+    assert (List.length (S.transfers state.store) = before)
 
   let expire tc state =
     let today = draw_date tc in
-    let before = List.length (Mem_store.transfers state.store) in
+    let before = List.length (S.transfers state.store) in
     let voided = L.void_expired state.store state.env ~today in
     assert (List.for_all (function _, Ok [ Ok (Ledger_core.Created _) ] -> true | _ -> false) voided);
-    assert (List.length (Mem_store.transfers state.store) = before + List.length voided);
+    assert (List.length (S.transfers state.store) = before + List.length voided);
     assert (L.void_expired state.store state.env ~today = [])
 
   let balances_match_transfers _tc state = assert (L.verify state.store = [])
@@ -126,7 +129,7 @@ module%hegel_state_machine Ledger_machine = struct
 
   (* Double entry: every amount is debited to one account and credited to another. *)
   let debits_equal_credits _tc state =
-    let sum f = List.fold_left (fun total (account : Account.t) -> Int64.add total (f account.balances)) 0L (Mem_store.accounts state.store) in
+    let sum f = List.fold_left (fun total (account : Account.t) -> Int64.add total (f account.balances)) 0L (S.accounts state.store) in
     assert (Int64.equal (sum (fun b -> b.debits_posted)) (sum (fun b -> b.credits_posted)));
     assert (Int64.equal (sum (fun b -> b.debits_pending)) (sum (fun b -> b.credits_pending)))
   [@@invariant { always_check = true }]
@@ -137,13 +140,13 @@ module%hegel_state_machine Ledger_machine = struct
         let b = account.balances in
         if account.flags.debits_must_not_exceed_credits then assert (Int64.add b.debits_posted b.debits_pending <= b.credits_posted);
         if account.flags.credits_must_not_exceed_debits then assert (Int64.add b.credits_posted b.credits_pending <= b.debits_posted))
-      (Mem_store.accounts state.store)
+      (S.accounts state.store)
   [@@invariant { always_check = true }]
 
   (* A pending transfer is resolved at most once, a transfer is reversed at most once, and a post
      never exceeds what was reserved. *)
   let resolved_and_reversed_at_most_once _tc state =
-    let transfers = Mem_store.transfers state.store in
+    let transfers = S.transfers state.store in
     let count_by f =
       let table = Hashtbl.create 16 in
       List.iter (fun t -> Option.iter (fun id -> Hashtbl.replace table id (1 + Option.value (Hashtbl.find_opt table id) ~default:0)) (f t)) transfers;
@@ -162,8 +165,17 @@ module%hegel_state_machine Ledger_machine = struct
   [@@invariant { always_check = true }]
 end
 
-let%hegel_test ledger_state_machine tc = Ledger_machine.run tc ~init:(init tc) [@@settings Settings.create ~test_cases:300 ()]
+  let test tc = Ledger_machine.run tc ~init:(init tc)
+end
+
+module Memory_machine = Machine (Mem)
+module Sqlite_machine = Machine (Sqlite)
+
+let%hegel_test memory_state_machine tc = Memory_machine.test tc [@@settings Settings.create ~test_cases:300 ()]
+let%hegel_test sqlite_state_machine tc = Sqlite_machine.test tc [@@settings Settings.create ~test_cases:100 ()]
 
 let () =
   Alcotest.run "ledger properties"
-    [ ("state machine", [ Alcotest.test_case "batches, retries and expiry keep the ledger consistent" `Slow ledger_state_machine ]) ]
+    [ ( "state machine",
+        [ Alcotest.test_case "memory: batches, retries and expiry keep the ledger consistent" `Slow memory_state_machine;
+          Alcotest.test_case "sqlite: batches, retries and expiry keep the ledger consistent" `Slow sqlite_state_machine ] ) ]

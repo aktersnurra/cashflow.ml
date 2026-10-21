@@ -1,7 +1,10 @@
 open Test_support
 
+module Suite (S : STORE) = struct
+  include Make (S)
+
 let setup () =
-  let store = Mem_store.create () and env = env () in
+  let store = S.create () and env = env () in
   let checking = open_account store env "checking" Asset in
   let salary = open_account store env "salary" Income in
   let groceries = open_account store env "groceries" Expense in
@@ -49,7 +52,7 @@ let test_account_rules () =
          transfer "c" ~debit:checking ~credit:missing 1; transfer "d" ~debit:euros ~credit:salary 1 ])
 
 let test_balance_limits_include_pending () =
-  let store = Mem_store.create () and env = env () in
+  let store = S.create () and env = env () in
   (* Money leaves an asset as a credit, so an account that can't go below zero never credits more
      than it was debited. *)
   let card = open_account store env "card" Asset ~flags:{ Account.no_flags with credits_must_not_exceed_debits = true } in
@@ -115,7 +118,7 @@ let test_pending_post_and_void () =
   expect [ failed `Pending_transfer_already_posted ] (submit_ok store env [ post None "again" ]);
   let void = { Ledger_event.key = key "void"; linked = false; body = Void_pending { pending_id = hold_id; value_date = today } } in
   expect [ failed `Pending_transfer_already_posted ] (submit_ok store env [ void ]);
-  let pay_id = (List.hd (Mem_store.transfers store)).id in
+  let pay_id = (List.hd (S.transfers store)).id in
   expect [ failed `Pending_transfer_not_pending ]
     (submit_ok store env [ { void with key = key "void-2"; body = Void_pending { pending_id = pay_id; value_date = today } } ]);
   Alcotest.(check int) "verify" 0 (List.length (L.verify store))
@@ -166,7 +169,7 @@ let test_close_account () =
   ignore groceries
 
 let test_open_account_is_idempotent () =
-  let store = Mem_store.create () and env = env () in
+  let store = S.create () and env = env () in
   let spec : Account.spec = { owner = me; kind = Asset; currency = sek; name = "  checking "; flags = Account.no_flags } in
   let first = L.open_account store env (key "acc") spec and again = L.open_account store env (key "acc") spec in
   (match first, again with
@@ -186,11 +189,10 @@ let test_verify_detects_tampering () =
   let store, env, checking, salary, _ = setup () in
   ignore (submit_ok store env [ transfer "pay" ~debit:checking ~credit:salary 100_00 ]);
   let tampered = account store checking in
-  Mem_store.save_account store { tampered with balances = { tampered.balances with debits_posted = 1L } };
+  S.save_account store { tampered with balances = { tampered.balances with debits_posted = 1L } };
   Alcotest.(check int) "one mismatch" 1 (List.length (L.verify store))
 
-let () =
-  Alcotest.run "ledger"
+  let suites =
     [ ( "transfers",
         [ Alcotest.test_case "posted transfer moves both balances" `Quick test_posted_transfer_moves_both_balances;
           Alcotest.test_case "retry with the same key is safe" `Quick test_retry_with_same_key_is_safe;
@@ -212,3 +214,12 @@ let () =
         [ Alcotest.test_case "close" `Quick test_close_account;
           Alcotest.test_case "open is idempotent" `Quick test_open_account_is_idempotent;
           Alcotest.test_case "verify detects tampering" `Quick test_verify_detects_tampering ] ) ]
+end
+
+let () =
+  Alcotest.run "ledger"
+    (List.concat_map
+       (fun (module S : STORE) ->
+         let module Suite = Suite (S) in
+         List.map (fun (name, cases) -> (S.name ^ " " ^ name, cases)) Suite.suites)
+       stores)

@@ -37,3 +37,16 @@ let add_days date days =
 let days_between ~first ~last = fst (Ptime.Span.to_d_ps (Ptime.diff last first))
 
 let midnight_utc date = date
+
+let of_ymd year month day = of_ymd (year, month, day)
+let to_ymd date = Ptime.to_date date
+let weekday date = Ptime.weekday date
+
+let days_in_month year month =
+  match month with
+  | 2 -> if (year mod 4 = 0 && year mod 100 <> 0) || year mod 400 = 0 then 29 else 28
+  | 4 | 6 | 9 | 11 -> 30
+  | _ -> 31
+
+let max a b = if compare a b >= 0 then a else b
+let min a b = if compare a b <= 0 then a else b

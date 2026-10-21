@@ -143,7 +143,7 @@ let same_request view ov (existing : Transfer.t) (body : Ledger_event.body) =
       same_phase && Option.is_none existing.reverses
       && Account_id.equal t.debit_account_id existing.debit_account_id
       && Account_id.equal t.credit_account_id existing.credit_account_id
-      && Amount.equal t.amount existing.amount && t.code = existing.code && t.memo = existing.memo
+      && Amount.equal t.amount existing.amount && t.code = existing.code && Transfer.normalize_memo t.memo = existing.memo
       && Date.equal t.value_date existing.value_date
   | Post_pending { pending_id; amount; value_date }, Post_pending { pending_id = stored } ->
       let requested_amount =
@@ -158,13 +158,13 @@ let same_request view ov (existing : Transfer.t) (body : Ledger_event.body) =
   | Reverse { transfer_id; value_date; memo }, (Single | Post_pending _) ->
       Option.equal Transfer_id.equal (Some transfer_id) existing.reverses
       && optional Date.equal value_date existing.value_date
-      && optional ( = ) memo existing.memo
+      && optional (fun memo existing -> Transfer.normalize_memo memo = existing) memo existing.memo
   | (Transfer _ | Post_pending _ | Void_pending _ | Reverse _), _ -> false
 
 let apply_new env view scope ov (event : Ledger_event.t) =
   let new_transfer ~debit ~credit ~amount ~kind ~code ~memo ~value_date ~reverses : Transfer.t =
     { id = env.fresh_transfer_id (); scope; key = event.key; debit_account_id = debit; credit_account_id = credit;
-      amount; kind; code; memo; value_date; reverses; recorded_at = env.now () }
+      amount; kind; code; memo = Transfer.normalize_memo memo; value_date; reverses; recorded_at = env.now () }
   in
   let posted ~debit ~credit ~amount ~code ~memo ~value_date ~reverses =
     let* dr, cr = open_accounts view ov ~debit ~credit in
