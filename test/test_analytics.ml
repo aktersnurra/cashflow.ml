@@ -252,6 +252,59 @@ let test_goal_update_currency () =
   ignore (ok_import (save [ ("goal_id", `String usd_id); ("currency", `String "USD"); ("name", `String "Trip"); ("target_amount", `String "2000.00") ]));
   Alcotest.(check int64) "explicit USD update" 2_000_00L (Option.get (Planning_store.find_goal service.db usd_id)).target_amount
 
+let test_contribution_reversal () =
+  let service, alice, _ = scenario () in
+  let ctx = ok (Insights.context service alice ~scope:Household ()) in
+  let cycle = Insights.current_cycle ctx in
+  let contribution = List.find (fun (t : Transfer.t) -> t.memo.description = "to household")
+      (Insights.transfers ctx ~first:cycle.first ~last:cycle.last) in
+  let plan () =
+    let report = query service alice "contribution_plan"
+        [ ("target", `String "20000"); ("incomes", `Assoc [ (User_id.to_string (Access.user alice).id, `String "30000") ]) ] in
+    match field [ "members" ] report with `List [ member ] -> member | _ -> Alcotest.fail "expected one member"
+  in
+  Alcotest.(check string) "contributed" "10000.00" (str [ "transferred" ] (plan ()));
+  Alcotest.(check string) "reversed" "created" (label (ok (Service.reverse service alice ~key:(key "reverse contribution") ~transfer_id:contribution.id ())));
+  let member = plan () in
+  Alcotest.(check string) "reversal nets out" "0.00" (str [ "transferred" ] member);
+  Alcotest.(check string) "still due" "20000.00" (str [ "remaining" ] member)
+
+let test_income_category_trend () =
+  let service, alice, groceries = scenario () in
+  let salary = account_named service alice "Salary" in
+  let total category =
+    let report = query service alice "category_trend" [ ("category_id", `String (Account_id.to_string category)); ("cycles", `Int 1) ] in
+    match field [ "cycles" ] report with `List [ cycle ] -> str [ "total" ] cycle | _ -> Alcotest.fail "expected one cycle"
+  in
+  Alcotest.(check string) "income is credit-normal" "30000.00" (total salary);
+  Alcotest.(check string) "expense stays debit-normal" "4000.00" (total groceries.account.id);
+  let ctx = ok (Insights.context service alice ~scope:Me ()) in
+  let cycle = Insights.current_cycle ctx in
+  let pay = List.find (fun (t : Transfer.t) -> t.memo.description = "salary")
+      (Insights.transfers ctx ~first:cycle.first ~last:cycle.last) in
+  Alcotest.(check string) "reversed" "created" (label (ok (Service.reverse service alice ~key:(key "reverse salary") ~transfer_id:pay.id ())));
+  Alcotest.(check string) "income reversal cancels out" "0.00" (total salary);
+  let checking = account_named service alice "Checking" in
+  Alcotest.(check string) "income returned" "created"
+    (label (ok (Service.add_entry service alice (entry "return salary" ~from_account:checking ~to_account:salary 1_000_00))));
+  Alcotest.(check string) "returned income is negative" "-1000.00" (total salary);
+  Alcotest.(check string) "expenses unaffected" "4000.00" (total groceries.account.id)
+
+let test_budget_rollover_report () =
+  let service, alice, groceries = scenario () in
+  let ctx = ok (Insights.context service alice ~scope:Me ()) in
+  List.iter
+    (fun (effective_from, rollover) ->
+      ignore (ok (Insights.set_budget ctx ~category_id:groceries.account.id ~monthly_amount:6_000_00L ~rollover ~effective_from:(Some effective_from))))
+    [ ("2026-09", false); ("2026-10", true); ("2026-11", false) ];
+  List.iter
+    (fun (offset, expected) ->
+      let report = query service alice "budget_status" [ ("cycle_offset", `Int offset) ] in
+      match field [ "lines" ] report with
+      | `List [ line ] -> Alcotest.(check string) "effective rollover" expected (str [ "rollover" ] line)
+      | _ -> Alcotest.fail "expected one budget line")
+    [ (0, "true"); (-1, "false") ]
+
 let () =
   Alcotest.run "analytics"
     [ ( "insights",
@@ -261,7 +314,10 @@ let () =
           Alcotest.test_case "net worth with a loan" `Quick test_net_worth_with_a_loan;
           Alcotest.test_case "goal report currency" `Quick test_goal_report_currency;
           Alcotest.test_case "contribution target currency" `Quick test_contribution_target_currency;
-          Alcotest.test_case "goal update currency" `Quick test_goal_update_currency ] );
+          Alcotest.test_case "goal update currency" `Quick test_goal_update_currency;
+          Alcotest.test_case "contribution reversal" `Quick test_contribution_reversal;
+          Alcotest.test_case "income category trend" `Quick test_income_category_trend;
+          Alcotest.test_case "budget rollover report" `Quick test_budget_rollover_report ] );
       ( "arithmetic",
         [ Alcotest.test_case "rounding keeps the total" `Quick test_rounding_keeps_the_total;
           Alcotest.test_case "decimals" `Quick test_decimals; Alcotest.test_case "json amounts" `Quick test_json_amounts;

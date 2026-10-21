@@ -238,11 +238,20 @@ let test_pairing_a_contribution () =
   in
   Alcotest.(check (list string)) "alice: SL spent, 1000 to the household" [ "1000.00"; "0.00"; "1000.00"; "0.00" ] (flows "me");
   Alcotest.(check (list string)) "household: 1000 in from alice" [ "0.00"; "0.00"; "0.00"; "1000.00" ] (flows "household");
+  let contributed () =
+    let report = ok (Query.execute service alice (Option.get (Query.find "contribution_plan"))
+        [ ("target", `String "1000"); ("incomes", `Assoc [ (User_id.to_string (Access.user alice).id, `String "30000") ]) ]) in
+    match field [ "members" ] report with
+    | `List [ member ] -> field [ "transferred" ] member
+    | _ -> Alcotest.fail "expected one member"
+  in
+  Alcotest.(check string) "paired contribution counts" {|"1000.00"|} (Yojson.Safe.to_string (contributed ()));
   ignore (ok_import (Import.undo ctx ~batch_id:in_batch.batch.batch_id));
   Alcotest.(check bool) "the other side is back in the inbox" true
     (List.exists (fun (v : Inbox.item_view) -> Transfer_id.equal v.item.transfer_id out_id) (Inbox.list service alice ~limit:50));
   (* Gross flows keep both moves, as for any reversed contribution; what she saved is as after the import. *)
-  Alcotest.(check (list string)) "and alice's books net out" [ "2000.00"; "0.00"; "1000.00"; "1000.00" ] (flows "me")
+  Alcotest.(check (list string)) "and alice's books net out" [ "2000.00"; "0.00"; "1000.00"; "1000.00" ] (flows "me");
+  Alcotest.(check string) "undo takes back the contribution" {|"0.00"|} (Yojson.Safe.to_string (contributed ()))
 
 (* A move entered by hand between two accounts whose statements are both imported: the first
    statement posts it, the second only confirms its own side. *)

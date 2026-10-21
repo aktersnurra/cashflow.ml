@@ -222,13 +222,21 @@ let contribution_plan ctx ~target ~incomes =
         | None -> (m, member_income ctx m))
       members
   in
-  (* Contributions so far this cycle: money into household accounts from each member's own accounts. *)
+  (* Net contributions this cycle: money returned to a member, including reversals and undone
+     imported pairs, takes back what they contributed.
+     Future settle-up must clear the household payable and personal receivable with linked entries
+     within each owner's books (design §4.6); a direct household-to-member posting here would
+     instead count as a returned contribution, regardless of its transfer code. *)
   let view = Store_sqlite.view ctx.service.db in
   let contributed member =
+    let belongs_to_member id =
+      match view.account id with Some { owner = User id; _ } -> User_id.equal id member | _ -> false
+    in
     List.fold_left
       (fun sum (t : Transfer.t) ->
-        match Analytics.posted t, book.inside t.debit_account_id, view.account t.credit_account_id with
-        | true, Some _, Some { owner = User id; _ } when User_id.equal id member -> Int64.add sum (Amount.to_int64 t.amount)
+        match Analytics.posted t, book.inside t.debit_account_id, book.inside t.credit_account_id with
+        | true, Some _, None when belongs_to_member t.credit_account_id -> Int64.add sum (Amount.to_int64 t.amount)
+        | true, None, Some _ when belongs_to_member t.debit_account_id -> Int64.sub sum (Amount.to_int64 t.amount)
         | _ -> sum)
       0L (transfers ctx ~first:cycle.first ~last:cycle.last)
   in

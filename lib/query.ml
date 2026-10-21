@@ -266,8 +266,8 @@ let status_string = function `On_pace -> "on_pace" | `Ahead_of_pace -> "ahead_of
 let budget_status =
   { name = "budget_status";
     description =
-      "Each budgeted category in a pay cycle: budget, amount rolled over from earlier cycles, spent so far, what pace would \
-       expect by today, and a status (on_pace, ahead_of_pace when more than 15% ahead of pace, over_budget).";
+      "Each budgeted category in a pay cycle: budget, whether rollover is enabled, amount rolled over from earlier cycles, \
+       spent so far, what pace would expect by today, and a status (on_pace, ahead_of_pace when more than 15% ahead of pace, over_budget).";
     properties = common_props @ [ prop "cycle_offset" "integer" "0 for the current pay cycle, -1 for the previous one." ];
     parse = (fun f -> let* c = Args.common f in let* o = Args.int "cycle_offset" ~default:0 ~min:(-36) ~max:0 f in Ok (Budget_status (c, o)));
     encode =
@@ -280,15 +280,15 @@ let budget_status =
                    (fun (l : Analytics.budget_line) ->
                      `Assoc
                        [ ("category", Json.account_ref l.line_category); ("budget", money ctx l.budgeted); ("carried", money ctx l.carried);
-                         ("spent", money ctx l.spent); ("expected_by_now", money ctx l.expected_by_now); ("status", `String (status_string l.status)) ])
+                         ("rollover", `Bool l.rollover); ("spent", money ctx l.spent); ("expected_by_now", money ctx l.expected_by_now); ("status", `String (status_string l.status)) ])
                    r.lines) ) ]) }
 
 let contribution_plan =
   { name = "contribution_plan";
     description =
       "How much each household member should transfer to the household this pay cycle, split in proportion to income, and \
-       how much each has transferred so far. The target defaults to the household's budgets plus its savings goals' monthly \
-       amounts. Incomes default to each member's income last cycle; only your own is shown.";
+       net contributions so far after money returned to each member. The target defaults to the household's budgets plus \
+       its savings goals' monthly amounts. Incomes default to each member's income last cycle; only your own is shown.";
     properties =
       [ prop "currency" "string" "ISO 4217 code; defaults to the household's.";
         prop "target" "string" "Total to collect this cycle, as a decimal amount, e.g. \"24000\".";
