@@ -42,7 +42,10 @@ let take_attempt =
 let delete_attempt = stmt "DELETE FROM login_attempts WHERE state_hash = ? OR created_at < ?" Codec.(text @-> time @-> nil) exec
 
 (* Only same-site paths are allowed as a destination after sign-in. *)
-let safe_return_to path = if String.starts_with ~prefix:"/" path && not (String.starts_with ~prefix:"//" path) then path else "/"
+let safe_return_to path =
+  (* Browsers treat backslashes as slashes and strip some controls while resolving redirects. *)
+  let is_unsafe c = c = '\\' || Char.code c < 0x20 || Char.code c = 0x7f in
+  if String.starts_with ~prefix:"/" path && not (String.starts_with ~prefix:"//" path) && not (String.exists is_unsafe path) then path else "/"
 
 let begin_login auth db ~now ~return_to =
   match discovery auth with

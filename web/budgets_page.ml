@@ -52,7 +52,7 @@ let page ~(ctx : Ctx.t) graph =
     | Budget b when String.equal b.category category -> budget_form ~category ~name ~amount:b.amount ~rollover:b.rollover
     | _ ->
         Vdom.Node.div
-          ~attrs:[ Vdom.Attr.class_ "row clickable"; Vdom.Attr.on_click (fun _ -> set_editing (Budget { category; amount = J.str (J.field "budget" l); rollover = false })) ]
+          ~attrs:[ Vdom.Attr.class_ "row clickable"; Vdom.Attr.on_click (fun _ -> set_editing (Budget { category; amount = J.str (J.field "budget" l); rollover = J.bool (J.field "rollover" l) })) ]
           [ Ui.div
               [ Ui.div ~cls:"row-title" [ Ui.text name ];
                 Ui.meter ~marker:(if Float.(budget > 0.) then Some (expected /. budget) else None) (if Float.(budget > 0.) then spent /. budget else 0.);

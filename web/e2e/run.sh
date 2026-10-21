@@ -22,4 +22,7 @@ $BIN serve > $WORK/server.log 2>&1 &
 SERVER=$!
 trap "kill $SERVER" EXIT
 for i in $(seq 1 30); do curl -s -o /dev/null http://127.0.0.1:18090/health && break; sleep 0.2; done
-cd "$ROOT/web/e2e" && OUT=$WORK TOKEN=$TOKEN node test.js; echo "screenshots in $WORK"
+cd "$ROOT/web/e2e"
+OUT=$WORK TOKEN=$TOKEN node budget_rollover.js
+OUT=$WORK TOKEN=$TOKEN node test.js
+echo "screenshots in $WORK"
