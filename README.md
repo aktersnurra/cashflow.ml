@@ -92,6 +92,32 @@ Configuration is code: one typed S-expression file, `/usr/local/etc/cashflow.sex
 - **Secrets:** a secret is `(Inline "...")`, `(File /path)` or `(Env NAME)`, so the file itself can live in git with the rest of the jail's configuration.
 - **Logging:** `log_level` is `Quiet`, `Error`, `Warning`, `Info` (the default) or `Debug`. `CASHFLOW_LOG_LEVEL` overrides it for a single run.
 
+#### OpenRouter privacy
+
+Enable the optional assistant with:
+
+```lisp
+(openrouter
+ ((api_key (Env OPENROUTER_API_KEY))
+  (model anthropic/claude-haiku-5.5)
+  (provider_only (google-vertex amazon-bedrock azure))))
+```
+
+`provider_only` is optional and defaults to the list above; an empty list is rejected.
+Every completion sends `provider.only` from this list and unconditionally sets
+`provider.zdr = true` and `provider.data_collection = "deny"`. These privacy restrictions
+cannot be disabled in the configuration. Existing configurations inherit the restricted defaults.
+
+The model must have an available ZDR endpoint among the allowed providers. If none qualifies,
+the completion fails; the client never retries with a broader allowlist or weaker policy.
+The application continues without AI suggestions or generated summaries. No live provider/model
+availability is guaranteed by the sample configuration.
+
+[OpenRouter's ZDR setting](https://openrouter.ai/docs/guides/features/zdr) restricts inference
+provider retention; denying data collection alone is not a zero-retention guarantee. Review
+OpenRouter account-level privacy settings as well. No external plugins or server tools are enabled
+by this client.
+
 ### Deployment
 
 - **Web sign-in:** needs a confidential OIDC client in Pocket ID, with the callback `<public_url>/auth/callback`.

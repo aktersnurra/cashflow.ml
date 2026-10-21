@@ -47,7 +47,11 @@ let serve path =
           (* Request fibers share the connection; they take turns with it. *)
           Sql.set_guard db (Db_guard.make ());
           let assistant =
-            Option.map (fun api_key -> Llm.openrouter ~post:(Https.post env) ~api_key ~model:config.openrouter_model) config.openrouter_api_key
+            Option.map
+              (fun api_key ->
+                Llm.openrouter ~post:(Https.post env) ~api_key ~model:config.openrouter_model
+                  ~provider_only:config.openrouter_provider_only)
+              config.openrouter_api_key
           in
           let service = Service.make ?assistant db in
           let client = Oidc.https_client env in

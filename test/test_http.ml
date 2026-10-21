@@ -7,7 +7,9 @@ let claims ?(scopes = [ "ledger:read"; "ledger:write" ]) ?(groups = None) ?nonce
 let config : Config.t =
   { database_path = ":memory:"; listen_address = "127.0.0.1:0"; public_base_url = "https://cashflow.example"; oidc_issuer = "https://id.example";
     oidc_audience = "https://cashflow.example"; web_client_id = Some "web"; web_client_secret = Some "secret"; admin_group = "cashflow-admin";
-    static_dir = "/nonexistent"; openrouter_api_key = None; openrouter_model = "x"; log_level = None }
+    static_dir = "/nonexistent"; openrouter_api_key = None; openrouter_model = "x";
+    openrouter_provider_only = Config.default_openrouter_provider_only;
+    log_level = None }
 
 (* A fake identity provider: the nonce of the last authorization request comes back in the ID token. *)
 let last_nonce = ref None
