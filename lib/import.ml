@@ -359,7 +359,7 @@ let confirm ctx request =
                   match planned.status with
                   | Duplicate id -> (Some id, "duplicate")
                   | Decided_duplicate id -> (Some id, "decided_duplicate")
-                  | Ambiguous _ -> (None, "ambiguous")
+                  | Ambiguous _ -> assert false (* refused before anything is posted *)
                   | Matched _ | New ->
                       ( Option.map (fun (_, id, _) -> id) (List.find_opt (fun (q, _, _) -> q.index = planned.index) posted),
                         if planned.status = New then "new" else "matched" )
