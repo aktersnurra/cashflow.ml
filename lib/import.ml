@@ -418,51 +418,40 @@ let confirm ctx request =
             Ok (`Imported { batch; inbox_count = !inbox_count; balance }))
   with Abort e -> Error e
 
-(* Undoing an import reverses everything it posted, including categorisations made since. *)
+(* Undoing an import reverses everything it posted, and everything triage posted about its rows
+   since (categorisations, both sides of a shared cost, pairings), each in the scope it was
+   posted in. A row paired with one from another import goes back to that inbox. *)
 let undo ctx ~batch_id =
   let db = ctx.service.db in
   match Import_store.find_batch db batch_id with
   | None -> Error (`Not_found "import")
   | Some batch when batch.undone -> Ok batch
   | Some batch -> (
-      let* account = Service.find_account ctx.service ctx.access batch.account_id in
-      let scope = account.account.owner in
+      let* _ = Service.find_account ctx.service ctx.access batch.account_id in
       let view = Store_sqlite.view db in
       let transfers = Import_store.batch_transfers db batch_id in
-      let categorisations =
-        List.concat_map
-          (fun id ->
-            match Import_store.find_item db id with
-            | None -> []
-            | Some item ->
-                List.filter_map
-                  (fun revision ->
-                    let key = Result.get_ok (Idempotency_key.of_string (Printf.sprintf "categorize:%s:%d" (Transfer_id.to_string id) revision)) in
-                    Option.map (fun (t : Transfer.t) -> t.id) (view.transfer_by_key scope key))
-                  (List.init item.revision (fun i -> i + 1)))
-          transfers
+      let triage = List.sort_uniq Transfer_id.compare (List.concat_map (Import_store.triage_transfers db) transfers) in
+      let partners =
+        List.concat_map (Import_store.triaged_items db) triage |> List.filter (fun item -> not (List.exists (Transfer_id.equal item) transfers))
       in
-      let events =
-        List.map
-          (fun id ->
-            { Ledger_event.key = Result.get_ok (Idempotency_key.of_string ("undo:" ^ Transfer_id.to_string id)); linked = false;
-              body = Reverse { transfer_id = id; value_date = None; memo = None } })
-          (List.rev categorisations @ transfers)
+      (* Latest first, so a categorisation is undone before the row it moved. *)
+      let to_reverse = List.filter_map view.transfer (List.rev triage @ transfers) in
+      let reverse (t : Transfer.t) =
+        { Ledger_event.key = Result.get_ok (Idempotency_key.of_string ("undo:" ^ Transfer_id.to_string t.id)); linked = false;
+          body = Reverse { transfer_id = t.id; value_date = None; memo = None } }
       in
       try
         Sql.transaction db (fun () ->
-            (match events with
-            | [] -> ()
-            | _ -> (
-                match Service.submit ctx.service ctx.access ~scope events with
-                | Ok results ->
-                    List.iter
-                      (function
-                        | Ok _ | Error `Transfer_already_reversed -> ()
-                        | Error e -> raise (Abort (`Invalid ("undo failed: " ^ Ledger_error.transfer_to_string e))))
-                      results
-                | Error e -> raise (Abort (e :> error))));
+            List.iter
+              (fun (t : Transfer.t) ->
+                match Service.submit ctx.service ctx.access ~scope:t.scope [ reverse t ] with
+                | Ok [ (Ok _ | Error `Transfer_already_reversed) ] -> ()
+                | Ok [ Error e ] -> raise (Abort (`Invalid ("undo failed: " ^ Ledger_error.transfer_to_string e)))
+                | Ok _ -> raise (Abort (`Invalid "undo failed"))
+                | Error e -> raise (Abort (e :> error)))
+              to_reverse;
             let now = ctx.service.now () in
+            List.iter (fun id -> Option.iter (fun item -> Import_store.save_item db ~now { item with status = "open" }) (Import_store.find_item db id)) partners;
             List.iter
               (fun id -> Option.iter (fun item -> Import_store.save_item db ~now { item with status = "dismissed" }) (Import_store.find_item db id))
               transfers;

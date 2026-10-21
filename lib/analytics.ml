@@ -46,6 +46,12 @@ let flow book flows (transfer : Transfer.t) =
   match d, c with
   | Some _, None when balance_sheet d -> { flows with transfers_in = flows.transfers_in +: a }
   | None, Some _ when balance_sheet c -> { flows with transfers_out = flows.transfers_out +: a }
+  (* A move between a member and the household that came in as two imported rows, paired: each
+     bank side was imported against a suspense account in its own scope, and this entry clears
+     the two across the boundary, so it is the contribution. Nothing else crosses the boundary
+     between such accounts, so a reversal that does is one of these undone: the move back. *)
+  | Some _, None when transfer.code = Contribution || transfer.code = Reversal -> { flows with transfers_in = flows.transfers_in +: a }
+  | None, Some _ when transfer.code = Contribution || transfer.code = Reversal -> { flows with transfers_out = flows.transfers_out +: a }
   | _ -> flows
 
 let flows_between book ~first ~last transfers =

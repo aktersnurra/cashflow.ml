@@ -154,9 +154,17 @@ CREATE TABLE inbox_items (
   suggested_account_id TEXT REFERENCES accounts(id), suggestion_source TEXT, suggestion_confidence INTEGER,
   candidate_pending_id TEXT REFERENCES transfers(id),
   merchant_key TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('open', 'done', 'dismissed')),
+  status TEXT NOT NULL CHECK (status IN ('open', 'done', 'paired', 'dismissed')),
   created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
+-- Every transfer a triage action posted, against each inbox row it was about (a pair is about
+-- two), so undoing an import reverses exactly those and a retry finds what it did.
+CREATE TABLE triage_transfers (
+  item_transfer_id TEXT NOT NULL REFERENCES inbox_items(transfer_id),
+  transfer_id TEXT NOT NULL REFERENCES transfers(id),
+  PRIMARY KEY (item_transfer_id, transfer_id)
+);
+CREATE INDEX triage_transfers_transfer_idx ON triage_transfers(transfer_id);
 CREATE INDEX inbox_items_open_idx ON inbox_items(status, bank_account_id);
 CREATE INDEX inbox_items_merchant_idx ON inbox_items(merchant_key, status);
 

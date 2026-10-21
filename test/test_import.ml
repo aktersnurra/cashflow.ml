@@ -1,5 +1,7 @@
 open Test_service_support
 
+let field path json = List.fold_left (fun json name -> match json with `Assoc fields -> Option.value (List.assoc_opt name fields) ~default:`Null | _ -> `Null) json path
+
 let october =
   {|Kontoutdrag;Lönekonto ****1234
 Period;2026-10-01 - 2026-10-20
@@ -174,6 +176,64 @@ let test_pair_and_share () =
       | other -> Alcotest.failf "unexpected %s" (Yojson.Safe.to_string other))
   | _ -> Alcotest.fail "unexpected settle-up"
 
+let household_setup () =
+  let service = make_service () in
+  let alice = sign_in service ~admin:true "alice" in
+  let household = ok (Service.create_household service alice ~name:"Home" ~default_currency:"SEK") in
+  let alice = Service.access_for service (Access.user alice) in
+  let checking = open_checking service alice ~statement_backed:true "Checking" in
+  let shared = open_checking service alice ~owner:(Household household.id) ~statement_backed:true "Shared" in
+  (service, alice, household, checking, shared)
+
+let find_item service alice text =
+  (List.find (fun (v : Inbox.item_view) -> v.transfer.transfer.memo.description = text) (Inbox.list service alice ~limit:50)).item.transfer_id
+
+let sum_of service alice owner =
+  List.fold_left (fun acc (i : Account_info.t) -> if Owner.equal i.account.owner owner then acc @ [ (i.account.name, Account.posted_balance i.account) ] else acc) [] (Service.accounts service alice)
+  |> List.filter (fun (_, b) -> not (Int64.equal b 0L))
+
+(* Undoing an import takes back both sides of a shared cost, the household's included. *)
+let test_undo_after_share () =
+  let service, alice, household, checking, _ = household_setup () in
+  let ctx = Import.context service alice in
+  let summary = imported (Import.confirm ctx (request checking "Datum;Text;Belopp\n2026-10-03;COOP;-300,00\n")) in
+  let groceries =
+    (List.find (fun (i : Account_info.t) -> i.account.name = "Groceries" && Owner.equal i.account.owner (Household household.id)) (Service.accounts service alice)).account.id
+  in
+  ignore (ok (Inbox.share service alice ~transfer_id:(find_item service alice "COOP") ~household_category_id:groceries));
+  Alcotest.(check int64) "household spent it" 300_00L (balance service alice groceries);
+  ignore (ok_import (Import.undo ctx ~batch_id:summary.batch.batch_id));
+  Alcotest.(check (list (pair string int64))) "nothing left in the household's books" [] (sum_of service alice (Household household.id));
+  Alcotest.(check (list (pair string int64))) "or alice's" [] (sum_of service alice (Access.personal alice))
+
+(* A contribution that came in as two imported rows: pairing it is idempotent, counts as the
+   contribution in both scopes, and undoing either import puts the other row back in the inbox. *)
+let test_pairing_a_contribution () =
+  let service, alice, _, checking, shared = household_setup () in
+  let ctx = Import.context service alice in
+  ignore (imported (Import.confirm ctx (request checking "Datum;Text;Belopp\n2026-10-02;TILL HUSHÅLL;-1000,00\n2026-10-02;SL;-1000,00\n")));
+  let in_batch = imported (Import.confirm ctx (request shared "Datum;Text;Belopp\n2026-10-02;FRÅN ALICE;1000,00\n")) in
+  let out_id = find_item service alice "TILL HUSHÅLL" and in_id = find_item service alice "FRÅN ALICE" in
+  let other = find_item service alice "SL" in
+  let first = ok (Inbox.pair service alice ~out_id ~in_id) in
+  let again = ok (Inbox.pair service alice ~out_id ~in_id) in
+  (match first, again with
+  | Ok (Created a), Ok (Exists b) -> Alcotest.(check bool) "a retry finds the same transfer" true (Transfer_id.equal a.transfer.id b.transfer.id)
+  | _ -> Alcotest.fail "expected created, then exists");
+  Alcotest.(check bool) "neither row pairs with another" true (Result.is_error (Inbox.pair service alice ~out_id:other ~in_id));
+  let flows scope =
+    match field [ "cycles" ] (ok (Query.execute service alice (Option.get (Query.find "cashflow_summary")) [ ("scope", `String scope); ("cycles", `Int 1) ])) with
+    | `List [ c ] -> List.map (fun f -> match field [ f ] c with `String s -> s | _ -> "?") [ "spending"; "income"; "transfers_out"; "transfers_in" ]
+    | _ -> Alcotest.fail "expected one cycle"
+  in
+  Alcotest.(check (list string)) "alice: SL spent, 1000 to the household" [ "1000.00"; "0.00"; "1000.00"; "0.00" ] (flows "me");
+  Alcotest.(check (list string)) "household: 1000 in from alice" [ "0.00"; "0.00"; "0.00"; "1000.00" ] (flows "household");
+  ignore (ok_import (Import.undo ctx ~batch_id:in_batch.batch.batch_id));
+  Alcotest.(check bool) "the other side is back in the inbox" true
+    (List.exists (fun (v : Inbox.item_view) -> Transfer_id.equal v.item.transfer_id out_id) (Inbox.list service alice ~limit:50));
+  (* Gross flows keep both moves, as for any reversed contribution; what she saved is as after the import. *)
+  Alcotest.(check (list string)) "and alice's books net out" [ "2000.00"; "0.00"; "1000.00"; "1000.00" ] (flows "me")
+
 let test_reconcile () =
   let service, alice, checking = setup () in
   ignore (imported (Import.confirm (Import.context service alice) (request checking october)));
@@ -194,4 +254,5 @@ let () =
           Alcotest.test_case "categorise, learn and undo" `Quick test_categorize_learn_and_undo;
           Alcotest.test_case "rules auto-apply" `Quick test_rules_auto_apply ] );
       ( "inbox",
-        [ Alcotest.test_case "pair and share" `Quick test_pair_and_share; Alcotest.test_case "reconcile" `Quick test_reconcile ] ) ]
+        [ Alcotest.test_case "pair and share" `Quick test_pair_and_share; Alcotest.test_case "undo after share" `Quick test_undo_after_share;
+          Alcotest.test_case "pairing a contribution" `Quick test_pairing_a_contribution; Alcotest.test_case "reconcile" `Quick test_reconcile ] ) ]

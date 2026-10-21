@@ -123,6 +123,10 @@ let insert_item =
     Codec.(transfer_id @-> account_id @-> account_id @-> nullable account_id @-> nullable text @-> nullable int @-> nullable transfer_id @-> text @-> text @-> time @-> time @-> nil)
     exec
 
+let insert_triage = stmt "INSERT OR IGNORE INTO triage_transfers (item_transfer_id, transfer_id) VALUES (?, ?)" Codec.(transfer_id @-> transfer_id @-> nil) exec
+let triage_of_item = stmt "SELECT transfer_id FROM triage_transfers WHERE item_transfer_id = ? ORDER BY rowid" Codec.(transfer_id @-> nil) (many (row Codec.(transfer_id @-> nil) Fun.id))
+let items_of_triage = stmt "SELECT item_transfer_id FROM triage_transfers WHERE transfer_id = ?" Codec.(transfer_id @-> nil) (many (row Codec.(transfer_id @-> nil) Fun.id))
+
 let item_by_transfer = stmt ("SELECT " ^ item_columns ^ " FROM inbox_items i WHERE i.transfer_id = ?") Codec.(transfer_id @-> nil) (opt item_row)
 
 let open_items_for =
@@ -195,3 +199,8 @@ let add_rule db ~now (r : Suggest.rule) =
 let remove_rule db owner id =
   run db delete_rule id (Codec.owner_kind owner) (Codec.owner_id owner);
   Sql.changes db > 0
+
+(* What triage posted for an inbox row, and which rows a triage transfer was about. *)
+let record_triage db ~item transfer = run db insert_triage item transfer
+let triage_transfers db item = run db triage_of_item item
+let triaged_items db transfer = run db items_of_triage transfer
