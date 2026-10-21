@@ -89,6 +89,42 @@ CREATE INDEX transfers_open_pending_idx ON transfers(kind) WHERE kind = 'pending
 CREATE TABLE transfer_tags (transfer_id TEXT NOT NULL REFERENCES transfers(id), tag TEXT NOT NULL, PRIMARY KEY (transfer_id, tag));
 CREATE INDEX transfer_tags_tag_idx ON transfer_tags(tag);
 |}
+    );
+    ( 2,
+      {|
+-- A budget changes by adding a version that applies from a cycle ("YYYY-MM") onward, so past
+-- cycles keep the budget they had. An amount of zero removes the budget from that cycle on.
+CREATE TABLE budget_versions (
+  owner_kind TEXT NOT NULL, owner_id TEXT NOT NULL,
+  category_account_id TEXT NOT NULL REFERENCES accounts(id),
+  effective_from TEXT NOT NULL,
+  monthly_amount INTEGER NOT NULL CHECK (monthly_amount >= 0),
+  rollover INTEGER NOT NULL CHECK (rollover IN (0, 1)),
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (category_account_id, effective_from)
+);
+
+CREATE TABLE savings_goals (
+  id TEXT PRIMARY KEY, owner_kind TEXT NOT NULL, owner_id TEXT NOT NULL,
+  name TEXT NOT NULL, currency TEXT NOT NULL REFERENCES currencies(code),
+  target_amount INTEGER NOT NULL CHECK (target_amount > 0), target_date TEXT,
+  monthly_amount INTEGER CHECK (monthly_amount IS NULL OR monthly_amount > 0),
+  archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)), created_at TEXT NOT NULL
+);
+-- A goal earmarks money in real savings accounts rather than holding any of its own.
+CREATE TABLE goal_earmarks (
+  goal_id TEXT NOT NULL REFERENCES savings_goals(id), account_id TEXT NOT NULL REFERENCES accounts(id),
+  amount INTEGER NOT NULL CHECK (amount >= 0), PRIMARY KEY (goal_id, account_id)
+);
+
+CREATE TABLE reconciliation_checkpoints (
+  id TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES accounts(id),
+  on_date TEXT NOT NULL, statement_balance INTEGER NOT NULL, ledger_balance INTEGER NOT NULL,
+  source TEXT NOT NULL CHECK (source IN ('manual', 'import')), import_batch_id TEXT,
+  created_by TEXT NOT NULL REFERENCES users(id), created_at TEXT NOT NULL
+);
+CREATE INDEX reconciliation_account_date_idx ON reconciliation_checkpoints(account_id, on_date);
+|}
     ) ]
 
 let latest_version = List.fold_left (fun latest (version, _) -> max latest version) 0 migrations

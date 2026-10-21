@@ -1,0 +1,332 @@
+(* Analytics as pure functions over accounts and transfers. A scope is a set of owners: an account
+   is inside when its owner is in the set and it is in the reported currency. A transfer between an
+   inside and an outside account is money moving between books (a contribution to the household,
+   a settlement), never income or spending. *)
+
+type scope = Me | Household | Family
+
+let scope_to_string = function Me -> "me" | Household -> "household" | Family -> "family"
+let scope_of_string = function "me" -> Some Me | "household" -> Some Household | "family" -> Some Family | _ -> None
+
+type book = {
+  inside : Account_id.t -> Account_info.t option;  (** in scope and in the reported currency *)
+  currency : Currency.t;
+}
+
+let make_book ~(accounts : Account_info.t list) ~owners ~currency =
+  let table = Hashtbl.create 64 in
+  List.iter
+    (fun (info : Account_info.t) ->
+      if List.exists (Owner.equal info.account.owner) owners && Currency.equal info.account.currency currency then
+        Hashtbl.replace table info.account.id info)
+    accounts;
+  { inside = Hashtbl.find_opt table; currency }
+
+let posted (transfer : Transfer.t) = match transfer.kind with Single | Post_pending _ -> true | Pending _ | Void_pending _ -> false
+let amount (transfer : Transfer.t) = Amount.to_int64 transfer.amount
+let in_range ~first ~last (transfer : Transfer.t) = Date.compare first transfer.value_date <= 0 && Date.compare transfer.value_date last <= 0
+let is kind (info : Account_info.t option) = match info with Some i -> i.account.kind = kind | None -> false
+let balance_sheet (info : Account_info.t option) = is Asset info || is Liability info
+
+type flows = { income : int64; spending : int64; transfers_in : int64; transfers_out : int64 }
+
+let zero_flows = { income = 0L; spending = 0L; transfers_in = 0L; transfers_out = 0L }
+let ( +: ) = Int64.add
+let ( -: ) = Int64.sub
+
+(* How one posted transfer changes the scope's flows. Debiting an expense is spending, crediting
+   one (a refund, a reversal, a reclassification away) takes it back; income mirrors that. *)
+let flow book flows (transfer : Transfer.t) =
+  let d = book.inside transfer.debit_account_id and c = book.inside transfer.credit_account_id in
+  let a = amount transfer in
+  let flows = if is Expense d then { flows with spending = flows.spending +: a } else flows in
+  let flows = if is Expense c then { flows with spending = flows.spending -: a } else flows in
+  let flows = if is Income c then { flows with income = flows.income +: a } else flows in
+  let flows = if is Income d then { flows with income = flows.income -: a } else flows in
+  match d, c with
+  | Some _, None when balance_sheet d -> { flows with transfers_in = flows.transfers_in +: a }
+  | None, Some _ when balance_sheet c -> { flows with transfers_out = flows.transfers_out +: a }
+  | _ -> flows
+
+let flows_between book ~first ~last transfers =
+  List.fold_left (fun flows t -> if posted t && in_range ~first ~last t then flow book flows t else flows) zero_flows transfers
+
+let savings flows = flows.income -: flows.spending +: flows.transfers_in -: flows.transfers_out
+
+(* Basis points, so the rate is exact; [None] without income, where a rate means nothing. *)
+let savings_rate_bp flows =
+  if Int64.compare flows.income 0L <= 0 then None else Some (Int64.to_int (Int64.div (Int64.mul (savings flows) 10_000L) flows.income))
+
+type cycle_summary = { cycle : Cycle.t; flows : flows; savings : int64; savings_rate_bp : int option; reconciled : bool }
+
+let cashflow_summary book ~cycles ~reconciled_through transfers =
+  List.map
+    (fun (cycle : Cycle.t) ->
+      let flows = flows_between book ~first:cycle.first ~last:cycle.last transfers in
+      let reconciled = match reconciled_through with Some date -> Date.compare cycle.last date <= 0 | None -> false in
+      { cycle; flows; savings = savings flows; savings_rate_bp = savings_rate_bp flows; reconciled })
+    cycles
+
+(* Net amount per inside account of one kind over a range, largest first. *)
+let totals_by_account book kind ~first ~last transfers =
+  let table = Hashtbl.create 32 in
+  let add id delta =
+    match book.inside id with
+    | Some info when info.account.kind = kind ->
+        Hashtbl.replace table id (info, Int64.add delta (Option.fold ~none:0L ~some:snd (Hashtbl.find_opt table id)))
+    | _ -> ()
+  in
+  List.iter
+    (fun (t : Transfer.t) ->
+      if posted t && in_range ~first ~last t then (
+        let a = amount t in
+        let sign = if Account.debit_normal kind then 1L else -1L in
+        add t.debit_account_id (Int64.mul sign a);
+        add t.credit_account_id (Int64.mul (Int64.neg sign) a)))
+    transfers;
+  Hashtbl.fold (fun _ entry acc -> entry :: acc) table [] |> List.sort (fun (_, a) (_, b) -> Int64.compare b a)
+
+type category_total = { category : Account_info.t; total : int64; previous : int64 option }
+
+let spending_by_category book ~first ~last ?compare_to transfers =
+  let current = totals_by_account book Expense ~first ~last transfers in
+  let previous =
+    Option.map (fun (first, last) -> totals_by_account book Expense ~first ~last transfers) compare_to
+  in
+  List.map
+    (fun ((info : Account_info.t), total) ->
+      let previous =
+        Option.map
+          (fun previous ->
+            Option.fold ~none:0L ~some:snd
+              (List.find_opt (fun ((i : Account_info.t), _) -> Account_id.equal i.account.id info.account.id) previous))
+          previous
+      in
+      { category = info; total; previous })
+    current
+
+let category_trend book category ~cycles transfers =
+  List.map
+    (fun (cycle : Cycle.t) ->
+      let total =
+        List.fold_left
+          (fun total (t : Transfer.t) ->
+            if not (posted t && in_range ~first:cycle.first ~last:cycle.last t) then total
+            else if Account_id.equal t.debit_account_id category then total +: amount t
+            else if Account_id.equal t.credit_account_id category then total -: amount t
+            else total)
+          0L transfers
+      in
+      ignore book;
+      (cycle, total))
+    cycles
+
+(* Assets minus liabilities after each date, from every posted transfer up to it. *)
+let net_worth_series book ~dates transfers =
+  let dates = List.sort Date.compare dates in
+  let sorted = List.sort (fun (a : Transfer.t) (b : Transfer.t) -> Date.compare a.value_date b.value_date) (List.filter posted transfers) in
+  let change (t : Transfer.t) =
+    let side id sign =
+      match book.inside id with
+      | Some info when info.account.kind = Asset -> Int64.mul sign (amount t)
+      | Some info when info.account.kind = Liability -> Int64.mul (Int64.neg sign) (amount t)
+      | _ -> 0L
+    in
+    side t.debit_account_id 1L +: side t.credit_account_id (-1L)
+  in
+  let rec go dates transfers worth acc =
+    match dates with
+    | [] -> List.rev acc
+    | date :: rest -> (
+        match transfers with
+        | (t : Transfer.t) :: more when Date.compare t.value_date date <= 0 -> go dates more (worth +: change t) acc
+        | _ -> go rest transfers worth ((date, worth) :: acc))
+  in
+  go dates sorted 0L []
+
+(* Spending transfers, largest first: those debiting an inside expense account. *)
+let largest_expenses book ~first ~last ~limit transfers =
+  transfers
+  |> List.filter (fun (t : Transfer.t) -> posted t && in_range ~first ~last t && is Expense (book.inside t.debit_account_id) && t.code <> Reclassify)
+  |> List.sort (fun a b -> Int64.compare (amount b) (amount a))
+  |> List.filteri (fun i _ -> i < limit)
+
+let is_investment (info : Account_info.t) = List.mem "investment" info.details.tags
+
+(* Liquid assets: inside asset accounts not tagged as investments. *)
+let liquid_assets book (accounts : Account_info.t list) =
+  List.fold_left
+    (fun total (info : Account_info.t) ->
+      match book.inside info.account.id with
+      | Some info when info.account.kind = Asset && not (is_investment info) -> total +: Account.posted_balance info.account
+      | _ -> total)
+    0L accounts
+
+type runway = { liquid : int64; average_monthly_spending : int64; months : float option }
+
+let runway book accounts ~cycles transfers =
+  let liquid = liquid_assets book accounts in
+  let spent = List.map (fun (c : Cycle.t) -> (flows_between book ~first:c.first ~last:c.last transfers).spending) cycles in
+  let average = match spent with [] -> 0L | _ -> Int64.div (List.fold_left Int64.add 0L spent) (Int64.of_int (List.length spent)) in
+  { liquid; average_monthly_spending = average;
+    months = (if Int64.compare average 0L > 0 then Some (Int64.to_float liquid /. Int64.to_float average) else None) }
+
+(* Recurring payments: the same merchant charged at a regular interval. *)
+type cadence = Weekly | Monthly | Quarterly | Yearly
+
+let cadence_to_string = function Weekly -> "weekly" | Monthly -> "monthly" | Quarterly -> "quarterly" | Yearly -> "yearly"
+
+type recurring = {
+  merchant : string;
+  cadence : cadence;
+  typical_amount : int64;
+  last_amount : int64;
+  previous_amount : int64;
+  last_date : Date.t;
+  next_expected : Date.t;
+  occurrences : int;
+  category : Account_info.t option;
+}
+
+let merchant_key (t : Transfer.t) =
+  let text = match t.memo.counterparty with Some c when String.trim c <> "" -> c | _ -> t.memo.description in
+  String.lowercase_ascii text |> String.map (fun c -> if c >= '0' && c <= '9' then ' ' else c)
+  |> String.split_on_char ' ' |> List.filter (( <> ) "") |> String.concat " "
+
+(* The same day [months] later, clamped to the end of a shorter month. *)
+let add_months date months =
+  let year, month, day = Date.to_ymd date in
+  let year, month = Cycle.shift_month year month months in
+  Option.get (Date.of_ymd year month (min day (Date.days_in_month year month)))
+
+let median compare values =
+  let sorted = List.sort compare values in
+  List.nth sorted (List.length sorted / 2)
+
+let cadence_of_interval days =
+  if days >= 6 && days <= 8 then Some (Weekly, 7)
+  else if days >= 26 && days <= 35 then Some (Monthly, 30)
+  else if days >= 85 && days <= 95 then Some (Quarterly, 91)
+  else if days >= 355 && days <= 375 then Some (Yearly, 365)
+  else None
+
+let recurring_payments book transfers =
+  let groups = Hashtbl.create 32 in
+  List.iter
+    (fun (t : Transfer.t) ->
+      if posted t && t.code <> Reclassify && t.code <> Reversal && is Expense (book.inside t.debit_account_id) then
+        let key = merchant_key t in
+        if key <> "" then Hashtbl.replace groups key (t :: Option.value (Hashtbl.find_opt groups key) ~default:[]))
+    transfers;
+  Hashtbl.fold
+    (fun merchant charges acc ->
+      let charges = List.sort (fun (a : Transfer.t) (b : Transfer.t) -> Date.compare a.value_date b.value_date) charges in
+      let count = List.length charges in
+      if count < 3 then acc
+      else
+        let intervals =
+          List.filteri (fun i _ -> i > 0) charges
+          |> List.mapi (fun i (t : Transfer.t) -> Date.days_between ~first:(List.nth charges i).value_date ~last:t.value_date)
+        in
+        match cadence_of_interval (median Int.compare intervals) with
+        | None -> acc
+        | Some (cadence, step) ->
+            let last = List.nth charges (count - 1) and previous = List.nth charges (count - 2) in
+            let typical = median Int64.compare (List.map amount charges) in
+            { merchant; cadence; typical_amount = typical; last_amount = amount last; previous_amount = amount previous;
+              last_date = last.value_date;
+              next_expected =
+                (match cadence with
+                | Monthly -> add_months last.value_date 1
+                | Quarterly -> add_months last.value_date 3
+                | Yearly -> add_months last.value_date 12
+                | Weekly -> Date.add_days last.value_date step); occurrences = count;
+              category = book.inside last.debit_account_id }
+            :: acc)
+    groups []
+  |> List.sort (fun a b -> Int64.compare b.typical_amount a.typical_amount)
+
+(* A price change: the latest charge differs from the one before by more than 2%. *)
+let price_changed r =
+  let diff = Int64.abs (Int64.sub r.last_amount r.previous_amount) in
+  Int64.compare (Int64.mul diff 50L) r.previous_amount > 0
+
+(* Budgets *)
+
+type budget = { category_id : Account_id.t; monthly_amount : int64; rollover : bool }
+
+type budget_line = {
+  line_category : Account_info.t;
+  budgeted : int64;
+  carried : int64;  (** rolled over from earlier cycles: positive when underspent *)
+  spent : int64;
+  expected_by_now : int64;
+  status : [ `On_pace | `Ahead_of_pace | `Over_budget ];
+}
+
+let spent_in book category ~(cycle : Cycle.t) transfers =
+  List.fold_left
+    (fun total (t : Transfer.t) ->
+      if not (posted t && in_range ~first:cycle.first ~last:cycle.last t) then total
+      else if Account_id.equal t.debit_account_id category then total +: amount t
+      else if Account_id.equal t.credit_account_id category then total -: amount t
+      else total)
+    0L transfers
+  |> fun total ->
+  ignore book;
+  total
+
+(* [budgets] are the versions in force in [cycle]; [budget_for earlier category] finds the one in
+   force in an earlier cycle. Rollover carries the
+   difference between budget and spending forward from up to twelve earlier cycles. *)
+let budget_status book ~(cycle : Cycle.t) ~budgets ~previous_cycles ~today ~budget_for transfers =
+  let elapsed =
+    if Date.compare today cycle.first < 0 then 0
+    else if Date.compare today cycle.last > 0 then Cycle.day_count cycle
+    else Date.days_between ~first:cycle.first ~last:today + 1
+  in
+  List.filter_map
+    (fun (budget : budget) ->
+      match book.inside budget.category_id with
+      | None -> None
+      | Some category ->
+          let carried =
+            if not budget.rollover then 0L
+            else
+              List.fold_left
+                (fun carried (earlier : Cycle.t) ->
+                  match budget_for earlier budget.category_id with
+                  | Some (b : budget) when b.rollover -> carried +: (b.monthly_amount -: spent_in book budget.category_id ~cycle:earlier transfers)
+                  | _ -> 0L)
+                0L previous_cycles
+          in
+          let available = budget.monthly_amount +: carried in
+          let spent = spent_in book budget.category_id ~cycle transfers in
+          let expected = Int64.div (Int64.mul available (Int64.of_int elapsed)) (Int64.of_int (Cycle.day_count cycle)) in
+          let status =
+            if Int64.compare spent available > 0 then `Over_budget
+            else if Int64.compare (Int64.mul spent 100L) (Int64.mul expected 115L) > 0 then `Ahead_of_pace
+            else `On_pace
+          in
+          Some { line_category = category; budgeted = budget.monthly_amount; carried; spent; expected_by_now = expected; status })
+    budgets
+
+(* Contribution planning: split a target in proportion to income. Rounded to whole currency
+   units, with the remainder on the highest earner, so the parts add up to the target. *)
+let plan_contributions ~unit ~target incomes =
+  let total = List.fold_left (fun total (_, income) -> Int64.add total (Int64.max 0L income)) 0L incomes in
+  if Int64.compare total 0L <= 0 || incomes = [] then None
+  else
+    let round_down value = Int64.mul (Int64.div value unit) unit in
+    let shares =
+      List.map
+        (fun (member, income) ->
+          (* target * income / total, computed in floats only for the ratio's product to avoid overflow. *)
+          let share = Int64.of_float (Int64.to_float target *. (Int64.to_float (Int64.max 0L income) /. Int64.to_float total)) in
+          (member, income, round_down share))
+        incomes
+    in
+    let assigned = List.fold_left (fun sum (_, _, share) -> Int64.add sum share) 0L shares in
+    let remainder = Int64.sub target assigned in
+    let top, _, _ = List.fold_left (fun (bm, bi, bs) (m, i, s) -> if Int64.compare i bi > 0 then (m, i, s) else (bm, bi, bs)) (List.hd shares) shares in
+    Some (List.map (fun (member, income, share) -> (member, income, if member = top then Int64.add share remainder else share)) shares)

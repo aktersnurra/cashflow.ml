@@ -11,5 +11,10 @@
 
 (test
  (name test_service)
- (modules test_service)
+ (modules test_service test_service_support)
  (libraries alcotest cashflow))
+
+(test
+ (name test_analytics)
+ (modules test_analytics test_service_support)
+ (libraries alcotest cashflow yojson))
