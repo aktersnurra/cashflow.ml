@@ -23,7 +23,7 @@ let log_llm_call service (access : Access.t) ~purpose ~items ~ok =
         (Access.user access).id purpose items llm.model ok (service.now ())
 
 let env service : Ledger_core.env =
-  { now = service.now; fresh_account_id = Account_id.fresh; fresh_transfer_id = Transfer_id.fresh }
+  { now = service.now; fresh_account_id = Id_generator.account; fresh_transfer_id = Id_generator.transfer }
 
 let today service (access : Access.t) =
   let zone = Result.value (Time.parse_zone (Access.user access).timezone) ~default:Time.utc in

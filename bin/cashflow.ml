@@ -29,7 +29,7 @@ let verify path =
               List.iter (fun (m : Ledger_core.mismatch) -> Logs.err (fun l -> l "account %s: stored balances differ from its transfers" (Account_id.to_string m.account_id))) mismatches;
               1))
 
-let env () : Ledger_core.env = { now = Ptime_clock.now; fresh_account_id = Account_id.fresh; fresh_transfer_id = Transfer_id.fresh }
+let env () : Ledger_core.env = { now = Ptime_clock.now; fresh_account_id = Id_generator.account; fresh_transfer_id = Id_generator.transfer }
 
 (* Run daily from cron: voids pending transfers past their expiry date. *)
 let void_expired path =

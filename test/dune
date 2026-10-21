@@ -78,3 +78,15 @@
  (enabled_if (= %{context_name} default))
  (modules test_sql)
  (libraries alcotest cashflow eio eio_main))
+
+(test
+ (name test_core)
+ (enabled_if (= %{context_name} default))
+ (modules test_core)
+ (libraries alcotest cashflow))
+
+(test
+ (name test_id_generator)
+ (enabled_if (= %{context_name} default))
+ (modules test_id_generator)
+ (libraries alcotest cashflow uuidm))

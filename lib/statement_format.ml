@@ -45,7 +45,7 @@ let parse_amount ~scale text =
            | _ -> Some c)
     |> String.of_seq
   in
-  Json.parse_decimal ~scale normalized
+  Result.to_option (Decimal.parse ~scale normalized)
 
 (* Spreadsheets can store a date as a day number counted from 1899-12-30. *)
 let excel_epoch = Option.get (Date.of_ymd 1899 12 30)

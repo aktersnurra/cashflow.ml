@@ -3,28 +3,8 @@
    nobody has to know a currency's scale. *)
 type t = Yojson.Safe.t
 
-let decimal ~scale minor =
-  if scale = 0 then Int64.to_string minor
-  else
-    let negative = Int64.compare minor 0L < 0 in
-    let digits = Int64.to_string (Int64.abs minor) in
-    let digits = if String.length digits <= scale then String.make (scale - String.length digits + 1) '0' ^ digits else digits in
-    let split = String.length digits - scale in
-    (if negative then "-" else "") ^ String.sub digits 0 split ^ "." ^ String.sub digits split scale
-
-(* Parses "1240.5", "1240", "-3.25" into minor units, rejecting more decimals than the scale. *)
-let parse_decimal ~scale text =
-  let text = String.trim text in
-  let negative = String.starts_with ~prefix:"-" text in
-  let body = if negative then String.sub text 1 (String.length text - 1) else text in
-  let whole, fraction = match String.index_opt body '.' with Some i -> (String.sub body 0 i, String.sub body (i + 1) (String.length body - i - 1)) | None -> (body, "") in
-  let digits s = s <> "" && String.for_all (fun c -> c >= '0' && c <= '9') s in
-  if not (digits whole && (fraction = "" || digits fraction)) || String.length fraction > scale then None
-  else
-    let fraction = fraction ^ String.make (scale - String.length fraction) '0' in
-    match Int64.of_string_opt (whole ^ fraction) with
-    | Some value -> Some (if negative then Int64.neg value else value)
-    | None -> None
+let decimal = Decimal.format
+let parse_decimal ~scale text = Result.to_option (Decimal.parse ~scale text)
 
 let money currency minor = `String (decimal ~scale:(Currency.scale currency) minor)
 let option f = function None -> `Null | Some value -> f value

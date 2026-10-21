@@ -22,12 +22,7 @@ let first suggesters = List.fold_right ( <|> ) suggesters none
 let source_to_string = function Rule _ -> "rule" | History _ -> "history" | Llm -> "llm"
 
 let merchant_key (row : Statement_format.row) =
-  Analytics.merchant_key
-    { id = Transfer_id.fresh (); scope = Owner.User (User_id.fresh ()); key = Result.get_ok (Idempotency_key.of_string "x");
-      debit_account_id = Account_id.fresh (); credit_account_id = Account_id.fresh ();
-      amount = Option.get (Amount.of_int64 1L); kind = Single; code = Purchase;
-      memo = { description = row.description; counterparty = row.counterparty; tags = [] };
-      value_date = row.booking_date; reverses = None; recorded_at = Ptime.epoch }
+  Merchant.key ~description:row.description ~counterparty:row.counterparty
 
 type rule = {
   rule_id : string;

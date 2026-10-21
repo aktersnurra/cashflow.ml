@@ -198,9 +198,7 @@ type recurring = {
 }
 
 let merchant_key (t : Transfer.t) =
-  let text = match t.memo.counterparty with Some c when String.trim c <> "" -> c | _ -> t.memo.description in
-  String.lowercase_ascii text |> String.map (fun c -> if c >= '0' && c <= '9' then ' ' else c)
-  |> String.split_on_char ' ' |> List.filter (( <> ) "") |> String.concat " "
+  Merchant.key ~description:t.memo.description ~counterparty:t.memo.counterparty
 
 (* The same day [months] later, clamped to the end of a shorter month. *)
 let add_months date months =

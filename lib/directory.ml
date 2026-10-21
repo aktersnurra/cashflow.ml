@@ -59,7 +59,7 @@ let resolve_user db ~now (claims : claims) =
             run db refresh_user display_name email is_admin user.id;
           (Option.get (run db user_by_id user.id), `Existing)
       | None ->
-          let id = User_id.fresh () in
+          let id = Id_generator.user () in
           let display_name = Option.value claims.display_name ~default:(Option.value claims.email ~default:claims.subject) in
           let locale = match claims.locale with Some l when List.mem l I18n_locale.supported -> l | _ -> I18n_locale.default in
           run db insert_user id claims.issuer claims.subject display_name claims.email (Option.value claims.is_admin ~default:false) locale now;
@@ -134,7 +134,7 @@ let members db household_id = run db members_of household_id
 let invitations db user_id = run db invitations_for user_id
 
 let create_household db ~now ~(creator : User.t) ~name ~default_currency =
-  let id = Household_id.fresh () in
+  let id = Id_generator.household () in
   run db insert_household id name default_currency creator.id now;
   run db upsert_membership id creator.id Active creator.id now now;
   Option.get (find_household db id)
