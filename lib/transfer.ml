@@ -21,6 +21,10 @@ type memo = { description : string; counterparty : string option; tags : string 
 
 let empty_memo = { description = ""; counterparty = None; tags = [] }
 
+(* Tags are a set: stored sorted and without duplicates, so a retried request compares equal
+   however its tags were ordered. *)
+let normalize_memo memo = { memo with tags = List.sort_uniq String.compare memo.tags }
+
 (* Transfers are immutable once recorded: corrections are new transfers that reverse them. A
    void's amount is the pending amount it released; a post's is the amount it posted. *)
 type t = {
