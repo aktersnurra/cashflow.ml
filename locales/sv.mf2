@@ -28,6 +28,8 @@ action.skip = Hoppa över
 action.settle = Gör upp
 action.adjust = Bokför skillnaden
 action.choose_file = Välj en fil
+action.already_imported = Redan importerad
+action.new_row = Ny
 action.close = Stäng
 action.add = Lägg till
 action.open_account = Öppna konto
@@ -72,6 +74,11 @@ card.import.matched =
   .match $count
   one {{1 bekräftar en post du lagt in}}
   * {{{$count} bekräftar poster du lagt in}}
+card.import.ambiguous =
+  .input {$count :integer}
+  .match $count
+  one {{1 rad ser ut som en som redan är importerad: samma dag, text och belopp. Är den det?}}
+  * {{{$count} rader ser ut som sådana som redan är importerade: samma dag, text och belopp. Är de det?}}
 card.import.balance_ok = Saldot kommer att stämma med banken: {$balance :currency}.
 card.import.balance_off = Bokföringen skulle skilja {$difference :currency} från bankens {$balance :currency}.
 card.import.already = Den här filen är redan importerad.

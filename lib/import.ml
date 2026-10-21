@@ -14,18 +14,38 @@ let error_to_string : [< error ] -> string = function
   | `Unreadable reason -> "the file couldn't be read: " ^ reason
   | #Service.error as e -> Service.error_to_string e
 
-type request = { account_id : Account_id.t; file_name : string option; content : string }
+(* What the user said about a row the data can't decide (§6.3). *)
+type decision = Is_duplicate | Is_new
+
+type request = {
+  account_id : Account_id.t;
+  file_name : string option;
+  content : string;
+  decisions : (int * decision) list;  (** by row index, for ambiguous rows *)
+}
 
 type ctx = { service : Service.t; access : Access.t; suggester : Suggest.t }
 
 type decoded = { ctx : ctx; request : request; account : Account_info.t; format : string; sha256 : string; rows : Statement_format.row list }
 
-type keyed = { decoded : decoded; keyed_rows : (int * Statement_format.row * Idempotency_key.t) list }
+type keyed_row = {
+  index : int;
+  row : Statement_format.row;
+  base : string;  (** everything that identifies the row except its occurrence *)
+  occurrence : int;  (** among identical rows that day in this file *)
+  positional : bool;  (** no running balance or reference, so only the occurrence tells identical rows apart *)
+  complete_day : bool;  (** strictly inside the file's dates, so the file holds all of that day's rows *)
+}
+
+type keyed = { decoded : decoded; keyed_rows : keyed_row list }
 
 type status =
   | New
   | Duplicate of Transfer_id.t
   | Matched of Transfer.t  (** confirms a pending manual entry with the same date and amount *)
+  | Ambiguous of Transfer_id.t list
+      (** on an edge day, identical to rows already imported: the data can't say whether it is one of them *)
+  | Decided_duplicate of Transfer_id.t  (** an ambiguous row the user said is already imported *)
 
 type planned = {
   index : int;
@@ -66,9 +86,14 @@ let decode ctx (request : request) =
 
 let normalize_text s = String.lowercase_ascii s |> String.split_on_char ' ' |> List.filter (( <> ) "") |> String.concat " "
 
-(* Stage 2: a fingerprint per row (§6.3). The running balance tells identical rows apart; without
-   one, so does the row's position among identical rows on that day in this file. *)
+(* Stage 2: what identifies each row (§6.3): the bank's reference or the running balance when the
+   format has one, otherwise only the row's position among identical rows that day, which holds
+   across files only on days a file covers in full. *)
+let key_of base occurrence = Result.get_ok (Idempotency_key.of_string ("import:" ^ Digestif.SHA256.(to_hex (digest_string (base ^ "\x00" ^ string_of_int occurrence)))))
+
 let fingerprint (d : decoded) =
+  let dates = List.map (fun (r : Statement_format.row) -> r.booking_date) d.rows in
+  let first = List.fold_left Date.min (List.hd dates) dates and last = List.fold_left Date.max (List.hd dates) dates in
   let occurrences = Hashtbl.create 64 in
   let keyed_rows =
     List.mapi
@@ -81,8 +106,8 @@ let fingerprint (d : decoded) =
         in
         let n = Option.value (Hashtbl.find_opt occurrences base) ~default:0 in
         Hashtbl.replace occurrences base (n + 1);
-        let hash = Digestif.SHA256.(to_hex (digest_string (base ^ "\x00" ^ string_of_int n))) in
-        (index, row, Result.get_ok (Idempotency_key.of_string ("import:" ^ hash))))
+        { index; row; base; occurrence = n; positional = Option.is_none row.balance && Option.is_none row.reference;
+          complete_day = Date.compare first row.booking_date < 0 && Date.compare row.booking_date last < 0 })
       d.rows
   in
   Ok { decoded = d; keyed_rows }
@@ -98,8 +123,8 @@ let rec usable_key view scope key n =
 let direction_matches (account_id : Account_id.t) (row : Statement_format.row) (t : Transfer.t) =
   if Int64.compare row.amount 0L < 0 then Account_id.equal t.credit_account_id account_id else Account_id.equal t.debit_account_id account_id
 
-(* Stage 3: duplicates, and pending manual entries the bank now confirms (§6.7): the same account,
-   direction, purchase date and amount. *)
+(* Stage 3: duplicates, pending manual entries the bank now confirms (§6.7: the same account,
+   direction, purchase date and amount), and rows only the user can place. *)
 let classify (k : keyed) =
   let d = k.decoded in
   let account = d.account.account in
@@ -110,25 +135,62 @@ let classify (k : keyed) =
       (Store_sqlite.open_pending d.ctx.service.db)
   in
   let claimed = Hashtbl.create 8 in
+  (* The transfers already imported for a positional identity: occurrences 0, 1, ... in use. *)
+  let imported = Hashtbl.create 8 in
+  let already_imported base =
+    match Hashtbl.find_opt imported base with
+    | Some ids -> ids
+    | None ->
+        let rec go n acc = match usable_key view account.owner (key_of base n) 0 with `Exists (_, (t : Transfer.t)) -> go (n + 1) (t.id :: acc) | `Free _ -> List.rev acc in
+        let ids = go 0 [] in
+        Hashtbl.replace imported base ids;
+        ids
+  in
+  let decided = Hashtbl.create 8 in
+  let next_decided base decision =
+    let n = Option.value (Hashtbl.find_opt decided (base, decision)) ~default:0 in
+    Hashtbl.replace decided (base, decision) (n + 1);
+    n
+  in
+  let new_or_matched (row : Statement_format.row) key =
+    let purchase_date = Option.value row.transaction_date ~default:row.booking_date in
+    let same_day (t : Transfer.t) = Date.equal t.value_date purchase_date && direction_matches account.id row t && not (Hashtbl.mem claimed t.id) in
+    match List.filter (fun (t : Transfer.t) -> same_day t && Int64.equal (Amount.to_int64 t.amount) (Int64.abs row.amount)) pendings with
+    | [ pending ] -> Hashtbl.replace claimed pending.id (); (key, Matched pending)
+    | _ -> (key, New)
+  in
+  let free key = match usable_key view account.owner key 0 with `Exists (key, (t : Transfer.t)) -> (key, Duplicate t.id) | `Free key -> (key, New) in
   let rows =
     List.map
-      (fun (index, (row : Statement_format.row), key) ->
-        let purchase_date = Option.value row.transaction_date ~default:row.booking_date in
-        let same_day (t : Transfer.t) = Date.equal t.value_date purchase_date && direction_matches account.id row t && not (Hashtbl.mem claimed t.id) in
+      (fun (r : keyed_row) ->
         let key, status =
-          match usable_key view account.owner key 0 with
-          | `Exists (key, t) -> (key, Duplicate t.id)
-          | `Free key -> (
-              match List.filter (fun (t : Transfer.t) -> same_day t && Int64.equal (Amount.to_int64 t.amount) (Int64.abs row.amount)) pendings with
-              | [ pending ] -> Hashtbl.replace claimed pending.id (); (key, Matched pending)
-              | _ -> (key, New))
+          match r.positional && not r.complete_day, already_imported r.base with
+          | true, (_ :: _ as existing) -> (
+              (* An edge day may be cut off, so the occurrence doesn't say which of these it is. *)
+              match List.assoc_opt r.index d.request.decisions with
+              | None -> (key_of r.base r.occurrence, Ambiguous existing)
+              | Some Is_duplicate ->
+                  let j = next_decided r.base Is_duplicate in
+                  (key_of r.base r.occurrence, Decided_duplicate (List.nth existing (min j (List.length existing - 1))))
+              | Some Is_new -> (
+                  (* The next free occurrence, so a later complete-day export lines up. *)
+                  match free (key_of r.base (List.length existing + next_decided r.base Is_new)) with
+                  | key, New -> new_or_matched r.row key
+                  | other -> other))
+          | _ -> ( match free (key_of r.base r.occurrence) with key, New -> new_or_matched r.row key | other -> other)
         in
         let near_pending =
+          let purchase_date = Option.value r.row.transaction_date ~default:r.row.booking_date in
           match status with
-          | New -> List.find_opt (fun (t : Transfer.t) -> same_day t && not (Int64.equal (Amount.to_int64 t.amount) (Int64.abs row.amount))) pendings
-          | Duplicate _ | Matched _ -> None
+          | New ->
+              List.find_opt
+                (fun (t : Transfer.t) ->
+                  Date.equal t.value_date purchase_date && direction_matches account.id r.row t && not (Hashtbl.mem claimed t.id)
+                  && not (Int64.equal (Amount.to_int64 t.amount) (Int64.abs r.row.amount)))
+                pendings
+          | Duplicate _ | Matched _ | Ambiguous _ | Decided_duplicate _ -> None
         in
-        { index; row; key; status; near_pending; suggestion = None })
+        { index = r.index; row = r.row; key; status; near_pending; suggestion = None })
       k.keyed_rows
   in
   Ok (d, rows)
@@ -142,7 +204,7 @@ let suggest (d, rows) =
         | New ->
             let input = { Suggest.bank_account = d.account; row = planned.row; merchant = Suggest.merchant_key planned.row } in
             { planned with suggestion = d.ctx.suggester input }
-        | Duplicate _ | Matched _ -> planned)
+        | Duplicate _ | Matched _ | Ambiguous _ | Decided_duplicate _ -> planned)
       rows
   in
   Ok (d, rows)
@@ -209,7 +271,7 @@ let uncategorized ctx (account : Account.t) kind =
 
 let event_for ctx (account : Account.t) (p : planned) =
   match p.status with
-  | Duplicate _ -> Ok None
+  | Duplicate _ | Decided_duplicate _ | Ambiguous _ -> Ok None
   | Matched pending ->
       Ok (Some ({ Ledger_event.key = p.key; linked = false; body = Post_pending { pending_id = pending.id; amount = None; value_date = p.row.booking_date } }, None))
   | New ->
@@ -244,6 +306,16 @@ let confirm ctx request =
         match p.already_imported with
         | Some batch -> Ok (`Already_imported batch)
         | None ->
+            (match List.filter (fun r -> match r.status with Ambiguous _ -> true | _ -> false) p.rows with
+            | [] -> ()
+            | undecided ->
+                fail
+                  (`Invalid
+                    (Printf.sprintf "%s %s %s already imported (same day, text and amount); decide whether %s already imported or new"
+                       (match undecided with [ _ ] -> "row" | _ -> "rows")
+                       (String.concat ", " (List.map (fun r -> string_of_int (r.index + 1)) undecided))
+                       (match undecided with [ _ ] -> "looks like one" | _ -> "look like ones")
+                       (match undecided with [ _ ] -> "it is" | _ -> "each is"))));
             let d = p.decoded_file in
             let account = d.account.account in
             let planned_events =
@@ -273,7 +345,7 @@ let confirm ctx request =
             let batch : Import_store.batch =
               { batch_id = Uuidm.to_string (Uuidm.v4_gen (Random.State.make_self_init ()) ()); account_id = account.id;
                 file_sha256 = d.sha256; file_name = request.file_name; format = d.format; row_count = List.length p.rows;
-                new_count = count (fun r -> r.status = New); duplicate_count = count (fun r -> match r.status with Duplicate _ -> true | _ -> false);
+                new_count = count (fun r -> r.status = New); duplicate_count = count (fun r -> match r.status with Duplicate _ | Decided_duplicate _ -> true | _ -> false);
                 matched_count = count (fun r -> match r.status with Matched _ -> true | _ -> false);
                 first_date = List.fold_left (fun a d -> Some (match a with None -> d | Some a -> Date.min a d)) None dates;
                 last_date = List.fold_left (fun a d -> Some (match a with None -> d | Some a -> Date.max a d)) None dates;
@@ -286,6 +358,8 @@ let confirm ctx request =
                 let transfer_id, status =
                   match planned.status with
                   | Duplicate id -> (Some id, "duplicate")
+                  | Decided_duplicate id -> (Some id, "decided_duplicate")
+                  | Ambiguous _ -> (None, "ambiguous")
                   | Matched _ | New ->
                       ( Option.map (fun (_, id, _) -> id) (List.find_opt (fun (q, _, _) -> q.index = planned.index) posted),
                         if planned.status = New then "new" else "matched" )

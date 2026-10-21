@@ -29,6 +29,8 @@ action.skip = Skip
 action.settle = Settle up
 action.adjust = Post the difference
 action.choose_file = Choose a file
+action.already_imported = Already imported
+action.new_row = New
 action.close = Close
 action.add = Add
 action.open_account = Open account
@@ -73,6 +75,11 @@ card.import.matched =
   .match $count
   one {{1 confirms an entry you made}}
   * {{{$count} confirm entries you made}}
+card.import.ambiguous =
+  .input {$count :integer}
+  .match $count
+  one {{1 row looks like one already imported: the same day, text and amount. Is it?}}
+  * {{{$count} rows look like ones already imported: the same day, text and amount. Are they?}}
 card.import.balance_ok = The balance will match the bank: {$balance :currency}.
 card.import.balance_off = The ledger would be {$difference :currency} off from the bank's {$balance :currency}.
 card.import.already = This file was already imported.

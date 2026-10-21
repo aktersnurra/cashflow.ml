@@ -19,7 +19,7 @@ let late_october =
 2026-10-15;2026-10-15;SPOTIFY;-119,00;9 762,00
 |}
 
-let request account_id content : Import.request = { account_id; file_name = Some "export.csv"; content }
+let request ?(decisions = []) account_id content : Import.request = { account_id; file_name = Some "export.csv"; content; decisions }
 
 let imported = function
   | Ok (`Imported (s : Import.summary)) -> s
@@ -50,7 +50,7 @@ let test_import_matches_dedupes_and_checks_the_balance () =
   ignore (ok (Service.add_entry service alice { (entry "ica by hand" ~from_account:checking ~to_account:groceries 250_00) with value_date = date "2026-10-19" }));
   let ctx = Import.context service alice in
   let preview = ok_import (Import.preview ctx (request checking october)) in
-  let statuses = List.map (fun (p : Import.planned) -> match p.status with New -> "new" | Duplicate _ -> "duplicate" | Matched _ -> "matched") preview.rows in
+  let statuses = List.map (fun (p : Import.planned) -> match p.status with New -> "new" | Duplicate _ | Decided_duplicate _ -> "duplicate" | Matched _ -> "matched" | Ambiguous _ -> "ambiguous") preview.rows in
   Alcotest.(check (list string)) "statuses" [ "matched"; "new"; "new"; "new" ] statuses;
   (match preview.balance with
   | Some b -> Alcotest.(check int64) "the ledger will agree with the bank" b.statement_balance b.ledger_balance
@@ -67,6 +67,33 @@ let test_import_matches_dedupes_and_checks_the_balance () =
   match summary.balance with
   | Some b -> Alcotest.(check int64) "reconciled" b.statement_balance b.ledger_balance
   | None -> Alcotest.fail "no checkpoint"
+
+(* Without balances or references, two exports can hold different identical rows of the same day
+   (§6.3): the second coffee must not be dropped as a duplicate of the first. *)
+let test_identical_rows_without_balances () =
+  let service, alice, checking = setup () in
+  let ctx = Import.context service alice in
+  let statuses csv ?decisions () =
+    List.map (fun (p : Import.planned) -> match p.status with New -> "new" | Duplicate _ | Decided_duplicate _ -> "duplicate" | Matched _ -> "matched" | Ambiguous _ -> "ambiguous")
+      (ok_import (Import.preview ctx (request ?decisions checking csv))).rows
+  in
+  let coffee = "Datum;Text;Belopp\n2026-10-20;KAFFE;-35,00\n" in
+  ignore (imported (Import.confirm ctx (request checking coffee)));
+  (* The same row in a different file: it may be the same coffee or another one. *)
+  let second = "Datum;Text;Belopp\n2026-10-20;KAFFE;-35,00\n2026-10-21;SL;-39,00\n" in
+  Alcotest.(check (list string)) "can't tell" [ "ambiguous"; "new" ] (statuses second ());
+  (match Import.confirm ctx (request checking second) with
+  | Error (`Invalid _) -> ()
+  | _ -> Alcotest.fail "confirmed with an undecided row");
+  let summary = imported (Import.confirm ctx (request ~decisions:[ (0, Import.Is_new) ] checking second)) in
+  Alcotest.(check int) "both new" 2 summary.batch.new_count;
+  Alcotest.(check int64) "two coffees" (-109_00L) (balance service alice checking);
+  (* A later export that covers the 20th and 21st in full lines up with what is there, with no questions. *)
+  let month = "Datum;Text;Belopp\n2026-10-19;ICA;-100,00\n2026-10-20;KAFFE;-35,00\n2026-10-20;KAFFE;-35,00\n2026-10-21;SL;-39,00\n2026-10-22;ICA;-100,00\n" in
+  Alcotest.(check (list string)) "complete days" [ "new"; "duplicate"; "duplicate"; "duplicate"; "new" ] (statuses month ());
+  let summary = imported (Import.confirm ctx (request checking month)) in
+  Alcotest.(check (list int)) "new, duplicates" [ 2; 3 ] [ summary.batch.new_count; summary.batch.duplicate_count ];
+  Alcotest.(check int64) "every row once" (-309_00L) (balance service alice checking)
 
 let test_categorize_learn_and_undo () =
   let service, alice, checking = setup () in
@@ -148,6 +175,7 @@ let () =
     [ ("parsing", [ Alcotest.test_case "amounts and csv" `Quick test_parsing ]);
       ( "pipeline",
         [ Alcotest.test_case "matches, dedupes and checks the balance" `Quick test_import_matches_dedupes_and_checks_the_balance;
+          Alcotest.test_case "identical rows without balances" `Quick test_identical_rows_without_balances;
           Alcotest.test_case "categorise, learn and undo" `Quick test_categorize_learn_and_undo;
           Alcotest.test_case "rules auto-apply" `Quick test_rules_auto_apply ] );
       ( "inbox",

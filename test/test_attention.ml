@@ -10,7 +10,7 @@ let test_feed_follows_the_data () =
   let checking = open_checking service alice ~statement_backed:true "Checking" in
   Alcotest.(check (list string)) "a statement account asks for an import" [ "import_due"; "overview" ] (kinds service alice);
   let csv = "Datum;Text;Belopp;Saldo\n2026-10-20;ICA;-250,00;-250,00\n" in
-  ignore (ok_import (Import.confirm (Import.context service alice) { account_id = checking; file_name = None; content = csv }));
+  ignore (ok_import (Import.confirm (Import.context service alice) { account_id = checking; file_name = None; content = csv; decisions = [] }));
   Alcotest.(check (list string)) "then the inbox" [ "inbox"; "overview" ] (kinds service alice);
   let item = List.hd (Inbox.list service alice ~limit:10) in
   ignore (ok (Inbox.categorize service alice ~transfer_id:item.item.transfer_id ~category_id:(account_named service alice "Groceries") ()));

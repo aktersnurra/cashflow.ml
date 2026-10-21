@@ -28,7 +28,7 @@ let test_suggestions_and_privacy () =
   let alice = sign_in service "alice" in
   let checking = open_checking service alice ~statement_backed:true "Alice's secret checking" in
   let csv = "Datum;Text;Belopp;Saldo\n2026-10-20;WILLYS HEMMA;-412,00;87 654,00\n" in
-  let preview = ok_import (Import.preview (Import.context service alice) { account_id = checking; file_name = None; content = csv }) in
+  let preview = ok_import (Import.preview (Import.context service alice) { account_id = checking; file_name = None; content = csv; decisions = [] }) in
   (match (List.hd preview.rows).suggestion with
   | Some { source = Llm; confidence; category_id; _ } ->
       Alcotest.(check bool) "groceries" true (Account_id.equal category_id (account_named service alice "Groceries"));
