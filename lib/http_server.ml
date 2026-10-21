@@ -56,7 +56,7 @@ let bearer_access deps (request : request) =
           let access =
             Service.sign_in deps.service
               { issuer = claims.issuer; subject = claims.subject; display_name = claims.name; email = claims.email;
-                is_admin = Option.map (List.mem deps.config.admin_group) claims.groups }
+                is_admin = Option.map (List.mem deps.config.admin_group) claims.groups; locale = None }
           in
           Some (access, claims.scopes))
 
@@ -109,7 +109,15 @@ let callback deps (request : request) query =
       match List.assoc_opt "state" query, List.assoc_opt "code" query with
       | Some [ state ], Some [ code ] -> (
           let cookie_state = Web_auth.cookie_value request.headers Web_auth.login_cookie in
-          match Web_auth.finish_login auth deps.service ~now:(deps.now ()) ~state ~code ~cookie_state with
+          (* A new user starts in the browser's language: "sv-SE,sv;q=0.9,en" gives sv. *)
+          let locale =
+            Option.map
+              (fun value ->
+                I18n_locale.negotiate
+                  (List.map (fun part -> String.trim (List.hd (String.split_on_char '-' (List.hd (String.split_on_char ';' part))))) (String.split_on_char ',' value)))
+              (header request "accept-language")
+          in
+          match Web_auth.finish_login auth deps.service ?locale ~now:(deps.now ()) ~state ~code ~cookie_state () with
           | Ok (token, return_to) ->
               { (redirect return_to) with
                 headers =
@@ -190,7 +198,10 @@ let read_file path = try Some (In_channel.with_open_bin path In_channel.input_al
 
 let static deps path =
   let safe = not (List.mem ".." (String.split_on_char '/' path)) in
-  let file = if safe && String.starts_with ~prefix:"/assets/" path then Filename.concat deps.config.static_dir (String.sub path 1 (String.length path - 1)) else Filename.concat deps.config.static_dir "index.html" in
+  let file =
+    if safe && String.starts_with ~prefix:"/assets/" path then Filename.concat deps.config.static_dir (String.sub path 8 (String.length path - 8))
+    else Filename.concat deps.config.static_dir "index.html"
+  in
   match read_file file with
   | Some body ->
       let cache = if String.starts_with ~prefix:"/assets/" path then "public, max-age=31536000, immutable" else "no-cache" in

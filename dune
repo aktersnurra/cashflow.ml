@@ -1,1 +1,1 @@
-(dirs lib bin test tools shared locales)
+(dirs lib bin test tools shared locales web)

@@ -1,4 +1,5 @@
 (executable
  (name cashflow)
+ (enabled_if (= %{context_name} default))
  (public_name cashflow)
  (libraries cashflow cmdliner eio_main logs))

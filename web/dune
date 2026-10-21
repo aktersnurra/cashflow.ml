@@ -1,0 +1,17 @@
+; The Bonsai web UI, compiled to JavaScript in the cashflow-web switch:
+;   dune build --workspace dune-workspace.web @web/default
+(executable
+ (name main)
+ (enabled_if (= %{context_name} web))
+ (modes js)
+ (libraries bonsai.web bonsai.feather_icon async_js virtual_dom virtual_dom.svg js_of_ocaml yojson cashflow_msg mf2_runtime)
+ (preprocess (pps ppx_jane bonsai.ppx_bonsai js_of_ocaml-ppx)))
+
+(rule
+ (alias default)
+ (enabled_if (= %{context_name} web))
+ (targets index.html)
+ (deps index.src.html main.bc.js style.css manifest.webmanifest icon.svg)
+ (action
+  (progn
+   (copy index.src.html index.html))))

@@ -1,4 +1,5 @@
 (library
  (name cashflow)
+ (enabled_if (= %{context_name} default))
  (wrapped false)
  (libraries ptime ptime.clock.os uuidm sqlite3 yojson digestif jose eio eio_posix cohttp-eio tls-eio x509 mirage-crypto mirage-crypto-rng mirage-crypto-rng.unix uri domain-name base64 logs unix httpun httpun-eio gluten bigstringaf))

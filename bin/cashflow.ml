@@ -59,12 +59,36 @@ let serve () =
           (* Runs until the process is stopped. *)
           Http_server.run env { service; verify_bearer; web_auth; config; now = Ptime_clock.now }))
 
+(* For local development and browser tests: signs a user in without the identity provider and
+   prints a session token to use as the cashflow_session cookie. It needs the database file and
+   CASHFLOW_ALLOW_DEV_SESSIONS=1, so it grants nothing that write access to the file doesn't. *)
+let create_session subject admin =
+  if Sys.getenv_opt "CASHFLOW_ALLOW_DEV_SESSIONS" <> Some "1" then (
+    Logs.err (fun m -> m "set CASHFLOW_ALLOW_DEV_SESSIONS=1 to create development sessions");
+    1)
+  else
+    with_config (fun config ->
+        with_database config (fun db ->
+            let service = Service.make db in
+            let access =
+              Service.sign_in service
+                { issuer = config.oidc_issuer; subject; display_name = Some subject; email = Some (subject ^ "@example.com"); is_admin = Some admin; locale = Sys.getenv_opt "CASHFLOW_DEV_LOCALE" }
+            in
+            print_endline (Web_auth.create_session db ~now:(Ptime_clock.now ()) (Access.user access));
+            0))
+
 let command =
   let open Cmdliner in
   let cmd name doc f = Cmd.v (Cmd.info name ~doc) Term.(const (fun () -> exit (f ())) $ const ()) in
   Cmd.group (Cmd.info "cashflow" ~doc:"A double-entry household cashflow ledger")
     [ cmd "serve" "Run the HTTP service (MCP, web API and UI)" serve; cmd "migrate" "Apply SQLite migrations" migrate;
-      cmd "verify" "Recompute every balance from its transfers" verify; cmd "void-expired" "Void pending transfers past their expiry date" void_expired ]
+      cmd "verify" "Recompute every balance from its transfers" verify; cmd "void-expired" "Void pending transfers past their expiry date" void_expired;
+      Cmd.v
+        (Cmd.info "create-session" ~doc:"Development only: sign a user in and print a session token")
+        Term.(
+          const (fun subject admin -> exit (create_session subject admin))
+          $ Arg.(required & pos 0 (some string) None & info [] ~docv:"SUBJECT")
+          $ Arg.(value & flag & info [ "admin" ] ~doc:"Make the user an admin")) ]
 
 let () =
   Logging.setup ();

@@ -608,6 +608,7 @@ let session_json service access =
     [ ("user", Json.user user); ("household", Json.option Json.household (Access.household access));
       ("members", match Service.members service access with Ok members -> `List (List.map Json.member members) | Error _ -> `List []);
       ("invitations", `List (List.map Json.household (Service.invitations service access)));
+      ("inbox_count", `Int (Inbox.count service access));
       ("locales", Json.strings I18n_locale.supported); ("timezones", Json.strings Time.supported_zone_names) ]
 
 let get_session = command ~mcp:false "get_session" Read "Who you are, your household and pending invitations." [] (fun service access _ -> Ok (session_json service access))

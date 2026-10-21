@@ -21,8 +21,8 @@ let all_users = stmt ("SELECT " ^ user_columns ^ " FROM users ORDER BY display_n
 
 let insert_user =
   stmt
-    "INSERT INTO users (id, oidc_issuer, oidc_subject, display_name, email, is_admin, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
-    Codec.(user_id @-> text @-> text @-> text @-> nullable text @-> bool @-> time @-> nil)
+    "INSERT INTO users (id, oidc_issuer, oidc_subject, display_name, email, is_admin, locale, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    Codec.(user_id @-> text @-> text @-> text @-> nullable text @-> bool @-> text @-> time @-> nil)
     exec
 
 let refresh_user =
@@ -37,7 +37,14 @@ let update_settings =
 
 (* What the identity provider said. MCP access tokens often carry only the subject, so a field is
    optional and an absent one leaves the stored value alone. *)
-type claims = { issuer : string; subject : string; display_name : string option; email : string option; is_admin : bool option }
+type claims = {
+  issuer : string;
+  subject : string;
+  display_name : string option;
+  email : string option;
+  is_admin : bool option;
+  locale : string option;  (** only used when the user is first created *)
+}
 
 (* Users are created on first sign-in. Name, email and admin rights follow the identity
    provider, so they are refreshed whenever a sign-in carries them. *)
@@ -54,7 +61,8 @@ let resolve_user db ~now (claims : claims) =
       | None ->
           let id = User_id.fresh () in
           let display_name = Option.value claims.display_name ~default:(Option.value claims.email ~default:claims.subject) in
-          run db insert_user id claims.issuer claims.subject display_name claims.email (Option.value claims.is_admin ~default:false) now;
+          let locale = match claims.locale with Some l when List.mem l I18n_locale.supported -> l | _ -> I18n_locale.default in
+          run db insert_user id claims.issuer claims.subject display_name claims.email (Option.value claims.is_admin ~default:false) locale now;
           (Option.get (run db user_by_id id), `Created))
 
 let find_user db id = run db user_by_id id

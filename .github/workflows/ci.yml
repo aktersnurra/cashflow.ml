@@ -15,4 +15,28 @@ jobs:
         with:
           ocaml-compiler: 5.5.1
       - run: opam install --yes . --deps-only --with-test
+      - run: opam exec -- dune build
       - run: opam exec -- dune runtest
+
+  # The web UI needs Bonsai v0.17, which needs OCaml 5.1, so it builds in a second switch; the
+  # main switch's dune drives both. The result is static files, uploaded as an artifact.
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: 5.5.1
+      - run: opam install --yes dune
+      - run: opam switch create cashflow-web ocaml-base-compiler.5.1.1 --yes
+      - run: opam install --yes --switch=cashflow-web bonsai.v0.17.0 js_of_ocaml-compiler js_of_ocaml-ppx ppx_jane yojson
+      - run: opam exec -- dune build --workspace dune-workspace.web --profile release @web/default
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cashflow-web
+          path: |
+            _build/web/web/index.html
+            _build/web/web/main.bc.js
+            _build/web/web/style.css
+            _build/web/web/manifest.webmanifest
+            _build/web/web/icon.svg

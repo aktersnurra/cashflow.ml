@@ -6,7 +6,7 @@ let date value = Result.get_ok (Date.of_string value)
 
 let sign_in service ?(admin = false) name =
   Service.sign_in service
-    { issuer = "https://id.example"; subject = name; display_name = Some name; email = Some (name ^ "@example.com"); is_admin = Some admin }
+    { issuer = "https://id.example"; subject = name; display_name = Some name; email = Some (name ^ "@example.com"); is_admin = Some admin; locale = None }
 
 let ok = function Ok value -> value | Error error -> Alcotest.fail (Service.error_to_string error)
 

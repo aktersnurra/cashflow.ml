@@ -77,7 +77,7 @@ let create_session db ~now (user : User.t) =
   run db insert_session (hash token) user.id csrf now now (add_seconds now session_lifetime_s);
   token
 
-let finish_login auth (service : Service.t) ~now ~state ~code ~cookie_state =
+let finish_login auth (service : Service.t) ?locale ~now ~state ~code ~cookie_state () =
   let db = service.db in
   let state_hash = hash state in
   let attempt = run db take_attempt state_hash in
@@ -110,7 +110,7 @@ let finish_login auth (service : Service.t) ~now ~state ~code ~cookie_state =
                             let access =
                               Service.sign_in service
                                 { issuer = claims.issuer; subject = claims.subject; display_name = claims.name; email = claims.email;
-                                  is_admin = Option.map (List.mem auth.config.admin_group) claims.groups }
+                                  is_admin = Option.map (List.mem auth.config.admin_group) claims.groups; locale }
                             in
                             let user = Access.user access in
                             Log.info (fun m -> m "user=%s signed in" (User_id.to_string user.id));

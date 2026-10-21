@@ -561,6 +561,13 @@ Analytics are SQL aggregations over `transfer` grouped by `value_date`. With a f
 | **M7 · LLM** | categorisation suggestions, narrative cards |
 | **Later** | sinking funds, investment-account CSVs, bank sync, extracting shared libraries from cashflow and kcal |
 
+## 16a. Deployment notes
+
+- **The server** builds and runs natively on FreeBSD. Eio picks its POSIX backend; io_uring is Linux-only and would make no measurable difference at this scale.
+- **The web UI:** Bonsai v0.17 (the last opam release) needs OCaml 5.1, while the server uses 5.5. The UI therefore builds in a second opam switch through `dune-workspace.web`, with every stanza marked for its context. The MF2 runtime, the generated messages and `mf2c` are plain OCaml and build in both. The UI's output is static files, built in CI or anywhere else and served by `cashflow serve`.
+- **Commands:** every use case is one entry in `lib/commands.ml`. The MCP tools and the web API (`/api/commands/<name>`) are both generated from that table, which replaces the separate REST routes sketched in §13.
+- **JSON** uses yojson throughout (as kcal does) rather than `jsont`; the UI reads the same JSON with small helpers.
+
 ## 17. Open questions
 
 1. **Handelsbanken CSV:** I need an anonymised export, a few rows with the amounts changed. One is being prepared. It also decides whether the transaction date and the booking date are separate columns, which §6.7 depends on.
