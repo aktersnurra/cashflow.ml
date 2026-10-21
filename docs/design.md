@@ -274,7 +274,18 @@ drop CSV ─▶ detect format ─▶ parse rows ─▶ match account ─▶ fing
 
 ### 6.2 Formats
 
-There is one parser module per format, behind a common signature (`detect`, `parse`, `account_hint`). The first one is Handelsbanken. I need an anonymised sample of its export, because the columns, the date format, the decimal separator and the encoding all decide the parser (§17). Avanza and Montrose imports are out of scope for v1. Adding one later means writing one format module: it maps deposits, withdrawals, dividends and fees to transfers, ignores individual trades, and reuses the rest of the pipeline.
+There is one parser module per format, behind a common signature (`detect`, `parse`, `account_hint`), reading a table of cells. A CSV and an .xlsx spreadsheet both become that table: a spreadsheet's numbers are read at Excel's precision of 15 significant digits, so amounts stay exact, and a date stored as a day number is read as one. A generic reader knows the usual Swedish and English column names; a bank's module recognises its own files and adds what only they say.
+
+**Handelsbanken** exports the account's transactions as .xlsx:
+- **Preamble:** the bank's name, the export time, the account's name and number ("Lönekonto 123 456 789"), its type, clearing number and balance, and a period.
+- **Columns:** then `Reskontradatum` (booking), `Transaktionsdatum`, `Text`, `Belopp` and `Saldo`, newest first.
+- **Account number:** the module reads it, and a file whose last four digits don't match the account's is refused, so a statement can't land in the wrong account.
+- **Running balance:** every row has one, so rows always have a stable identity (§6.3) and the balance check always runs.
+- **Period:** not used. The sample had rows from before the period it stated.
+
+**First import:** for an account with nothing recorded before the file, the preview suggests the opening balance the bank's figures imply (the first row's balance minus its amount, the day before), so the balance check agrees from the start.
+
+Avanza and Montrose imports are out of scope for v1. Adding one later means writing one format module: it maps deposits, withdrawals, dividends and fees to transfers, ignores individual trades, and reuses the rest of the pipeline.
 
 ### 6.3 Row identity and duplicates
 
@@ -351,7 +362,7 @@ UX best practice is monthly envelopes with history that never changes. In more d
 
 ## 9. Time
 
-- **Bank data is the truth.** Every bank account's posted balance must match the bank's CSV. A manual entry against a bank account therefore stays provisional until the bank confirms it (§6.7).
+- **Bank data is the truth.** Every bank account's posted balance must match the bank's statement. A manual entry against a bank account therefore stays provisional until the bank confirms it (§6.7).
 - **`value_date`:** a plain calendar date with no timezone, because bank statements give dates, not times. All analytics group transfers by `value_date`.
 - **`recorded_at`:** a UTC instant, used for auditing and for "last imported" checks.
 - **User timezone:** set in Settings (default `Europe/Stockholm`, using kcal's built-in table). It only decides what "today" is and how instants are displayed.
@@ -586,9 +597,10 @@ Analytics are SQL aggregations over `transfer` grouped by `value_date`. With a f
 
 ## 17. Open questions
 
-1. **Handelsbanken CSV:** I need an anonymised export, a few rows with the amounts changed. One is being prepared. It also decides whether the transaction date and the booking date are separate columns, which §6.7 depends on.
+None at the moment.
 
 Resolved:
+- **Handelsbanken's export:** an .xlsx with separate booking and transaction dates and a running balance (§6.2).
 - **Admin:** from the PocketID `groups` claim.
 - **Household posting:** every active member may post to household accounts.
 - **Months:** a configurable pay cycle, defaulting to the 25th.

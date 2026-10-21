@@ -84,6 +84,30 @@ let create_session path subject admin =
             print_endline (Web_auth.create_session db ~now:(Ptime_clock.now ()) (Access.user access));
             0))
 
+(* Reads a statement file the way an import would, without a database: which format it is,
+   which account it says it is for, and every row. For checking a bank's export. *)
+let read_statement path =
+  match In_channel.with_open_bin path In_channel.input_all with
+  | exception Sys_error reason -> Logs.err (fun m -> m "%s" reason); 1
+  | content -> (
+      let table = if Xlsx.is_xlsx content then Xlsx.table content else Ok (Csv.parse content) in
+      match Result.map (fun t -> (t, Statement_format.detect t)) table with
+      | Error reason -> Logs.err (fun m -> m "can't read %s: %s" path reason); 1
+      | Ok (_, None) -> Logs.err (fun m -> m "%s: no header row with a date and an amount column" path); 1
+      | Ok (table, Some (module F)) -> (
+          match F.parse ~scale:2 table with
+          | Error reason -> Logs.err (fun m -> m "%s: %s" path reason); 1
+          | Ok rows ->
+              let money v = Json.decimal ~scale:2 v in
+              Printf.printf "format: %s\naccount: %s\nrows: %d\n" F.name
+                (Option.fold ~none:"(not stated)" ~some:(fun d -> "****" ^ d) (F.account_hint table)) (List.length rows);
+              List.iter
+                (fun (r : Statement_format.row) ->
+                  Printf.printf "%s  %-30s %12s %12s\n" (Date.to_string r.booking_date) r.description (money r.amount)
+                    (Option.fold ~none:"" ~some:money r.balance))
+                rows;
+              0))
+
 let command =
   let open Cmdliner in
   let config =
@@ -95,6 +119,9 @@ let command =
     [ cmd "serve" "Run the HTTP service (MCP, web API and UI)" serve; cmd "migrate" "Apply SQLite migrations" migrate;
       cmd "verify" "Recompute every balance from its transfers" verify; cmd "void-expired" "Void pending transfers past their expiry date" void_expired;
       cmd "check-config" "Validate the configuration file" check_config;
+      Cmd.v
+        (Cmd.info "read-statement" ~doc:"Read a bank statement file (.csv or .xlsx) as an import would, and print its rows")
+        Term.(const (fun path -> exit (read_statement path)) $ Arg.(required & pos 0 (some file) None & info [] ~docv:"FILE"));
       Cmd.v
         (Cmd.info "create-session" ~doc:"Development only: sign a user in and print a session token")
         Term.(

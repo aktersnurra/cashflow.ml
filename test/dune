@@ -27,7 +27,7 @@
  (name test_import)
  (enabled_if (= %{context_name} default))
  (modules test_import test_service_support)
- (libraries alcotest cashflow yojson))
+ (libraries alcotest cashflow yojson zipc))
 
 (test
  (name test_http)

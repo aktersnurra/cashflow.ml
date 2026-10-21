@@ -306,6 +306,75 @@ let test_reconciliation_follows_the_ledger () =
   Alcotest.(check (option string)) "nor after an undo" None (Option.map Date.to_string (through ()));
   Alcotest.(check int) "the undone import's checkpoint is gone" 0 (List.length (Planning_store.checkpoints service.db checking))
 
+(* A Handelsbanken export as an .xlsx, built here the way LibreOffice saves one: text in shared
+   strings, amounts and balances as numbers, newest first, under the bank's preamble. *)
+let handelsbanken_xlsx ?(number = "Lönekonto 123 456 789") rows =
+  let strings = ref [] in
+  let shared text =
+    match List.find_index (String.equal text) (List.rev !strings) with
+    | Some i -> i
+    | None -> strings := text :: !strings; List.length !strings - 1
+  in
+  let text col row t = Printf.sprintf {|<c r="%c%d" t="s"><v>%d</v></c>|} col row (shared t) in
+  let num col row v = Printf.sprintf {|<c r="%c%d" t="n"><v>%s</v></c>|} col row v in
+  let row r cells = Printf.sprintf {|<row r="%d">%s</row>|} r (String.concat "" cells) in
+  let preamble =
+    [ row 1 [ text 'A' 1 "Handelsbanken" ]; row 2 [ text 'A' 2 "2026-10-21, 19:50" ]; row 4 [ text 'A' 4 number ];
+      row 6 [ text 'A' 6 "Kontoform: Allkonto"; text 'B' 6 "Clearingnummer: 6000"; text 'C' 6 "Saldo: 0" ];
+      row 7 [ text 'A' 7 "Period: 2026-09-21 - 2026-10-21"; text 'B' 7 "Transaktionstyp: Alla" ];
+      row 9 [ text 'A' 9 "Reskontradatum"; text 'B' 9 "Transaktionsdatum"; text 'C' 9 "Text"; text 'D' 9 "Belopp"; text 'E' 9 "Saldo" ] ]
+  in
+  let body = List.mapi (fun i (d, t, amount, balance) -> let r = 10 + i in row r [ text 'A' r d; text 'B' r d; text 'C' r t; num 'D' r amount; num 'E' r balance ]) rows in
+  let sheet = {|<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>|} ^ String.concat "" (preamble @ body) ^ "</sheetData></worksheet>" in
+  let sst =
+    {|<?xml version="1.0" encoding="UTF-8"?><sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">|}
+    ^ String.concat "" (List.rev_map (fun t -> {|<si><t xml:space="preserve">|} ^ t ^ "</t></si>") !strings) ^ "</sst>"
+  in
+  let workbook =
+    {|<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Ark1" sheetId="1" r:id="rId3"/></sheets></workbook>|}
+  in
+  let rels =
+    {|<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>|}
+  in
+  let add zip (path, content) =
+    let file = Result.get_ok (Zipc.File.deflate_of_binary_string content) in
+    Zipc.add (Result.get_ok (Zipc.Member.make ~path (Zipc.Member.File file))) zip
+  in
+  List.fold_left add Zipc.empty [ ("xl/workbook.xml", workbook); ("xl/_rels/workbook.xml.rels", rels); ("xl/worksheets/sheet1.xml", sheet); ("xl/sharedStrings.xml", sst) ]
+  |> Zipc.to_binary_string |> Result.get_ok
+
+let test_handelsbanken_xlsx () =
+  let service = make_service () in
+  let alice = sign_in service "alice" in
+  let checking =
+    match
+      Service.open_account service alice ~key:(key "open:lönekonto") ~owner:(Access.personal alice) ~kind:Asset ~name:"Lönekonto" ~currency:"SEK"
+        ~flags:Account.no_flags ~details:{ Account_info.no_details with statement_backed = true; number_last4 = Some "6789" }
+    with
+    | Ok (`Created info | `Exists info) -> info.account.id
+    | Error e -> Alcotest.fail (Service.error_to_string e)
+  in
+  let ctx = Import.context service alice in
+  let rows = [ ("2026-10-06", "Överf Mobil", "12345.67", "19945.67"); ("2026-10-06", "ICA NARA", "-2400", "7600.00"); ("2026-09-30", "LÖN", "8000", "10000") ] in
+  let file = handelsbanken_xlsx rows in
+  let preview = ok_import (Import.preview ctx (request checking file)) in
+  Alcotest.(check string) "format" "handelsbanken" preview.decoded_file.format;
+  Alcotest.(check (list int64)) "exact amounts, newest first" [ 12_345_67L; -2_400_00L; 8_000_00L ] (List.map (fun (p : Import.planned) -> p.row.amount) preview.rows);
+  (* Nothing before the file: the bank's balance says what the account held the day before. *)
+  Alcotest.(check (option (pair string int64))) "opening suggested" (Some ("2026-09-29", 2_000_00L))
+    (Option.map (fun (d, b) -> (Date.to_string d, b)) preview.opening);
+  ignore (ok (Service.set_opening_balance service alice ~account_id:checking ~balance:2_000_00L ~value_date:(date "2026-09-29")));
+  Alcotest.(check bool) "and not again" true (Option.is_none (ok_import (Import.preview ctx (request checking file))).opening);
+  let summary = imported (Import.confirm ctx (request checking file)) in
+  (match summary.balance with
+  | Some b -> Alcotest.(check (list int64)) "agrees with the bank" [ 19_945_67L; 19_945_67L ] [ b.statement_balance; b.ledger_balance ]
+  | None -> Alcotest.fail "no balance check");
+  Alcotest.(check int64) "balance" 19_945_67L (balance service alice checking);
+  (* A statement for another account is refused. *)
+  match Import.preview ctx (request checking (handelsbanken_xlsx ~number:"Sparkonto 987 654 321" rows)) with
+  | Error (`Invalid message) -> Alcotest.(check bool) "names both" true (Str_compat.contains ~sub:"****4321" message && Str_compat.contains ~sub:"****6789" message)
+  | _ -> Alcotest.fail "imported into the wrong account"
+
 let test_reconcile () =
   let service, alice, checking = setup () in
   ignore (imported (Import.confirm (Import.context service alice) (request checking october)));
@@ -323,6 +392,7 @@ let () =
         [ Alcotest.test_case "matches, dedupes and checks the balance" `Quick test_import_matches_dedupes_and_checks_the_balance;
           Alcotest.test_case "identical rows without balances" `Quick test_identical_rows_without_balances;
           Alcotest.test_case "closing balance, oldest first" `Quick test_closing_balance_oldest_first;
+          Alcotest.test_case "handelsbanken xlsx" `Quick test_handelsbanken_xlsx;
           Alcotest.test_case "categorise, learn and undo" `Quick test_categorize_learn_and_undo;
           Alcotest.test_case "rules auto-apply" `Quick test_rules_auto_apply ] );
       ( "inbox",

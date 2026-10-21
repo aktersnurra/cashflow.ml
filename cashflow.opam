@@ -27,6 +27,8 @@ depends: [
   "mirage-crypto-rng"
   "x509"
   "base64"
+  "zipc" {>= "0.2.0"}
+  "xmlm"
   "uri"
   "domain-name"
   "cmdliner"
