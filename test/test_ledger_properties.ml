@@ -86,6 +86,13 @@ module%hegel_state_machine Ledger_machine = struct
     (* The store holds exactly the transfers reported as created, so a failed chain left nothing behind. *)
     let reported = List.length (List.filter_map created_transfer results) in
     assert (List.length (Mem_store.transfers state.store) = before + reported);
+    (* Everything reported as created or existing is in the store afterwards. *)
+    let stored = Mem_store.transfers state.store in
+    List.iter
+      (function
+        | Ok (Ledger_core.Created (t : Transfer.t) | Exists t) -> assert (List.exists (fun (s : Transfer.t) -> Transfer_id.equal s.id t.id) stored)
+        | Error _ -> ())
+      results;
     List.iter
       (fun result ->
         Option.iter
