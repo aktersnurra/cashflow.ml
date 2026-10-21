@@ -1,0 +1,10 @@
+(test
+ (name test_ledger)
+ (modules test_ledger test_support)
+ (libraries alcotest cashflow))
+
+(test
+ (name test_ledger_properties)
+ (modules test_ledger_properties test_support)
+ (libraries alcotest cashflow hegel)
+ (preprocess (pps ppx_hegel_test)))
