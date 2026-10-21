@@ -170,13 +170,98 @@ let test_earmark_currency () =
   let goal = ok (Insights.save_goal ctx ~name:"Car" ~target_amount:100_000_00L ~target_date:None ~monthly_amount:None ()) in
   Alcotest.(check bool) "SEK goal, EUR account" true (Result.is_error (Insights.earmark ctx ~goal_id:goal.goal.goal_id ~account_id:euros ~amount:0L))
 
+let test_goal_report_currency () =
+  let service, alice, _ = scenario () in
+  let save scope currency name target =
+    let ctx = ok (Insights.context service alice ~scope ~currency ()) in
+    ignore (ok (Insights.save_goal ctx ~name ~target_amount:target ~target_date:None ~monthly_amount:None ()))
+  in
+  save Me "SEK" "Personal SEK" 1_000_00L;
+  save Me "USD" "Personal USD" 2_000_00L;
+  save Household "SEK" "Household SEK" 3_000_00L;
+  save Household "USD" "Household USD" 4_000_00L;
+  List.iter
+    (fun (scope, currency, expected) ->
+      let report = query service alice "savings_goals" [ ("scope", `String scope); ("currency", `String currency) ] in
+      Alcotest.(check string) "report currency" currency (str [ "currency" ] report);
+      let goals = match field [ "goals" ] report with `List rows -> rows | _ -> Alcotest.fail "no goals list" in
+      let actual = List.map (fun goal -> (str [ "name" ] goal, str [ "target" ] goal)) goals in
+      Alcotest.(check (list (pair string string))) (scope ^ " / " ^ currency)
+        (List.sort compare expected) (List.sort compare actual))
+    [ ("me", "SEK", [ ("Personal SEK", "1000.00") ]);
+      ("me", "USD", [ ("Personal USD", "2000.00") ]);
+      ("household", "SEK", [ ("Household SEK", "3000.00") ]);
+      ("household", "USD", [ ("Household USD", "4000.00") ]);
+      ("family", "SEK", [ ("Personal SEK", "1000.00"); ("Household SEK", "3000.00") ]);
+      ("family", "USD", [ ("Personal USD", "2000.00"); ("Household USD", "4000.00") ]);
+      ("family", "EUR", []) ]
+
+let test_contribution_target_currency () =
+  let service, alice, _ = scenario () in
+  let household = Option.get (Access.household alice) in
+  let set_planning currency budget monthly =
+    let ctx = ok (Insights.context service alice ~scope:Household ~currency ()) in
+    let category =
+      match ok (Service.open_account service alice ~key:(key ("category:" ^ currency)) ~owner:(Household household.id)
+                  ~kind:Expense ~name:("Bills " ^ currency) ~currency ~flags:Account.no_flags ~details:Account_info.no_details) with
+      | `Created info | `Exists info -> info.account.id
+    in
+    ignore (ok (Insights.set_budget ctx ~category_id:category ~monthly_amount:budget ~rollover:false ~effective_from:None));
+    ignore (ok (Insights.save_goal ctx ~name:("Goal " ^ currency) ~target_amount:100_000_00L ~target_date:None ~monthly_amount:(Some monthly) ()))
+  in
+  set_planning "SEK" 300_00L 20_00L;
+  set_planning "USD" 700_00L 50_00L;
+  let personal = ok (Insights.context service alice ~scope:Me ()) in
+  ignore (ok (Insights.save_goal personal ~name:"Personal" ~target_amount:100_000_00L ~target_date:None ~monthly_amount:(Some 999_00L) ()));
+  List.iter
+    (fun (currency, expected) ->
+      let plan = query service alice "contribution_plan"
+          [ ("currency", `String currency); ("incomes", `Assoc [ (User_id.to_string (Access.user alice).id, `String "1000") ]) ] in
+      Alcotest.(check string) currency expected (str [ "target" ] plan))
+    [ ("SEK", "320.00"); ("USD", "750.00"); ("EUR", "0.00") ]
+
+let test_goal_update_currency () =
+  let service = make_service () in
+  let alice = sign_in service "alice" in
+  let checking = open_checking service alice "Savings" in
+  ignore (ok (Service.set_opening_balance service alice ~account_id:checking ~balance:2_000_00L ~value_date:(date "2026-10-01")));
+  let save fields = Commands.execute service alice ~scopes:[ "ledger:write" ] Commands.save_goal (`Assoc fields) in
+  let created = ok_import (save [ ("name", `String "Car"); ("target_amount", `String "5000.00"); ("monthly_amount", `String "100.00") ]) in
+  let id = str [ "id" ] created in
+  let ctx = ok (Insights.context service alice ~scope:Me ()) in
+  ignore (ok (Insights.earmark ctx ~goal_id:id ~account_id:checking ~amount:500_00L));
+  let result = save [ ("goal_id", `String id); ("currency", `String "USD"); ("name", `String "Changed");
+                      ("target_amount", `String "1000.00"); ("monthly_amount", `String "10.00") ] in
+  (match result with Error (`Invalid _) -> () | _ -> Alcotest.fail "accepted a cross-currency goal update");
+  let stored = Option.get (Planning_store.find_goal service.db id) in
+  Alcotest.(check string) "currency unchanged" "SEK" stored.currency;
+  Alcotest.(check string) "name unchanged" "Car" stored.name;
+  Alcotest.(check int64) "target unchanged" 5_000_00L stored.target_amount;
+  Alcotest.(check (option int64)) "monthly unchanged" (Some 100_00L) stored.monthly_amount;
+  Alcotest.(check (list int64)) "earmark unchanged" [ 500_00L ] (List.map snd stored.earmarks);
+  ignore (ok_import (save [ ("goal_id", `String id); ("name", `String "New car"); ("target_amount", `String "6000.00") ]));
+  let stored = Option.get (Planning_store.find_goal service.db id) in
+  Alcotest.(check string) "same-currency update" "New car" stored.name;
+  Alcotest.(check int64) "updated target" 6_000_00L stored.target_amount;
+  Alcotest.(check (list int64)) "earmark retained" [ 500_00L ] (List.map snd stored.earmarks);
+  let usd = ok_import (save [ ("currency", `String "USD"); ("name", `String "Trip"); ("target_amount", `String "1000.00") ]) in
+  let usd_id = str [ "id" ] usd in
+  (match save [ ("goal_id", `String usd_id); ("name", `String "Trip"); ("target_amount", `String "2000.00") ] with
+  | Error (`Invalid _) -> ()
+  | _ -> Alcotest.fail "accepted default SEK currency for a USD goal");
+  ignore (ok_import (save [ ("goal_id", `String usd_id); ("currency", `String "USD"); ("name", `String "Trip"); ("target_amount", `String "2000.00") ]));
+  Alcotest.(check int64) "explicit USD update" 2_000_00L (Option.get (Planning_store.find_goal service.db usd_id)).target_amount
+
 let () =
   Alcotest.run "analytics"
     [ ( "insights",
         [ Alcotest.test_case "cashflow by scope" `Quick test_cashflow_by_scope;
           Alcotest.test_case "categories, recurring and budgets" `Quick test_categories_recurring_and_budgets;
           Alcotest.test_case "contribution plan" `Quick test_contribution_plan;
-          Alcotest.test_case "net worth with a loan" `Quick test_net_worth_with_a_loan ] );
+          Alcotest.test_case "net worth with a loan" `Quick test_net_worth_with_a_loan;
+          Alcotest.test_case "goal report currency" `Quick test_goal_report_currency;
+          Alcotest.test_case "contribution target currency" `Quick test_contribution_target_currency;
+          Alcotest.test_case "goal update currency" `Quick test_goal_update_currency ] );
       ( "arithmetic",
         [ Alcotest.test_case "rounding keeps the total" `Quick test_rounding_keeps_the_total;
           Alcotest.test_case "decimals" `Quick test_decimals; Alcotest.test_case "json amounts" `Quick test_json_amounts;

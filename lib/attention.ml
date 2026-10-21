@@ -255,9 +255,18 @@ let feed (service : Service.t) access =
                 (fun (s : Analytics.shortfall) ->
                   add Shortfall (Printf.sprintf "shortfall:%s:%s" (Account_id.to_string s.short_account.account.id) (Cycle.label report.report_cycle)) (s, ctx.currency))
                 (Insights.shortfalls ctx);
+              (* The feed covers every goal currency, unlike a currency-specific report. *)
               List.iter
-                (fun (g : Insights.goal_progress) -> if not g.on_track then add Goal_off_track ("goal:" ^ g.goal.goal_id ^ ":" ^ Cycle.label current) (g, ctx.currency))
-                (Insights.goals ctx))
+                (fun owner ->
+                  List.iter
+                    (fun (goal : Planning_store.goal) ->
+                      match Service.currency service goal.currency with
+                      | Error _ -> ()
+                      | Ok currency ->
+                          let g = Insights.goal_progress { ctx with currency } goal in
+                          if not g.on_track then add Goal_off_track ("goal:" ^ g.goal.goal_id ^ ":" ^ Cycle.label current) (g, currency))
+                    (Planning_store.goals db owner))
+                ctx.owners)
         (Analytics.Me :: if Option.is_some (Access.household access) then [ Analytics.Household ] else []);
       (match Insights.contribution_plan ctx ~target:None ~incomes:[] with
       | Ok plan when Date.days_between ~first:plan.plan_cycle.first ~last:today < 7 -> (
