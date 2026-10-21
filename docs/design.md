@@ -1,6 +1,6 @@
 # cashflow — design
 
-Status: draft for review. Nothing here is implemented yet. Open questions are collected in §17 and marked inline as **(Q n)**.
+Status: draft for review. Nothing here is implemented yet. Open questions are collected in §17.
 
 ## 1. Goals
 
@@ -40,7 +40,7 @@ One OCaml binary, `cashflow`, with the same shape as `kcal`:
 - **Ledger core:** pure functions that validate a batch of transfers against account state and return either new balances or a list of errors. The store applies the result inside a single SQLite transaction. This is the part that copies TigerBeetle, and it can be tested exhaustively without a database.
 - External calls (the OpenRouter LLM, and later a bank-sync provider) are injected as records of functions, like `Withings.request` in kcal.
 
-The generic pieces of kcal (OIDC verification, MCP dispatch, HTTP adapter, logging, migrations, date and timezone handling) should move into a shared library used by both apps. Until that repo exists, cashflow copies them and marks the copies, so the extraction is mechanical later. **(Q 1)**
+The generic pieces of kcal (OIDC verification, MCP dispatch, HTTP adapter, logging, migrations, date and timezone handling) should move into a shared library used by both apps. Until that repo exists, cashflow copies them and marks the copies, so the extraction is mechanical later.
 
 ## 3. Ledger core (TigerBeetle rules)
 
@@ -71,7 +71,7 @@ Amounts are stored as `int64` minor units (öre, cent). TigerBeetle uses u128, b
 
 Every account has a normal balance side. Asset and Expense balances are debits minus credits; Liability, Equity and Income balances are credits minus debits. The UI and the analytics only ever show signed balances computed this way, so nobody has to think in debits and credits.
 
-Category accounts (Groceries, Rent, Salary) are ordinary Expense and Income accounts. A new user or household starts from a seeded chart of accounts **(Q 2)**:
+Category accounts (Groceries, Rent, Salary) are ordinary Expense and Income accounts. A new user or household starts from a seeded chart of accounts, named in the creator's language (§11.4) and renamable afterwards:
 
 - `Equity:Opening balances`
 - `Expense:Uncategorized`, the suspense account for imports (§6.4)
@@ -146,11 +146,20 @@ Avanza and Montrose are Asset accounts.
 
 Individual holdings are out of scope.
 
+### 3.8 Cash
+
+Each person who uses cash gets an Asset account, `Cash (<name>)`, which has no bank file behind it.
+
+- **ATM withdrawals:** in the bank CSV, a withdrawal is categorised as a transfer from checking to the cash account. The rules (§7) recognise `Uttag`/ATM rows automatically.
+- **Cash spending:** entered by hand, usually from the phone's Add sheet. These entries are posted immediately, since there is no bank to confirm them.
+- **Reconciliation:** you count your wallet now and then ("I have 340 kr"). That creates a checkpoint (§3.6), and any difference is posted to `Expense:Untracked cash` instead of `Uncategorized`. Analytics show untracked cash as its own line, so it never hides inside a real category.
+- **Attention card:** if cash has been withdrawn but no cash spending has been entered for 30 days, a card suggests counting your wallet.
+
 ## 4. Ownership, households and sharing
 
 ### 4.1 Entities
 
-- **user:** OIDC `sub`, display name, email (shown only), timezone, default currency, and an `is_admin` flag taken from a PocketID group claim **(Q 3)**.
+- **user:** OIDC `sub`, display name, email (shown only), timezone, default currency, a `locale`, and an `is_admin` flag taken from the `groups` claim (membership of the PocketID group `cashflow-admin`).
 - **household:** name, default currency, an `income_split` policy (§4.5), and a `report_split` (default 50/50) used only by the "my share" reports.
 - **membership:** `(household, user, status)`, where `status` is `Invited` → `Active` | `Declined`, or `Active` → `Left`. In v1 a user belongs to at most one household.
 
@@ -163,7 +172,7 @@ The admin creates a household and its accounts, or moves an existing personal ac
 | | own personal accounts | household accounts | another member's personal accounts |
 |---|---|---|---|
 | see balances and transfers | yes | yes | no |
-| post | yes | yes, if a member **(Q 4)** | no |
+| post | yes | yes, every active member | no |
 
 A transfer between a personal account and a household account is visible to both sides, but the personal side is masked for other members. They see "From Gustaf", not the account name, number or balance. Analytics apply the same rules, so a household member can never infer another member's personal balances.
 
@@ -227,7 +236,7 @@ drop CSV ─▶ detect format ─▶ parse rows ─▶ match account ─▶ fing
 
 ### 6.2 Formats
 
-There is one parser module per format, behind a common signature (`detect`, `parse`, `account_hint`). The first one is Handelsbanken. I need an anonymised sample of its export, because the columns, the date format, the decimal separator and the encoding all decide the parser **(Q 5)**. Avanza and Montrose exports come next if their CSVs turn out to be usable.
+There is one parser module per format, behind a common signature (`detect`, `parse`, `account_hint`). The first one is Handelsbanken. I need an anonymised sample of its export, because the columns, the date format, the decimal separator and the encoding all decide the parser (§17). Avanza and Montrose exports come next if their CSVs turn out to be usable.
 
 ### 6.3 Row fingerprint and duplicates
 
@@ -252,6 +261,20 @@ When the file has a running balance, the last row of the import gives a reconcil
 
 Handelsbanken's PSD2 API is only open to licensed providers. Enable Banking's free restricted-production mode, which covers only accounts you link yourself, is the realistic route; whether it supports Handelsbanken still has to be checked. A sync source would produce the same rows as a parser, keyed by the bank's own transaction ID, and feed the same pipeline. Nothing in §6.1–6.5 has to change for it.
 
+### 6.7 Manual entries the bank confirms later
+
+Someone can enter spending on a bank account by hand, through the Add sheet or `add_transaction` over MCP, before the CSV that contains it has been imported. That would be counted twice if the import simply posted it again. Instead, a manual entry against an account that has a bank file behind it uses TigerBeetle's two-phase transfers:
+
+1. **When entered,** the manual entry is posted as a `Pending` transfer, already in its category: "expected, not yet confirmed by the bank". The account's posted balance still matches the bank, and the pending columns show what is expected.
+2. **On import,** each new row is first matched against pending transfers on the same account, with the same direction, a date within ±4 days, and an amount within ±10 % (to allow for tips and currency conversion).
+   - With exactly one candidate, the import posts that pending transfer (`Post_pending`) for the bank's amount and date. It uses the category from the manual entry and doesn't add a new row to the Inbox.
+   - With several candidates, the row goes to the Inbox with the candidates attached, and the user picks one.
+3. **Unmatched entries:** if a pending entry has still not been matched once an import has covered its date plus seven days, a "Not found on the bank statement" card asks you to void it, keep waiting, or move it to Cash.
+
+Card reservations from the bank (§3.3, rule 5) use the same mechanism. A pending transfer means "not yet confirmed by the bank", whoever created it.
+
+If the bank amount is larger than the pending amount, the import posts the full pending amount, and the difference goes to the same category as a second, linked transfer.
+
 ## 7. Categorisation
 
 Suggestions come from three sources, in order:
@@ -272,14 +295,18 @@ UX best practice is monthly envelopes with history that never changes. In more d
 - **Rollover** is set per category: unspent money, or overspending, carries into next month's budget. It is on for things like clothes and off for groceries.
 - **Sinking funds** spread an annual cost evenly over the months, `annual_amount / 12`, so insurance and car service don't wreck one month. The balance builds up and is drawn down when the bill is paid. (v1.1)
 - **Pace** is shown instead of a bare percentage: "Groceries: 4 100 / 6 000 kr, day 21 of 31 — on pace". It is computed linearly, or, for categories with a dominant recurring payment, from when that payment usually lands.
-- **The household savings goal** is a budget line on an Asset target rather than an expense; it feeds the planner's target (§4.5).
+- **Savings goals** can be several, each owned by a user or the household: `name, target_amount, target_date?, monthly_amount?`. Examples are a buffer, a vacation and a car.
+  - A goal is an *earmark* on one or more savings accounts, not a ledger account of its own, so the account's balance still matches the bank. The total earmarked can't exceed the account balance, and anything left is shown as "unallocated".
+  - Progress shows how much is saved, the target, whether you're on track for the target date, and the monthly amount needed to get there.
+  - The monthly amounts of the household's goals go into the contribution planner's target (§4.5).
 
 ## 9. Time
 
+- **Bank data is the truth.** Every bank account's posted balance must match the bank's CSV. A manual entry against a bank account therefore stays provisional until the bank confirms it (§6.7).
 - **`value_date`:** a plain calendar date with no timezone, because bank statements give dates, not times. All analytics group transfers by `value_date`.
 - **`recorded_at`:** a UTC instant, used for auditing and for "last imported" checks.
 - **User timezone:** set in Settings (default `Europe/Stockholm`, using kcal's built-in table). It only decides what "today" is and how instants are displayed.
-- **Month:** a calendar month by default. An optional per-user *cycle start day* (for example the 25th, payday) shifts the month used for budgets and for the monthly overview **(Q 6)**.
+- **Month = pay cycle.** Budgets, the monthly overview and the contribution planner use a *cycle* that starts on the user's payday, configured per user. The default is the 25th. If the 25th is a Saturday, Sunday or Swedish public holiday, the cycle starts on the last banking day before it, which is when Swedish salaries are actually paid. The holiday table is built in, the same way kcal's timezone table is. A cycle is named after the month it mostly covers, so 25 Oct – 24 Nov is "November". A household's cycle follows the admin's setting. Analytics can still group by calendar month when asked.
 
 ## 10. Analytics
 
@@ -310,7 +337,14 @@ The UI follows Linear's style:
 - **Navigation:** a command palette (`⌘K`) for every action and page, keyboard shortcuts everywhere (shown in tooltips), and optimistic updates.
 - **Charts:** hand-written SVG through `virtual_dom`'s SVG module (sparklines, bars, an income→spending flow), with no JavaScript chart library.
 
-Desktop comes first, and every page also works at phone width **(Q 7)**.
+The phone is a first-class target, designed mobile-first:
+
+- below 768 px, a bottom tab bar (Home · Inbox · Add · Budgets · More) replaces the sidebar;
+- in the Inbox, cards are swiped right to accept a suggestion and left to choose a category;
+- **Add** is a quick-entry sheet for cash and for spending you want logged before the bank file arrives (§6.7);
+- the app can be installed as a PWA (manifest plus icon; no offline writes in v1).
+
+On desktop, the same pages add the sidebar, the command palette and keyboard shortcuts.
 
 ### 11.2 Pages
 
@@ -320,7 +354,7 @@ Desktop comes first, and every page also works at phone width **(Q 7)**.
 | **Inbox** | uncategorised and suggested rows, triaged from the keyboard |
 | **Accounts** | grouped by owner and type; balance, sparkline, last imported, reconciliation state |
 | **Account** | transfer list (reversals shown inline with their originals), CSV drop zone, reconciliation history |
-| **Budgets** | envelopes for this month, editing with effective dates, rollover |
+| **Budgets** | envelopes for this cycle, editing with effective dates, rollover, savings goals |
 | **Household** | members, contribution plan and progress, settle-up, household spending |
 | **Insights** | the analytics in §10 with selectable range and scope |
 | **Settings** | timezone, currency, cycle start day, rules, LLM on or off |
@@ -355,12 +389,27 @@ Home is a ranked feed of cards. The server works out which cards to show from fa
 | Budget alert | a category is more than 15% over pace | `Shown → Acknowledged` (stays acknowledged until the category gets worse) |
 | Contributions | it's the cycle start and contributions haven't been transferred | `Due → Partially done → Done` |
 | Settle-up | open balance > 0 | `Open → Settled` |
+| Unmatched entry | a pending manual entry wasn't found on the bank statement (§6.7) | `Shown → Voided / Waiting / Moved to cash` |
+| Count your cash | cash withdrawn, but no cash entries for 30 days (§3.8) | `Shown → Counted / Snoozed` |
+| Goal off track | a savings goal is behind its target date | `Shown → Adjusted / Acknowledged` |
 | Recurring change | a new subscription or a price change was detected | `Shown → Kept / Flagged` |
 | Overview | always, as the last card | — |
 
 Example: you open the app after ten days away. The Import card is at the top. You drop the file, and the card goes from preview to "Imported 43 · 38 auto-categorised", then hands over to the Inbox card ("5 to review"). When the Inbox is empty, that card is gone and Overview is at the top.
 
 Every card can be snoozed. Card state lives on the server, so the feed looks the same on every device and over MCP (`get_attention_feed`, so Claude can say "you have 5 uncategorised rows and you're over on restaurants").
+
+### 11.4 Translations (gettext, as in Phoenix)
+
+Translation works the way it does in Phoenix: GNU gettext `.po` files, and the English source string as the message ID.
+
+- **Files:** `priv/gettext/default.pot` is the template; `priv/gettext/<locale>/LC_MESSAGES/default.po` holds each language, starting with `en` and `sv`.
+- **In code:** strings are written as `T.s "Groceries"`, `T.n "%d row" "%d rows" n` (plurals) and `T.p "verb" "Post"` (when one English word needs different translations).
+- **Build step:** dune runs a small generator that compiles the `.po` files into an OCaml table. It is linked into both the server and the js_of_ocaml client, so there are no runtime file reads and no C library is needed.
+- **Keeping files in sync:** `cashflow gettext extract` scans the source for `T.` calls and updates the `.pot` file, like `mix gettext.extract --merge`. A test fails if a message is missing from a `.po` file or a translation is no longer used.
+- **Choosing the language:** from the user's `locale` setting, falling back to `Accept-Language` and then to `en`. MCP replies stay in English with machine-readable fields, because the agent translates for the user anyway.
+- **Formatting:** numbers, money and dates are formatted by locale. `sv` gives `1 240,50 kr` and `25 okt.`; `en` gives `SEK 1,240.50` and `Oct 25`.
+- **Names are data:** account and category names are stored as entered, not translated. The seeded chart of accounts is created in the creator's language.
 
 ## 12. LLM features (OpenRouter)
 
@@ -431,11 +480,9 @@ Analytics are SQL aggregations over `transfer` grouped by `value_date`. With a f
 
 ## 17. Open questions
 
-1. What should the shared library repo be called (for example `ocaml-mcp-kit`)? Create it now or after M2?
-2. Should the starter chart of accounts be in Swedish or English, and should the UI be in English?
-3. Does PocketID put group membership in the token (for example a `groups` claim with `cashflow-admin`)?
-4. May any household member post to household accounts, or only the admin?
-5. I need an anonymised Handelsbanken CSV export (a few rows, with the amounts changed) to write the parser. Are Avanza and Montrose exports also wanted in v1?
-6. Should a month be a calendar month, or start on payday (the 25th)?
-7. Is the phone a real use case (checking budgets on the go), or is it desktop only?
-8. Should the household savings goal be one number, or several goals (buffer, vacation, car) with their own progress?
+1. **Shared library:** what should the repo be called, and should it be created now or after M2?
+2. **Handelsbanken CSV:** I need an anonymised export, a few rows with the amounts changed. An export is being prepared.
+3. **Avanza and Montrose:** should their CSV exports be in v1, or only Handelsbanken?
+4. **Matching tolerance:** is ±4 days and ±10 % right for matching manual entries to bank rows (§6.7)?
+
+Resolved: the admin comes from the PocketID `groups` claim; every active member may post to household accounts; a month is a pay cycle starting on the 25th; the phone is a first-class target; translations use gettext with `en` and `sv`; there can be several savings goals.
