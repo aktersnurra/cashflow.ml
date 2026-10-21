@@ -34,3 +34,5 @@ let label = function
 
 let balance service access id = Account.posted_balance (ok (Service.find_account service access id)).account
 
+
+let ok_import = function Ok value -> value | Error error -> Alcotest.fail (Import.error_to_string error)

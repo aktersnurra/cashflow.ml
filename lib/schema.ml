@@ -125,6 +125,53 @@ CREATE TABLE reconciliation_checkpoints (
 );
 CREATE INDEX reconciliation_account_date_idx ON reconciliation_checkpoints(account_id, on_date);
 |}
+    );
+    ( 3,
+      {|
+CREATE TABLE import_batches (
+  id TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES accounts(id),
+  file_sha256 TEXT NOT NULL, file_name TEXT, format TEXT NOT NULL,
+  row_count INTEGER NOT NULL, new_count INTEGER NOT NULL, duplicate_count INTEGER NOT NULL, matched_count INTEGER NOT NULL,
+  first_date TEXT, last_date TEXT,
+  created_by TEXT NOT NULL REFERENCES users(id), created_at TEXT NOT NULL, undone_at TEXT
+);
+-- The same file imports once, unless that import was undone.
+CREATE UNIQUE INDEX import_batches_file_idx ON import_batches(account_id, file_sha256) WHERE undone_at IS NULL;
+CREATE INDEX import_batches_account_idx ON import_batches(account_id, created_at);
+CREATE TABLE import_rows (
+  batch_id TEXT NOT NULL REFERENCES import_batches(id), row_index INTEGER NOT NULL,
+  fingerprint TEXT NOT NULL, transfer_id TEXT REFERENCES transfers(id),
+  status TEXT NOT NULL CHECK (status IN ('new', 'duplicate', 'matched')),
+  PRIMARY KEY (batch_id, row_index)
+);
+
+-- Transfers waiting to be categorised: imported rows still posted against an uncategorized account.
+CREATE TABLE inbox_items (
+  transfer_id TEXT PRIMARY KEY REFERENCES transfers(id),
+  bank_account_id TEXT NOT NULL REFERENCES accounts(id),
+  current_account_id TEXT NOT NULL REFERENCES accounts(id),
+  revision INTEGER NOT NULL DEFAULT 0,
+  suggested_account_id TEXT REFERENCES accounts(id), suggestion_source TEXT, suggestion_confidence INTEGER,
+  candidate_pending_id TEXT REFERENCES transfers(id),
+  merchant_key TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('open', 'done', 'dismissed')),
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE INDEX inbox_items_open_idx ON inbox_items(status, bank_account_id);
+CREATE INDEX inbox_items_merchant_idx ON inbox_items(merchant_key, status);
+
+CREATE TABLE categorisation_rules (
+  id TEXT PRIMARY KEY, owner_kind TEXT NOT NULL, owner_id TEXT NOT NULL,
+  pattern TEXT NOT NULL, direction TEXT CHECK (direction IN ('in', 'out')),
+  min_amount INTEGER, max_amount INTEGER,
+  bank_account_id TEXT REFERENCES accounts(id),
+  category_account_id TEXT NOT NULL REFERENCES accounts(id),
+  tags TEXT NOT NULL DEFAULT '', shared INTEGER NOT NULL DEFAULT 0 CHECK (shared IN (0, 1)),
+  auto_apply INTEGER NOT NULL DEFAULT 0 CHECK (auto_apply IN (0, 1)),
+  created_at TEXT NOT NULL
+);
+CREATE INDEX categorisation_rules_owner_idx ON categorisation_rules(owner_kind, owner_id);
+|}
     ) ]
 
 let latest_version = List.fold_left (fun latest (version, _) -> max latest version) 0 migrations

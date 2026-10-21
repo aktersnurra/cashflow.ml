@@ -18,3 +18,8 @@
  (name test_analytics)
  (modules test_analytics test_service_support)
  (libraries alcotest cashflow yojson))
+
+(test
+ (name test_import)
+ (modules test_import test_service_support)
+ (libraries alcotest cashflow yojson))

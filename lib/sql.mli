@@ -69,3 +69,6 @@ val transaction : db -> (unit -> 'a) -> 'a
 
 val changes : db -> int
 (** Rows changed by the last statement. *)
+
+val transaction_result : db -> (unit -> ('a, 'e) result) -> ('a, 'e) result
+(** Like {!transaction}, but rolls back when the function returns [Error] too. *)

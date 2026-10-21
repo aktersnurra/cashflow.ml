@@ -1,4 +1,4 @@
 (library
  (name cashflow)
  (wrapped false)
- (libraries ptime ptime.clock.os uuidm sqlite3 yojson))
+ (libraries ptime ptime.clock.os uuidm sqlite3 yojson digestif))

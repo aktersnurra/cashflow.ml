@@ -158,3 +158,13 @@ let transaction db f =
       db.depth <- db.depth - 1;
       (try exec_script db rollback with Sql_error _ -> ());
       raise exn
+
+exception Rollback_result
+
+(* Like [transaction], but an [Error] result also rolls back, so a use case that fails halfway
+   leaves nothing behind. *)
+let transaction_result db f =
+  let result = ref None in
+  match transaction db (fun () -> match f () with Ok _ as ok -> ok | Error _ as error -> result := Some error; raise Rollback_result) with
+  | ok -> ok
+  | exception Rollback_result -> Option.get !result
