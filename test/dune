@@ -59,3 +59,9 @@
  (modules test_config)
  (libraries alcotest cashflow sexplib unix)
  (deps ../cashflow.example.sexp))
+
+(test
+ (name test_sql)
+ (enabled_if (= %{context_name} default))
+ (modules test_sql)
+ (libraries alcotest cashflow eio eio_main))

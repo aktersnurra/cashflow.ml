@@ -39,4 +39,24 @@ let test_suggestions_and_privacy () =
   Alcotest.(check bool) "no balance" false (Str_compat.contains ~sub:"87654" prompt);
   Alcotest.(check bool) "but the merchant" true (Str_compat.contains ~sub:"WILLYS" prompt)
 
-let () = Alcotest.run "llm" [ ("features", [ Alcotest.test_case "suggestions and privacy" `Quick test_suggestions_and_privacy ]) ]
+(* Confirming an import asks the model before it takes the database, never inside the transaction,
+   and still applies the suggestion. *)
+let test_no_network_inside_the_import_transaction () =
+  let db = Store_sqlite.open_memory () in
+  let inside = ref [] in
+  let watching : Llm.t = { fake with complete = (fun ~system ~user -> inside := Sql.in_transaction db :: !inside; fake.complete ~system ~user) } in
+  let service = Service.make ~now:(fun () -> now) ~assistant:watching db in
+  let alice = sign_in service "alice" in
+  let checking = open_checking service alice ~statement_backed:true "Checking" in
+  let csv = "Datum;Text;Belopp\n2026-10-20;WILLYS HEMMA;-412,00\n" in
+  ignore (ok_import (Import.confirm (Import.context service alice) { account_id = checking; file_name = None; content = csv; decisions = [] }));
+  Alcotest.(check (list bool)) "asked once, outside" [ false ] !inside;
+  match Inbox.list service alice ~limit:5 with
+  | [ item ] -> Alcotest.(check bool) "suggestion kept" true (Option.is_some item.item.suggested_account_id)
+  | _ -> Alcotest.fail "expected one inbox item"
+
+let () =
+  Alcotest.run "llm"
+    [ ( "features",
+        [ Alcotest.test_case "suggestions and privacy" `Quick test_suggestions_and_privacy;
+          Alcotest.test_case "no network inside the import transaction" `Quick test_no_network_inside_the_import_transaction ] ) ]

@@ -38,7 +38,16 @@ type 'f t = Stmt : { sql : string; params : ('f, 'a) spec; mode : 'a mode } -> '
 
 let stmt sql params mode = Stmt { sql; params; mode }
 
-type db = { handle : Sqlite3.db; statements : (string, Sqlite3.stmt) Hashtbl.t; mutable depth : int }
+(* One connection serves every request, so whoever is using it must have it to themselves: the
+   guard runs a function with exclusive use of the connection, and says whether the caller already
+   has it (so its nested calls don't wait on themselves). *)
+type guard = { exclusive : 'a. (unit -> 'a) -> 'a; held : unit -> bool }
+
+type db = { handle : Sqlite3.db; statements : (string, Sqlite3.stmt) Hashtbl.t; mutable depth : int; mutable guard : guard }
+
+let unguarded db = { exclusive = (fun f -> f ()); held = (fun () -> db.depth > 0) }
+let set_guard db guard = db.guard <- guard
+let exclusive db f = if db.guard.held () then f () else db.guard.exclusive f
 
 let fail fmt = Printf.ksprintf (fun message -> raise (Sql_error message)) fmt
 
@@ -48,7 +57,7 @@ let check db rc what =
 let exec_script db sql = check db (Sqlite3.exec db.handle sql) "exec"
 
 let open_db path =
-  let db = { handle = Sqlite3.db_open path; statements = Hashtbl.create 32; depth = 0 } in
+  let rec db = { handle = Sqlite3.db_open path; statements = Hashtbl.create 32; depth = 0; guard = { exclusive = (fun f -> f ()); held = (fun () -> db.depth > 0) } } in
   exec_script db "PRAGMA foreign_keys = ON";
   if path <> ":memory:" then exec_script db "PRAGMA journal_mode = WAL";
   db
@@ -58,6 +67,7 @@ let close db =
   ignore (Sqlite3.db_close db.handle)
 
 let changes db = Sqlite3.changes db.handle
+let in_transaction db = db.depth > 0
 
 let rec encode : type a. a field -> a -> Sqlite3.Data.t =
  fun field value ->
@@ -139,9 +149,10 @@ let run db (Stmt { sql; params; mode }) =
     | Nil -> finish (List.rev values)
     | Cons (field, rest) -> fun value -> go rest (encode field value :: values) finish
   in
-  go params [] (fun values -> execute db sql values mode)
+  go params [] (fun values -> exclusive db (fun () -> execute db sql values mode))
 
 let transaction db f =
+  exclusive db @@ fun () ->
   let savepoint = Printf.sprintf "cashflow_%d" db.depth in
   let begin_, commit, rollback =
     if db.depth = 0 then ("BEGIN IMMEDIATE", "COMMIT", "ROLLBACK")

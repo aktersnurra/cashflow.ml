@@ -210,11 +210,14 @@ let suggest (d, rows) =
   Ok (d, rows)
 
 (* Stage 4b: rows nobody's rules or history recognised go to the LLM in one batch, if one is
-   configured; its suggestions are only ever suggestions. *)
-let suggest_with_llm (d, rows) =
+   configured; its suggestions are only ever suggestions. [confirm] asks before it takes the
+   database and passes the answer in, so no transaction waits on the network. *)
+let suggest_with_llm ?answered (d, rows) =
   let unknown = List.filter_map (fun p -> match p.status, p.suggestion with New, None -> Some (p.index, p.row) | _ -> None) rows in
-  let suggestions = Llm_features.suggest_categories d.ctx.service d.ctx.access ~bank_account:d.account unknown in
-  Ok (d, List.map (fun p -> match List.assoc_opt p.index suggestions with Some s when p.suggestion = None -> { p with suggestion = Some s } | _ -> p) rows)
+  let suggestions =
+    match answered with Some suggestions -> suggestions | None -> Llm_features.suggest_categories d.ctx.service d.ctx.access ~bank_account:d.account unknown
+  in
+  Ok (d, List.map (fun p -> match List.assoc_opt p.index suggestions with Some s when p.suggestion = None && p.status = New -> { p with suggestion = Some s } | _ -> p) rows)
 
 (* The balance after the file's last row. Banks list rows newest or oldest first; the running
    balances say which (each one is the previous plus the row's amount, in time order), and when
@@ -262,7 +265,7 @@ let check_balance (d, rows) =
   in
   Ok { decoded_file = d; rows; already_imported; balance }
 
-let pipeline ctx = decode ctx >=> fingerprint >=> classify >=> suggest >=> suggest_with_llm >=> check_balance
+let pipeline ?answered ctx = decode ctx >=> fingerprint >=> classify >=> suggest >=> suggest_with_llm ?answered >=> check_balance
 let preview ctx request = pipeline ctx request
 
 type summary = { batch : Import_store.batch; inbox_count : int; balance : balance_check option }
@@ -311,13 +314,17 @@ let event_for ctx (account : Account.t) (p : planned) =
       in
       Ok (Some (event, match inbox with `Inbox current -> Some current | `Categorized -> None))
 
+(* The LLM is asked first, outside the transaction; inside it the plan is worked out again
+   against the database as it is then, reusing those suggestions. *)
 let confirm ctx request =
   let db = ctx.service.db in
   let now = ctx.service.now () in
+  let* outside = preview ctx request in
+  let answered = List.filter_map (fun p -> match p.suggestion with Some ({ Suggest.source = Llm; _ } as s) -> Some (p.index, s) | _ -> None) outside.rows in
   try
     Sql.transaction db (fun () ->
         let fail e = raise (Abort e) in
-        let p = match preview ctx request with Ok p -> p | Error e -> fail e in
+        let p = match pipeline ~answered ctx request with Ok p -> p | Error e -> fail e in
         match p.already_imported with
         | Some batch -> Ok (`Already_imported batch)
         | None ->
