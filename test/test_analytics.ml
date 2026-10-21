@@ -170,13 +170,26 @@ let test_earmark_currency () =
   let goal = ok (Insights.save_goal ctx ~name:"Car" ~target_amount:100_000_00L ~target_date:None ~monthly_amount:None ()) in
   Alcotest.(check bool) "SEK goal, EUR account" true (Result.is_error (Insights.earmark ctx ~goal_id:goal.goal.goal_id ~account_id:euros ~amount:0L))
 
+(* Editing a household goal from the personal scope keeps it the household's (the store never
+   changes a goal's owner or currency on update). *)
+let test_goal_keeps_its_owner () =
+  let service, alice, _ = scenario () in
+  let household = ok (Insights.context service alice ~scope:Household ()) in
+  let goal = ok (Insights.save_goal household ~name:"Sofa" ~target_amount:10_000_00L ~target_date:None ~monthly_amount:None ()) in
+  let me = ok (Insights.context service alice ~scope:Me ()) in
+  ignore (ok (Insights.save_goal me ~goal_id:goal.goal.goal_id ~name:"New sofa" ~target_amount:12_000_00L ~target_date:None ~monthly_amount:None ()));
+  let stored = Option.get (Planning_store.find_goal service.db goal.goal.goal_id) in
+  Alcotest.(check string) "renamed" "New sofa" stored.name;
+  Alcotest.(check bool) "still the household's" true (Owner.equal stored.goal_owner (List.hd household.owners))
+
 let () =
   Alcotest.run "analytics"
     [ ( "insights",
         [ Alcotest.test_case "cashflow by scope" `Quick test_cashflow_by_scope;
           Alcotest.test_case "categories, recurring and budgets" `Quick test_categories_recurring_and_budgets;
           Alcotest.test_case "contribution plan" `Quick test_contribution_plan;
-          Alcotest.test_case "net worth with a loan" `Quick test_net_worth_with_a_loan ] );
+          Alcotest.test_case "net worth with a loan" `Quick test_net_worth_with_a_loan;
+          Alcotest.test_case "a goal keeps its owner" `Quick test_goal_keeps_its_owner ] );
       ( "arithmetic",
         [ Alcotest.test_case "rounding keeps the total" `Quick test_rounding_keeps_the_total;
           Alcotest.test_case "decimals" `Quick test_decimals; Alcotest.test_case "json amounts" `Quick test_json_amounts;
