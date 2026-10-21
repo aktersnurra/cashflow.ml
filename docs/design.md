@@ -50,12 +50,12 @@ OCaml's advanced features are used where they rule out a class of bugs or remove
 - **Typed analytics queries.** `type _ query = Spending_by_category : Range.t * Scope.t -> Category_total.t list query | Net_worth : … -> Net_worth_point.t list query | …`, with a single `run : type a. a query -> a` and `codec : type a. a query -> a Jsont.t`. The MCP tool table, the `/api` routes and the UI's calls are all generated from this one type. Adding an analytics function is one constructor, and the compiler points out every place that still needs it.
 - **Typed SQL statements.** `('params, 'row) Stmt.t` is a thin GADT layer of about 200 lines over `sqlite3`, the binding kcal already uses. Parameters and result rows are typed lists of fields (`int64 @> text @> date @> nil`), so the types of a query's parameters and result rows are checked when the code compiles, and running it needs neither Lwt nor Caqti. SQL is written by hand, because the analytics need SQLite-specific window functions and CTEs. Petrol was considered and rejected: it depends on Lwt and on Caqti below 3.0, its last release was in 2023, and it would bring a second concurrency library into an Eio program.
 - **Card state machines.** `type (_, _) transition = Upload : (stale, uploading) transition | Preview : (uploading, preview) transition | …`. An attention card (§11.3) can only move along transitions that exist, and a card that ends in a terminal state can't go anywhere else.
-- **The pending lifecycle.** `_ Transfer.t` is indexed by `[ `Pending | `Posted | `Voided ]`, so `post_pending` and `void_pending` only accept pending transfers, and a pending transfer is resolved at most once (§3.3, rule 5).
+- **Not for the pending lifecycle.** Indexing transfers by their status (`[ `Pending | `Posted | `Voided ]`) was considered and dropped. A transfer's status lives in the store and changes as other transfers in the same batch resolve it, so a type index would only move the same runtime check into a lookup function. The core checks the status once, at the point where it applies the event (§3.3, rule 5), and the property test checks that no pending transfer is resolved twice.
 
 **Abstract and phantom types**
 - **IDs:** each ID type comes from the generative functor `Id.Make ()`, so `Account_id.t` and `Transfer_id.t` can't be swapped by mistake.
 - **Money:** `Amount.t` is a private `int64` built only by smart constructors; there are no floats.
-- **Validation state:** `Transfer.unvalidated` and `Transfer.validated` are separate types, and the store only accepts validated transfers ("parse, don't validate").
+- **Validation state:** `Ledger_core.applied` is abstract and only `Ledger_core.apply` can construct one, so a store can only ever write transfers and balances that passed every rule ("parse, don't validate").
 - **Authorisation as a capability:** `Access.t` is a proof that the user may use an owner scope. Only the service layer's authorisation check can create one, and every store function requires one, so a call that skips authorisation doesn't compile.
 
 **Functors and first-class modules**
@@ -74,7 +74,7 @@ OCaml's advanced features are used where they rule out a class of bugs or remove
 
 **Tests**
 - **[Hegel](https://ocaml.org/p/hegel/latest/README.html)** is the property-testing library: it is built on Hypothesis's engine and shrinks failures automatically. Tests use `let%hegel_test` from `ppx_hegel_test` and run under Alcotest.
-- **Model-based ledger test:** a test draws a random command sequence (open account, batch with linked and pending transfers, post or void, reverse, retry with the same idempotency key). Each command is applied both to `Ledger.Make (Mem_store)` and to a deliberately naive reference model, and the two must agree after every step. Hegel shrinks a failure down to the shortest sequence of commands that reproduces it.
+- **Model-based ledger test:** a `module%hegel_state_machine` (Hegel's `Stateful`) applies random rules to `Ledger.Make (Mem_store)`. The rules submit random batches (linked chains, pending transfers, posts and voids, reversals, unknown ids, keys from a small pool so they collide), retry batches that succeeded, and void expired pending transfers. After every step it checks the invariants: balances match `verify`, total debits equal total credits, balance limits hold, no pending transfer is resolved or reversed twice, chains are all-or-nothing, and the store holds exactly the transfers reported as created. Hegel shrinks a failure down to the shortest sequence of steps that reproduces it. Planting a bug in a partial post, or in rolling back a failed chain, is caught within a few steps.
 - **Platform note:** Hegel loads a native `libhegel`, which is published for Linux and macOS (Apple Silicon) only. Tests therefore run on the development machine and in CI, not on the FreeBSD NUC; the production binary doesn't depend on Hegel. CI pins the `libhegel` version and sets `HEGEL_LIBHEGEL_NO_DOWNLOAD=1` once it is cached.
 - **Invariants:** balances equal the sum of transfers, replaying a batch changes nothing, and posted balances never break an account's flags.
 
@@ -274,7 +274,18 @@ drop CSV ─▶ detect format ─▶ parse rows ─▶ match account ─▶ fing
 
 ### 6.2 Formats
 
-There is one parser module per format, behind a common signature (`detect`, `parse`, `account_hint`). The first one is Handelsbanken. I need an anonymised sample of its export, because the columns, the date format, the decimal separator and the encoding all decide the parser (§17). Avanza and Montrose imports are out of scope for v1. Adding one later means writing one format module: it maps deposits, withdrawals, dividends and fees to transfers, ignores individual trades, and reuses the rest of the pipeline.
+There is one parser module per format, behind a common signature (`detect`, `parse`, `account_hint`), reading a table of cells. A CSV and an .xlsx spreadsheet both become that table: a spreadsheet's numbers are read at Excel's precision of 15 significant digits, so amounts stay exact, and a date stored as a day number is read as one. A generic reader knows the usual Swedish and English column names; a bank's module recognises its own files and adds what only they say.
+
+**Handelsbanken** exports the account's transactions as .xlsx:
+- **Preamble:** the bank's name, the export time, the account's name and number ("Lönekonto 123 456 789"), its type, clearing number and balance, and a period.
+- **Columns:** then `Reskontradatum` (booking), `Transaktionsdatum`, `Text`, `Belopp` and `Saldo`, newest first.
+- **Account number:** the module reads it, and a file whose last four digits don't match the account's is refused, so a statement can't land in the wrong account.
+- **Running balance:** every row has one, so rows always have a stable identity (§6.3) and the balance check always runs.
+- **Period:** not used. The sample had rows from before the period it stated.
+
+**First import:** for an account with nothing recorded before the file, the preview suggests the opening balance the bank's figures imply (the first row's balance minus its amount, the day before), so the balance check agrees from the start.
+
+Avanza and Montrose imports are out of scope for v1. Adding one later means writing one format module: it maps deposits, withdrawals, dividends and fees to transfers, ignores individual trades, and reuses the rest of the pipeline.
 
 ### 6.3 Row identity and duplicates
 
@@ -351,7 +362,7 @@ UX best practice is monthly envelopes with history that never changes. In more d
 
 ## 9. Time
 
-- **Bank data is the truth.** Every bank account's posted balance must match the bank's CSV. A manual entry against a bank account therefore stays provisional until the bank confirms it (§6.7).
+- **Bank data is the truth.** Every bank account's posted balance must match the bank's statement. A manual entry against a bank account therefore stays provisional until the bank confirms it (§6.7).
 - **`value_date`:** a plain calendar date with no timezone, because bank statements give dates, not times. All analytics group transfers by `value_date`.
 - **`recorded_at`:** a UTC instant, used for auditing and for "last imported" checks.
 - **User timezone:** set in Settings (default `Europe/Stockholm`, using kcal's built-in table). It only decides what "today" is and how instants are displayed.
@@ -432,6 +443,8 @@ Home is a ranked feed of cards. The server works out which cards to show from fa
 - contribution progress
 - whether the previous month has been reviewed
 - new or changed recurring payments
+- recurring payments still due before payday, against the paying account's balance
+- spending in categories without a budget compared with the three cycles before
 
 **Cards, from highest priority to lowest:**
 
@@ -441,8 +454,10 @@ Home is a ranked feed of cards. The server works out which cards to show from fa
 | Reconciliation mismatch | a checkpoint failed | `Shown → Adjusted / Investigating (snoozed)` |
 | Import | any account has had no import for more than N days (default 7) | `Stale → Uploading → Preview → Imported(n) → Inbox` handoff |
 | Inbox | Inbox count > 0 | `Pending(n) → Triaging → Clear` (then the card disappears) |
+| Short before payday | the recurring payments expected from an account before payday (including any up to five days overdue) are more than what is left in it after pending reservations | `Shown → Done / Snoozed` |
 | Month review | a new month has started and the previous one hasn't been reviewed | `Ready → Reviewing → Reviewed` |
 | Budget alert | a category is more than 15% over pace | `Shown → Acknowledged` (stays acknowledged until the category gets worse) |
+| Unusual spending | a category without a budget has already spent 1.5 times what a whole cycle usually costs (the average of the three cycles before, where it appears in at least two), and at least 100 in the currency more; the LLM adds a sentence on which transactions drove it | `Shown → Done / Snoozed` |
 | Contributions | it's the cycle start and contributions haven't been transferred | `Due → Partially done → Done` |
 | Settle-up | open balance > 0 | `Open → Settled` |
 | Unmatched entry | a pending manual entry wasn't found on the bank statement (§6.7) | `Shown → Voided / Waiting / Moved to cash` |
@@ -572,11 +587,20 @@ Analytics are SQL aggregations over `transfer` grouped by `value_date`. With a f
 | **M7 · LLM** | categorisation suggestions, narrative cards |
 | **Later** | sinking funds, investment-account CSVs, bank sync, extracting shared libraries from cashflow and kcal |
 
+## 16a. Deployment notes
+
+- **The server** builds and runs natively on FreeBSD. Eio picks its POSIX backend; io_uring is Linux-only and would make no measurable difference at this scale.
+- **The web UI:** Bonsai v0.17 (the last opam release) needs OCaml 5.1, while the server uses 5.5. The UI therefore builds in a second opam switch through `dune-workspace.web`, with every stanza marked for its context. The MF2 runtime, the generated messages and `mf2c` are plain OCaml and build in both. The UI's output is static files, built in CI or anywhere else and served by `cashflow serve`.
+- **Commands:** every use case is one entry in `lib/commands.ml`. The MCP tools and the web API (`/api/commands/<name>`) are both generated from that table, which replaces the separate REST routes sketched in §13.
+- **Configuration** is one typed S-expression file (`cashflow.example.sexp`), parsed with derived converters into a record. Unknown fields are errors with their position, and secrets can be inline, in a file or in an environment variable. `cashflow check-config` validates it.
+- **JSON** uses yojson throughout (as kcal does) rather than `jsont`; the UI reads the same JSON with small helpers.
+
 ## 17. Open questions
 
-1. **Handelsbanken CSV:** I need an anonymised export, a few rows with the amounts changed. One is being prepared. It also decides whether the transaction date and the booking date are separate columns, which §6.7 depends on.
+None at the moment.
 
 Resolved:
+- **Handelsbanken's export:** an .xlsx with separate booking and transaction dates and a running balance (§6.2).
 - **Admin:** from the PocketID `groups` claim.
 - **Household posting:** every active member may post to household accounts.
 - **Months:** a configurable pay cycle, defaulting to the 25th.

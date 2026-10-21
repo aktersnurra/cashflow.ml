@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # setup-ocaml installs opam and caches the switch between runs; dune-cache reuses build
+      # results across runs too.
+      - uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: 5.5.1
+          dune-cache: true
+      - run: opam install --yes . --deps-only --with-test
+      - run: opam exec -- dune build
+      - run: opam exec -- dune runtest
+
+  # The web UI needs Bonsai v0.17, which needs OCaml 5.1, so it builds in a second switch while
+  # the main switch's dune drives both (see dune-workspace.web). This job keeps its own opam
+  # root with both switches, named as on a development machine, and caches the whole root: the
+  # Jane Street packages take a while to build, and a restored root is valid as it is.
+  web:
+    runs-on: ubuntu-24.04
+    env:
+      OPAMROOT: /home/runner/.opam-web
+      OPAMYES: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y opam libgmp-dev pkg-config
+      - id: opam-root
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/.opam-web
+          key: opam-root-web-v1-ubuntu-24.04-ocaml-5.5.1-5.1.1-bonsai-v0.17.0
+      - if: steps.opam-root.outputs.cache-hit != 'true'
+        run: |
+          opam init --bare --disable-sandboxing
+          opam switch create cashflow ocaml-base-compiler.5.5.1
+          opam install --switch=cashflow dune
+          opam switch create cashflow-web ocaml-base-compiler.5.1.1
+          opam install --switch=cashflow-web bonsai.v0.17.0 js_of_ocaml-compiler js_of_ocaml-ppx ppx_jane yojson
+      - run: opam exec --switch=cashflow -- dune build --workspace dune-workspace.web --profile release @web/default
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cashflow-web
+          path: |
+            _build/web/web/index.html
+            _build/web/web/main.bc.js
+            _build/web/web/style.css
+            _build/web/web/manifest.webmanifest
+            _build/web/web/icon.svg

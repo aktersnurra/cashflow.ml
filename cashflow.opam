@@ -1,0 +1,40 @@
+opam-version: "2.0"
+name: "cashflow"
+version: "dev"
+synopsis: "Double-entry household cashflow ledger"
+maintainer: "Gustaf Rydholm <gustaf.rydholm@gmail.com>"
+authors: "Gustaf Rydholm <gustaf.rydholm@gmail.com>"
+license: "MIT"
+homepage: "https://github.com/aktersnurra/cashflow.ml"
+bug-reports: "https://github.com/aktersnurra/cashflow.ml/issues"
+dev-repo: "git+https://github.com/aktersnurra/cashflow.ml.git"
+depends: [
+  "ocaml" {>= "5.5"}
+  "dune" {>= "3.24"}
+  "ptime"
+  "uuidm" {>= "0.9.9"}
+  "sqlite3"
+  "yojson"
+  "digestif"
+  "eio"
+  "eio_main"
+  "eio_posix"
+  "cohttp-eio"
+  "tls-eio"
+  "httpun-eio"
+  "jose"
+  "mirage-crypto"
+  "mirage-crypto-rng"
+  "x509"
+  "base64"
+  "zipc" {>= "0.2.0"}
+  "xmlm"
+  "uri"
+  "domain-name"
+  "cmdliner"
+  "logs"
+  "alcotest" {with-test}
+  "hegel" {with-test}
+  "ppx_hegel_test" {with-test}
+]
+build: [ ["dune" "build" "-p" name] ]

@@ -1,0 +1,8 @@
+(lang dune 3.24)
+
+; Builds the Bonsai web UI, which needs OCaml 5.1 (Bonsai v0.17 pins js_of_ocaml < 5.7), in its
+; own opam switch:  dune build --workspace dune-workspace.web @web/default
+(context
+ (opam
+  (switch cashflow-web)
+  (name web)))
