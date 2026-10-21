@@ -92,6 +92,36 @@ let test_shortfall_before_payday () =
   post "transfer" ~from_account:salary ~to_account:checking 3_000_00 "2026-10-21";
   Alcotest.(check bool) "covered" false (List.mem "shortfall" (kinds service alice))
 
+(* Currency-filtered reports must not hide off-track goals in the owner's other currencies. *)
+let test_goal_cards_in_each_currency () =
+  let service = make_service () in
+  let alice = sign_in service ~admin:true "alice" in
+  ignore (ok (Service.create_household service alice ~name:"Home" ~default_currency:"SEK"));
+  let alice = Service.access_for service (Access.user alice) in
+  let stranger = sign_in service "stranger" in
+  let save access scope currency name monthly_amount =
+    let ctx = ok (Insights.context service access ~scope ~currency ()) in
+    ignore (ok (Insights.save_goal ctx ~name ~target_amount:1_000_00L
+                  ~target_date:(Some (date "2027-01-01")) ~monthly_amount:(Some monthly_amount) ()))
+  in
+  List.iter
+    (fun (scope, prefix) ->
+      save alice scope "SEK" (prefix ^ " SEK") 1L;
+      save alice scope "USD" (prefix ^ " USD") 1L;
+      save alice scope "USD" (prefix ^ " on track") 1_000_00L)
+    [ (Analytics.Me, "Personal"); (Analytics.Household, "Household") ];
+  save stranger Me "USD" "Private" 1L;
+  let goals =
+    Attention.feed service alice
+    |> List.filter_map (fun (Attention.Card c) ->
+           match c.kind, c.payload with
+           | Attention.Goal_off_track, (g, currency) -> Some (g.goal.name, Currency.code currency)
+           | _ -> None)
+    |> List.sort compare
+  in
+  Alcotest.(check (list (pair string string))) "visible off-track goals keep their currency"
+    [ ("Household SEK", "SEK"); ("Household USD", "USD"); ("Personal SEK", "SEK"); ("Personal USD", "USD") ] goals
+
 let () =
   Alcotest.run "attention"
     [ ( "feed",
@@ -99,4 +129,5 @@ let () =
           Alcotest.test_case "snooze and budget acknowledgement" `Quick test_snooze_and_budget_acknowledgement;
           Alcotest.test_case "snooze hides until the date" `Quick test_snooze_hides_until_the_date;
           Alcotest.test_case "unusual spending" `Quick test_unusual_spending;
-          Alcotest.test_case "short before payday" `Quick test_shortfall_before_payday ] ) ]
+          Alcotest.test_case "short before payday" `Quick test_shortfall_before_payday;
+          Alcotest.test_case "goal cards in each currency" `Quick test_goal_cards_in_each_currency ] ) ]
