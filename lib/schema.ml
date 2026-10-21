@@ -13,6 +13,7 @@ CREATE TABLE users (
   display_name TEXT NOT NULL, email TEXT,
   locale TEXT NOT NULL DEFAULT 'en', timezone TEXT NOT NULL DEFAULT 'Europe/Stockholm',
   default_currency TEXT NOT NULL DEFAULT 'SEK' REFERENCES currencies(code),
+  pay_cycle TEXT NOT NULL DEFAULT '25;previous;SE;covered',
   is_admin INTEGER NOT NULL DEFAULT 0 CHECK (is_admin IN (0, 1)),
   created_at TEXT NOT NULL,
   UNIQUE (oidc_issuer, oidc_subject)
@@ -22,6 +23,7 @@ CREATE TABLE households (
   id TEXT PRIMARY KEY, name TEXT NOT NULL,
   default_currency TEXT NOT NULL REFERENCES currencies(code),
   report_split_bp INTEGER NOT NULL DEFAULT 5000 CHECK (report_split_bp BETWEEN 0 AND 10000),
+  pay_cycle TEXT NOT NULL DEFAULT '25;previous;SE;covered',
   created_by TEXT NOT NULL REFERENCES users(id), created_at TEXT NOT NULL
 );
 
@@ -56,6 +58,7 @@ CREATE TABLE account_details (
   institution TEXT, number_last4 TEXT CHECK (number_last4 IS NULL OR length(number_last4) = 4),
   role TEXT CHECK (role IN ('uncategorized', 'untracked_cash', 'opening', 'unrealized', 'receivable', 'payable', 'cash')),
   member_id TEXT REFERENCES users(id),
+  statement_backed INTEGER NOT NULL DEFAULT 0 CHECK (statement_backed IN (0, 1)),
   sort_order INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE account_tags (account_id TEXT NOT NULL REFERENCES accounts(id), tag TEXT NOT NULL, PRIMARY KEY (account_id, tag));

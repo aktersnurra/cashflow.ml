@@ -8,3 +8,8 @@
  (modules test_ledger_properties test_support)
  (libraries alcotest cashflow hegel)
  (preprocess (pps ppx_hegel_test)))
+
+(test
+ (name test_service)
+ (modules test_service)
+ (libraries alcotest cashflow))

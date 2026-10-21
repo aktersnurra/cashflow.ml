@@ -17,3 +17,13 @@ val days_between : first:t -> last:t -> int
 (** [last] minus [first], in days; negative when [last] is earlier. *)
 
 val midnight_utc : t -> Ptime.t
+
+val of_ymd : int -> int -> int -> t option
+val to_ymd : t -> int * int * int
+val weekday : t -> [ `Mon | `Tue | `Wed | `Thu | `Fri | `Sat | `Sun ]
+
+val days_in_month : int -> int -> int
+(** [days_in_month year month]. *)
+
+val max : t -> t -> t
+val min : t -> t -> t
