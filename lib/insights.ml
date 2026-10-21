@@ -166,6 +166,10 @@ let set_budget ctx ~category_id ~monthly_amount ~rollover ~effective_from =
       Ok effective_from
   | _ -> Error (`Not_found "expense category in this scope")
 
+let goals_in_currency ctx owner =
+  Planning_store.goals ctx.service.db owner
+  |> List.filter (fun (g : Planning_store.goal) -> g.currency = Currency.code ctx.currency)
+
 (* Contributions *)
 
 type member_plan = { member : User_id.t; member_name : string; income : int64 option; contribution : int64; contributed : int64 }
@@ -192,15 +196,20 @@ let contribution_plan ctx ~target ~incomes =
   let* household, ctx = household_ctx ctx in
   let members = List.filter (fun (m : Household.member) -> m.status = Active) (Directory.members ctx.service.db household.id) in
   let cycle = current_cycle ctx in
+  let book = book ctx in
   let target, target_basis =
     match target with
     | Some target -> (target, "given")
     | None ->
         let in_force, _ = Planning_store.budgets ctx.service.db (Owner.Household household.id) in
-        let budgets = List.fold_left (fun sum (b : Analytics.budget) -> Int64.add sum b.monthly_amount) 0L (in_force cycle) in
+        let budgets =
+          in_force cycle
+          |> List.filter (fun (b : Analytics.budget) -> Option.is_some (book.inside b.category_id))
+          |> List.fold_left (fun sum (b : Analytics.budget) -> Int64.add sum b.monthly_amount) 0L
+        in
         let goals =
           List.fold_left (fun sum (g : Planning_store.goal) -> Int64.add sum (Option.value g.monthly_amount ~default:0L)) 0L
-            (Planning_store.goals ctx.service.db (Owner.Household household.id))
+            (goals_in_currency ctx (Owner.Household household.id))
         in
         (Int64.add budgets goals, "household budgets plus savings goals")
   in
@@ -215,7 +224,6 @@ let contribution_plan ctx ~target ~incomes =
   in
   (* Contributions so far this cycle: money into household accounts from each member's own accounts. *)
   let view = Store_sqlite.view ctx.service.db in
-  let book = book ctx in
   let contributed member =
     List.fold_left
       (fun sum (t : Transfer.t) ->
@@ -284,7 +292,7 @@ let goal_progress ctx (goal : Planning_store.goal) =
   { goal; saved; remaining; cycles_left; required_monthly; on_track }
 
 let goals ctx =
-  List.concat_map (fun owner -> List.map (goal_progress ctx) (Planning_store.goals ctx.service.db owner)) ctx.owners
+  List.concat_map (fun owner -> List.map (goal_progress ctx) (goals_in_currency ctx owner)) ctx.owners
 
 let save_goal ctx ?goal_id ~name ~target_amount ~target_date ~monthly_amount () =
   let owner = budget_owner ctx in
@@ -297,7 +305,10 @@ let save_goal ctx ?goal_id ~name ~target_amount ~target_date ~monthly_amount () 
       | None -> Ok (Uuidm.to_string (Uuidm.v4_gen (Random.State.make_self_init ()) ()))
       | Some id -> (
           match Planning_store.find_goal ctx.service.db id with
-          | Some g when Access.can_use ctx.access g.goal_owner -> Ok id
+          | Some g when Access.can_use ctx.access g.goal_owner ->
+              if g.currency <> Currency.code ctx.currency then
+                Error (`Invalid (Printf.sprintf "the goal is in %s; update it in %s" g.currency g.currency))
+              else Ok id
           | _ -> Error (`Not_found "goal"))
     in
     let goal : Planning_store.goal =

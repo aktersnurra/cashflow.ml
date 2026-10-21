@@ -24,6 +24,12 @@
  (libraries alcotest cashflow yojson))
 
 (test
+ (name test_xlsx)
+ (enabled_if (= %{context_name} default))
+ (modules test_xlsx)
+ (libraries alcotest cashflow zipc))
+
+(test
  (name test_import)
  (enabled_if (= %{context_name} default))
  (modules test_import test_service_support)

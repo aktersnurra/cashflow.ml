@@ -57,9 +57,31 @@ let shared_strings zip =
       let string si = String.concat "" (List.map text (children "t" si @ List.concat_map (children "t") (children "r" si))) in
       Ok (Array.of_list (List.map string (children "si" tree)))
 
-(* "AB12" -> column 27 (0-based). *)
+let max_rows = 100_000
+(* Excel's column limit, plus a budget for the dense strings table used by statement readers. *)
+let max_columns = 16_384
+let max_cells = 1_000_000
+
+let row_index reference =
+  if reference = "" || not (String.for_all (fun c -> c >= '0' && c <= '9') reference) then Error "invalid row reference"
+  else
+    match int_of_string_opt reference with
+    | Some n when n > 0 && n <= max_rows -> Ok (n - 1)
+    | _ -> Error "row reference is outside the supported sheet"
+
+(* "AB12" -> column 27 (0-based). Bound each step before multiplication can overflow. *)
 let column reference =
-  String.fold_left (fun (n, letters) c -> if letters && c >= 'A' && c <= 'Z' then ((n * 26) + Char.code c - 64, true) else (n, false)) (0, true) reference |> fst |> fun n -> n - 1
+  let rec letters i n =
+    if i < String.length reference && reference.[i] >= 'A' && reference.[i] <= 'Z' then
+      let digit = Char.code reference.[i] - Char.code 'A' + 1 in
+      if n > (max_columns - digit) / 26 then Error "the sheet has too many columns"
+      else letters (i + 1) ((n * 26) + digit)
+    else if i = 0 then Error "invalid cell reference"
+    else
+      let* _ = row_index (String.sub reference i (String.length reference - i)) in
+      Ok (n - 1)
+  in
+  letters 0 0
 
 let number text =
   match float_of_string_opt (String.trim text) with
@@ -84,18 +106,30 @@ let table content =
   let* strings = shared_strings zip in
   let* sheet = Result.bind (part zip sheet_path) parse_xml in
   let rows = match child "sheetData" sheet with Some data -> children "row" data | None -> [] in
-  (* Rows and cells can be missing (empty ones are left out), so place them by their references. *)
-  let numbered =
-    List.mapi
-      (fun i row ->
-        let index = match Option.bind (attribute "r" row) int_of_string_opt with Some r -> r - 1 | None -> i in
-        let cells =
-          List.mapi (fun j c -> ((match attribute "r" c with Some r -> column r | None -> j), cell strings c)) (children "c" row)
-        in
-        let width = List.fold_left (fun w (col, _) -> max w (col + 1)) 0 cells in
-        (index, List.init width (fun col -> Option.value (List.assoc_opt col cells) ~default:"")))
-      rows
+  (* Rows and cells can be missing. Validate positions and the total expansion before allocating
+     each dense row; XML size alone doesn't bound the space occupied by absent cells. *)
+  let rec read_cells j width acc = function
+    | [] -> Ok (width, acc)
+    | c :: rest ->
+        if j >= max_columns then Error "the sheet has too many columns"
+        else
+          let* col = match attribute "r" c with Some r -> column r | None -> Ok j in
+          read_cells (j + 1) (max width (col + 1)) ((col, cell strings c) :: acc) rest
   in
-  let height = List.fold_left (fun h (r, _) -> max h (r + 1)) 0 numbered in
-  if height > 100_000 then Error "the sheet has more than 100 000 rows" else
-  Ok (List.init height (fun r -> Option.value (List.assoc_opt r numbered) ~default:[]))
+  let rec read_rows i expanded height acc = function
+    | [] -> Ok (height, acc)
+    | row :: rest ->
+        if i >= max_rows then Error "the sheet has more than 100 000 rows"
+        else
+          let* index = match attribute "r" row with Some r -> row_index r | None -> Ok i in
+          let* width, cells = read_cells 0 0 [] (children "c" row) in
+          if width > max_cells - expanded then Error "the sheet expands to too many cells"
+          else
+            let values = Array.make width "" in
+            List.iter (fun (col, value) -> values.(col) <- value) cells;
+            read_rows (i + 1) (expanded + width) (max height (index + 1)) ((index, Array.to_list values) :: acc) rest
+  in
+  let* height, numbered = read_rows 0 0 0 [] rows in
+  let table = Array.make height [] in
+  List.iter (fun (index, values) -> table.(index) <- values) numbered;
+  Ok (Array.to_list table)
