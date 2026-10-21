@@ -95,7 +95,13 @@ let test_identical_rows_without_balances () =
   Alcotest.(check (list string)) "complete days" [ "new"; "duplicate"; "duplicate"; "duplicate"; "new" ] (statuses month ());
   let summary = imported (Import.confirm ctx (request checking month)) in
   Alcotest.(check (list int)) "new, duplicates" [ 2; 3 ] [ summary.batch.new_count; summary.batch.duplicate_count ];
-  Alcotest.(check int64) "every row once" (-309_00L) (balance service alice checking)
+  Alcotest.(check int64) "every row once" (-309_00L) (balance service alice checking);
+  (* Both coffees again, in a file that ends on the 20th: this time they are the ones already there. *)
+  let again = "Datum;Text;Belopp\n2026-10-18;ICA;-100,00\n2026-10-20;KAFFE;-35,00\n2026-10-20;KAFFE;-35,00\n" in
+  Alcotest.(check (list string)) "edge day again" [ "new"; "ambiguous"; "ambiguous" ] (statuses again ());
+  let summary = imported (Import.confirm ctx (request ~decisions:[ (1, Import.Is_duplicate); (2, Import.Is_duplicate) ] checking again)) in
+  Alcotest.(check (list int)) "said to be already imported" [ 1; 2 ] [ summary.batch.new_count; summary.batch.duplicate_count ];
+  Alcotest.(check int64) "so only the ICA is added" (-409_00L) (balance service alice checking)
 
 let test_categorize_learn_and_undo () =
   let service, alice, checking = setup () in

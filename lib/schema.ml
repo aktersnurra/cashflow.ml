@@ -141,7 +141,7 @@ CREATE INDEX import_batches_account_idx ON import_batches(account_id, created_at
 CREATE TABLE import_rows (
   batch_id TEXT NOT NULL REFERENCES import_batches(id), row_index INTEGER NOT NULL,
   fingerprint TEXT NOT NULL, transfer_id TEXT REFERENCES transfers(id),
-  status TEXT NOT NULL CHECK (status IN ('new', 'duplicate', 'matched')),
+  status TEXT NOT NULL CHECK (status IN ('new', 'duplicate', 'decided_duplicate', 'matched')),
   PRIMARY KEY (batch_id, row_index)
 );
 
