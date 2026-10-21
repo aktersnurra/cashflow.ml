@@ -144,6 +144,32 @@ let test_net_worth_with_a_loan () =
   let points = match field [ "points" ] (query service alice "net_worth_series" [ ("cycles", `Int 3) ]) with `List p -> p | _ -> [] in
   Alcotest.(check (list string)) "after pay, the loan and its repayment" [ "10000.00"; "10000.00"; "9900.00" ] (List.map (str [ "net_worth" ]) points)
 
+(* JSON numbers are read exactly or refused, never rounded. *)
+let test_json_amounts () =
+  let sek = Result.get_ok (Currency.make ~code:"SEK" ~scale:2) in
+  let read v = Commands.signed_amount sek "amount" [ ("amount", v) ] in
+  Alcotest.(check (option int64)) "seven digits" (Some 1_234_567L) (Result.get_ok (read (`Float 12345.67)));
+  Alcotest.(check (option int64)) "whole" (Some 10_000L) (Result.get_ok (read (`Float 100.)));
+  Alcotest.(check (option int64)) "big" (Some 98_765_432_101L) (Result.get_ok (read (`Float 987654321.01)));
+  Alcotest.(check bool) "too many decimals is refused" true (Result.is_error (read (`Float (0.1 +. 0.2))));
+  Alcotest.(check bool) "so is an exponent" true (Result.is_error (read (`Float 1e25)))
+
+(* A goal is funded from accounts in its own currency. *)
+let test_earmark_currency () =
+  let service = make_service () in
+  let alice = sign_in service "alice" in
+  let euros =
+    match
+      Service.open_account service alice ~key:(key "open:eur") ~owner:(Access.personal alice) ~kind:Asset ~name:"Euros" ~currency:"EUR"
+        ~flags:Account.no_flags ~details:Account_info.no_details
+    with
+    | Ok (`Created info | `Exists info) -> info.account.id
+    | Error e -> Alcotest.fail (Service.error_to_string e)
+  in
+  let ctx = ok (Insights.context service alice ~scope:Me ()) in
+  let goal = ok (Insights.save_goal ctx ~name:"Car" ~target_amount:100_000_00L ~target_date:None ~monthly_amount:None ()) in
+  Alcotest.(check bool) "SEK goal, EUR account" true (Result.is_error (Insights.earmark ctx ~goal_id:goal.goal.goal_id ~account_id:euros ~amount:0L))
+
 let () =
   Alcotest.run "analytics"
     [ ( "insights",
@@ -153,4 +179,5 @@ let () =
           Alcotest.test_case "net worth with a loan" `Quick test_net_worth_with_a_loan ] );
       ( "arithmetic",
         [ Alcotest.test_case "rounding keeps the total" `Quick test_rounding_keeps_the_total;
-          Alcotest.test_case "decimals" `Quick test_decimals ] ) ]
+          Alcotest.test_case "decimals" `Quick test_decimals; Alcotest.test_case "json amounts" `Quick test_json_amounts;
+          Alcotest.test_case "earmark currency" `Quick test_earmark_currency ] ) ]

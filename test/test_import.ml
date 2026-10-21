@@ -263,6 +263,45 @@ let test_manual_move_confirmed_by_both_statements () =
   Alcotest.(check (list int64)) "still moved once" [ -1_000_00L; 1_000_00L ] [ balance service alice checking; balance service alice savings ];
   Alcotest.(check (list string)) "and savings can confirm it again" [ "confirms_leg" ] (statuses savings (savings_csv ^ "\n"))
 
+(* A member who isn't an admin shares their first purchase: the household's "owed to" account for
+   them is opened on the way. *)
+let test_member_shares_a_purchase () =
+  let service = make_service () in
+  let alice = sign_in service ~admin:true "alice" and bob = sign_in service "bob" in
+  let household = ok (Service.create_household service alice ~name:"Home" ~default_currency:"SEK") in
+  ignore (ok (Service.invite_member service (Service.access_for service (Access.user alice)) ~email:"bob@example.com"));
+  let bob = ok (Service.respond_to_invitation service bob ~household_id:household.id ~accept:true) in
+  let checking = open_checking service bob ~statement_backed:true "Bob checking" in
+  ignore (imported (Import.confirm (Import.context service bob) (request checking "Datum;Text;Belopp\n2026-10-03;COOP;-300,00\n")));
+  let groceries =
+    (List.find (fun (i : Account_info.t) -> i.account.name = "Groceries" && Owner.equal i.account.owner (Household household.id)) (Service.accounts service bob)).account.id
+  in
+  ignore (ok (Inbox.share service bob ~transfer_id:(find_item service bob "COOP") ~household_category_id:groceries));
+  Alcotest.(check int64) "the household spent it" 300_00L (balance service bob groceries);
+  (* But a member still can't open other household liabilities. *)
+  Alcotest.(check bool) "no other liabilities" true
+    (Result.is_error
+       (Service.open_account service bob ~key:(key "loan") ~owner:(Household household.id) ~kind:Liability ~name:"Loan" ~currency:"SEK"
+          ~flags:Account.no_flags ~details:Account_info.no_details))
+
+(* The reconciled flag follows the ledger as it is now: reversing an entry before a checkpoint, or
+   undoing the import that made it, takes it back. *)
+let test_reconciliation_follows_the_ledger () =
+  let service, alice, checking = setup () in
+  let ctx = Import.context service alice in
+  let through () =
+    let info = ok (Service.find_account service alice checking) in
+    Planning_store.reconciled_through service.db checking ~ledger_balance_on:(Import_store.posted_balance_on service.db info.account)
+  in
+  let summary = imported (Import.confirm ctx (request checking october)) in
+  Alcotest.(check (option string)) "reconciled" (Some "2026-10-20") (Option.map Date.to_string (through ()));
+  let spotify = (List.find (fun (v : Inbox.item_view) -> v.transfer.transfer.memo.description = "SPOTIFY") (Inbox.list service alice ~limit:10)).item.transfer_id in
+  ignore (ok (Service.reverse service alice ~key:(key "oops") ~transfer_id:spotify ()));
+  Alcotest.(check (option string)) "not after a reversal" None (Option.map Date.to_string (through ()));
+  ignore (ok_import (Import.undo ctx ~batch_id:summary.batch.batch_id));
+  Alcotest.(check (option string)) "nor after an undo" None (Option.map Date.to_string (through ()));
+  Alcotest.(check int) "the undone import's checkpoint is gone" 0 (List.length (Planning_store.checkpoints service.db checking))
+
 let test_reconcile () =
   let service, alice, checking = setup () in
   ignore (imported (Import.confirm (Import.context service alice) (request checking october)));
@@ -285,4 +324,6 @@ let () =
       ( "inbox",
         [ Alcotest.test_case "pair and share" `Quick test_pair_and_share; Alcotest.test_case "undo after share" `Quick test_undo_after_share;
           Alcotest.test_case "pairing a contribution" `Quick test_pairing_a_contribution;
-          Alcotest.test_case "a manual move confirmed by both statements" `Quick test_manual_move_confirmed_by_both_statements; Alcotest.test_case "reconcile" `Quick test_reconcile ] ) ]
+          Alcotest.test_case "a manual move confirmed by both statements" `Quick test_manual_move_confirmed_by_both_statements;
+          Alcotest.test_case "a member shares a purchase" `Quick test_member_shares_a_purchase;
+          Alcotest.test_case "reconciliation follows the ledger" `Quick test_reconciliation_follows_the_ledger; Alcotest.test_case "reconcile" `Quick test_reconcile ] ) ]

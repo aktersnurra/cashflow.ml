@@ -160,17 +160,20 @@ let find_account service access id =
   | None -> Error (`Not_found "account")
 
 (* Anyone may open accounts of their own. In a household, any member may add categories, but only
-   an admin adds the household's bank accounts and liabilities. *)
-let may_open access owner (kind : Account.kind) =
+   an admin adds the household's bank accounts and liabilities, except the one a member needs for
+   sharing a cost: what the household owes them (§4.6). *)
+let may_open ?(details = Account_info.no_details) access owner (kind : Account.kind) =
+  let owed_to_me = details.role = Some Payable && Option.equal User_id.equal details.member_id (Some (Access.user access).id) in
   if not (Access.can_use access owner) then Error (`Forbidden "you can't open accounts for that owner")
   else
     match owner, kind with
+    | Owner.Household _, Liability when owed_to_me -> Ok ()
     | Owner.Household _, (Asset | Liability) when not (Access.is_admin access) ->
         Error (`Forbidden "only an admin can add household bank accounts")
     | _ -> Ok ()
 
 let open_account service access ~key ~owner ~kind ~name ~currency:code ~flags ~(details : Account_info.details) =
-  let* () = may_open access owner kind in
+  let* () = may_open ~details access owner kind in
   let* currency = currency service code in
   let* number_last4 = Account_info.validate_last4 details.number_last4 in
   let spec : Account.spec = { owner; kind; currency; name; flags } in
