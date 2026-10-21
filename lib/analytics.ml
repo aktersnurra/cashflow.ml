@@ -128,8 +128,9 @@ let net_worth_series book ~dates transfers =
   let change (t : Transfer.t) =
     let side id sign =
       match book.inside id with
-      | Some info when info.account.kind = Asset -> Int64.mul sign (amount t)
-      | Some info when info.account.kind = Liability -> Int64.mul (Int64.neg sign) (amount t)
+      (* Both kinds count debit minus credit: a liability's balance is negative worth, so a
+         debit (paying it down) raises net worth and a credit (borrowing) lowers it. *)
+      | Some info when info.account.kind = Asset || info.account.kind = Liability -> Int64.mul sign (amount t)
       | _ -> 0L
     in
     side t.debit_account_id 1L +: side t.credit_account_id (-1L)
