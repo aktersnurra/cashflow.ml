@@ -1,3 +1,4 @@
+module Commands = Cashflow_io.Commands
 module Import = Cashflow_io.Import
 module Import_store = Cashflow_io.Import_store
 module Inbox = Cashflow_io.Inbox
@@ -158,6 +159,31 @@ let test_categorize_learn_and_undo () =
   let again = imported (Import.confirm ctx (request checking november)) in
   Alcotest.(check int) "re-imported as new after undo" 1 again.batch.new_count;
   Alcotest.(check int64) "and posted again" 9_393_00L (balance service alice checking)
+
+(* Listing for people: each imported row once, with the category it has now, and none of the
+   transfers triage posted to get it there. *)
+let test_query_folds_triage () =
+  let service, alice, checking = setup () in
+  ignore (imported (Import.confirm (Import.context service alice) (request checking october)));
+  let spotify = List.find (fun (v : Inbox.item_view) -> v.transfer.transfer.memo.description = "SPOTIFY") (Inbox.list service alice ~limit:50) in
+  let id = spotify.item.transfer_id in
+  ignore (ok (Inbox.categorize service alice ~transfer_id:id ~category_id:(account_named service alice "Subscriptions") ()));
+  ignore (ok (Inbox.categorize service alice ~transfer_id:id ~category_id:(account_named service alice "Entertainment") ()));
+  let rows =
+    match field [ "transactions" ] (ok_import (Commands.execute service alice ~scopes:[ "ledger:read" ] Commands.query_transactions (`Assoc [ ("fold_triage", `Bool true) ]))) with
+    | `List rows -> rows
+    | _ -> Alcotest.fail "no transactions"
+  in
+  let text path row = match field path row with `String s -> s | other -> Yojson.Safe.to_string other in
+  Alcotest.(check int) "each statement row once" 4 (List.length rows);
+  Alcotest.(check bool) "no triage transfers" false (List.exists (fun r -> text [ "code" ] r = "reclassify") rows);
+  let row text_id = List.find (fun r -> text [ "id" ] r = text_id) rows in
+  let spotify = row (Transfer_id.to_string id) in
+  Alcotest.(check string) "the latest category" "Entertainment" (text [ "category"; "name" ] spotify);
+  Alcotest.(check string) "triaged" "done" (text [ "triage" ] spotify);
+  let salary = List.find (fun r -> text [ "description" ] r = "LÖN") rows in
+  Alcotest.(check string) "still uncategorised" "Uncategorized income" (text [ "category"; "name" ] salary);
+  Alcotest.(check string) "waiting in the inbox" "open" (text [ "triage" ] salary)
 
 let test_rules_auto_apply () =
   let service, alice, checking = setup () in
@@ -440,6 +466,7 @@ let () =
           Alcotest.test_case "closing balance, oldest first" `Quick test_closing_balance_oldest_first;
           Alcotest.test_case "handelsbanken xlsx" `Quick test_handelsbanken_xlsx;
           Alcotest.test_case "categorise, learn and undo" `Quick test_categorize_learn_and_undo;
+          Alcotest.test_case "query folds triage" `Quick test_query_folds_triage;
           Alcotest.test_case "rules auto-apply" `Quick test_rules_auto_apply ] );
       ( "inbox",
         [ Alcotest.test_case "pair and share" `Quick test_pair_and_share; Alcotest.test_case "undo after share" `Quick test_undo_after_share;
