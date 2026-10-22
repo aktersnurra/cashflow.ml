@@ -119,7 +119,9 @@
  (alias check-library-boundaries)
  (enabled_if (= %{context_name} default))
  (deps check_library_boundaries.py test_check_library_boundaries.py (source_tree ../lib)
-  ../bin/dune ../shared/mf2/dune ../tools/mf2c/dune ../locales/dune ../web/dune dune)
+  (glob_files_rec ../bin/dune) (glob_files_rec ../shared/dune)
+  (glob_files_rec ../tools/dune) (glob_files_rec ../locales/dune)
+  (glob_files_rec ../web/dune) (glob_files_rec dune))
  (action
   (progn
    (chdir .. (run python3 test/check_library_boundaries.py))
@@ -128,4 +130,11 @@
 (alias
  (name runtest)
  (enabled_if (= %{context_name} default))
- (deps (alias check-library-boundaries)))
+ (deps (alias check-library-boundaries) (alias check-library-boundaries-sandbox)))
+
+(rule
+ (alias check-library-boundaries-sandbox)
+ (enabled_if (= %{context_name} default))
+ (deps test_check_library_boundaries_dune.py check_library_boundaries.py
+  test_check_library_boundaries.py dune)
+ (action (run python3 test_check_library_boundaries_dune.py)))
