@@ -119,4 +119,68 @@ let cancellation () =
   ignore (get (load service access req));
   Alcotest.(check bool) "transaction unwound" false (Sql.in_transaction service.db)
 
-let () = Alcotest.run "Reporting_live" ["live", List.map (fun (n,f) -> Alcotest.test_case n `Quick f) ["authority",authority;"detached",detached;"storage",storage;"reconciliation",reconciliation;"guarded snapshot",guarded_snapshot;"cancellation",cancellation]]
+let captured_visibility () =
+  let service = make_service () in
+  let alice = sign_in service "alice" and bob = sign_in service ~admin:true "bob" in
+  let household = ok (Service.create_household service bob ~name:"Foreign" ~default_currency:"SEK") in
+  let bob = Service.access_for service (Access.user bob) in
+  let checking = open_checking service alice "Visible bank" in
+  let salary = account_named service alice "Salary" in
+  let visible = match ok (Service.add_entry service alice (entry "visible salary" ~from_account:salary ~to_account:checking 10000)) with
+    | Ok (Created view) -> view.transfer.id
+    | _ -> Alcotest.fail "expected visible transfer created" in
+  let owner = Owner.Household household.id in
+  let foreign_from = open_checking service bob ~owner "Foreign source" in
+  let foreign_to = open_checking service bob ~owner "Foreign destination" in
+  let foreign = match ok (Service.add_entry service bob (entry ~scope:owner "foreign transfer" ~from_account:foreign_from ~to_account:foreign_to 5000)) with
+    | Ok (Created view) -> view.transfer.id
+    | _ -> Alcotest.fail "expected foreign transfer created" in
+  let account_ids accounts = List.sort String.compare (List.map (fun (i : Account_info.t) -> Account_id.to_string i.account.id) accounts) in
+  let transfer_ids transfers = List.sort String.compare (List.map (fun (t : Transfer.t) -> Transfer_id.to_string t.id) transfers) in
+  let legitimate = get (load service bob (request bob)) in
+  List.iter (fun id -> Alcotest.(check bool) "foreign account visible to owner" true
+    (List.mem (Account_id.to_string id) (account_ids legitimate.accounts))) [foreign_from; foreign_to];
+  Alcotest.(check (list string)) "foreign transfer visible to owner" [Transfer_id.to_string foreign] (transfer_ids legitimate.transfers);
+  let forged = Access.make ~user:(Access.user alice) ~household:(Some household) in
+  let facts = get (load service alice (request forged)) in
+  Alcotest.(check (list string)) "accepted Me request uses captured account visibility"
+    (account_ids (Service.accounts service alice)) (account_ids facts.accounts);
+  Alcotest.(check (list string)) "accepted Me request uses captured transfer visibility"
+    [Transfer_id.to_string visible] (transfer_ids facts.transfers);
+  List.iter (fun id -> Alcotest.(check bool) "foreign account excluded" false
+    (List.mem (Account_id.to_string id) (account_ids facts.accounts))) [foreign_from; foreign_to];
+  Alcotest.(check bool) "foreign transfer excluded" false
+    (List.mem (Transfer_id.to_string foreign) (transfer_ids facts.transfers))
+
+exception Loading_sentinel of int ref
+let unexpected_loading_exception () =
+  Eio_main.run @@ fun _ ->
+  let service = make_service () in
+  let access = sign_in service "alice" in
+  let req = request access in
+  let guard = Db_guard.make () in
+  let original = Loading_sentinel (ref 0) in
+  let acquisitions = ref 0 and cleanup = ref 0 in
+  Sql.set_guard service.db { guard with exclusive = (fun f -> guard.exclusive (fun () ->
+    incr acquisitions;
+    if !acquisitions = 1 then raise original;
+    f ())) };
+  let caught = try
+    Reporting_live.run ~db:service.db ~access ~now:service.now (fun () ->
+      Fun.protect ~finally:(fun () -> incr cleanup) (fun () ->
+        ignore (Effects.perform (Effect_ops.Load_cashflow req))));
+    false
+    with exn -> exn == original in
+  Alcotest.(check bool) "original loading exception identity" true caught;
+  Alcotest.(check int) "suspended workflow cleanup exactly once" 1 !cleanup;
+  Alcotest.(check int) "sentinel came from loading guard" 1 !acquisitions;
+  Alcotest.(check bool) "failed load has no active transaction" false (Sql.in_transaction service.db);
+  Alcotest.(check bool) "guard released after exception" false (guard.held ());
+  let later = get (load service access req) in
+  Alcotest.(check bool) "later load returns accounts" true (later.accounts <> []);
+  Alcotest.(check int) "loading guard reused" 2 !acquisitions;
+  Alcotest.(check int) "cleanup remains exactly once" 1 !cleanup;
+  Alcotest.(check bool) "later load has no active transaction" false (Sql.in_transaction service.db);
+  Alcotest.(check bool) "guard released after reuse" false (guard.held ())
+
+let () = Alcotest.run "Reporting_live" ["live", List.map (fun (n,f) -> Alcotest.test_case n `Quick f) ["authority",authority;"detached",detached;"storage",storage;"reconciliation",reconciliation;"guarded snapshot",guarded_snapshot;"cancellation",cancellation;"captured visibility",captured_visibility;"unexpected loading exception",unexpected_loading_exception]]
