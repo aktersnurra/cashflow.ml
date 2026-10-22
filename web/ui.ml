@@ -53,3 +53,23 @@ let event_value (event : #Js_of_ocaml.Dom_html.event Js_of_ocaml.Js.t) =
   let open Js_of_ocaml in
   Js.Opt.case event##.target (fun () -> "") (fun target ->
       Js.Opt.case (Dom_html.CoerceTo.input target) (fun () -> "") (fun input -> Js.to_string input##.value))
+
+let icon_button ~label ?(disabled = false) (icon : Feather_icon.t) effect =
+  Vdom.Node.button
+    ~attrs:
+      ([ Vdom.Attr.class_ "button icon-button"; Vdom.Attr.type_ "button"; Vdom.Attr.title label; Vdom.Attr.create "aria-label" label;
+         Vdom.Attr.on_click (fun _ -> effect) ]
+      @ if disabled then [ Vdom.Attr.disabled ] else [])
+    [ Feather_icon.svg ~size:(`Px 14) ~stroke:(`Name "currentColor") ~stroke_width:(`Px 2) icon ]
+
+(* ‹ October 2026 ›: step through pay cycles. Each side is (label, disabled, effect). *)
+let period ~label ~previous:(previous_label, previous_disabled, previous) ~next:(next_label, next_disabled, next) =
+  div ~cls:"period"
+    [ icon_button ~label:previous_label ~disabled:previous_disabled Chevron_left previous; span ~cls:"period-label" [ text label ];
+      icon_button ~label:next_label ~disabled:next_disabled Chevron_right next ]
+
+(* The first letter of a name, capitalised, for a tile: "Övrigt" is "Ö", not half of its first
+   byte pair. *)
+let initial name =
+  let open Js_of_ocaml in
+  Js.to_string ((Js.string name)##charAt 0)##toUpperCase

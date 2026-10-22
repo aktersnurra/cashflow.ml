@@ -143,16 +143,101 @@ let card_view ~(ctx : Ctx.t) (key : string Bonsai.t) (card : J.t Bonsai.t) graph
         ~actions:[ Ui.button (Msg.nav_insights locale) (navigate Route.Insights) ] ()
   | _ -> Vdom.Node.none
 
+(* Overview, in the order the questions come: which period and whose books, how much was saved,
+   where the money went, and then the few things that need you. Notices that only restate the
+   figures above (the overview and month-review cards) are left out; at most three remain. *)
+let figure_kinds = [ "overview"; "month_review" ]
+
 let page ~(ctx : Ctx.t) graph =
+  let offset, set_offset = Bonsai.state 0 graph in
+  let scope, set_scope = Bonsai.state "me" graph in
+  let summary = Remote.load ~name:"cashflow_summary" ~args:(let%arr scope in `Assoc [ ("scope", `String scope); ("cycles", `Int 13) ]) ~ctx graph in
+  let categories =
+    Remote.load ~name:"spending_by_category" ~args:(let%arr scope and offset in `Assoc [ ("scope", `String scope); ("cycle_offset", `Int offset) ]) ~ctx graph
+  in
   let feed = Remote.load ~name:"get_attention_feed" ~ctx graph in
   let cards =
     let%arr feed in
     match feed with
     | Loaded json ->
-        String.Map.of_alist_reduce ~f:(fun a _ -> a)
-          (List.mapi (J.list (J.field "cards" json)) ~f:(fun i card -> (Printf.sprintf "%03d:%s" i (J.str (J.field "key" card)), card)))
+        J.list (J.field "cards" json)
+        |> List.filter ~f:(fun card -> not (List.mem figure_kinds (J.str (J.field "kind" card)) ~equal:String.equal))
+        |> Fn.flip List.take 3
+        |> List.mapi ~f:(fun i card -> (Printf.sprintf "%03d:%s" i (J.str (J.field "key" card)), card))
+        |> String.Map.of_alist_reduce ~f:(fun a _ -> a)
     | Loading | Failed _ -> String.Map.empty
   in
   let views = Bonsai.assoc (module String) cards ~f:(fun key card graph -> card_view ~ctx key card graph) graph in
-  let%arr feed and views and locale = ctx.locale in
-  Ui.page ~title:(Msg.nav_home locale) [ Remote.view ~locale feed ~f:(fun _ -> Ui.div ~cls:"feed" (Map.data views)) ]
+  let%arr summary and categories and views and offset and set_offset and scope and set_scope and locale = ctx.locale and session = ctx.session
+  and navigate = ctx.navigate in
+  let cycles = match summary with Loaded json -> J.list (J.field "cycles" json) | Loading | Failed _ -> [] in
+  let code = match summary with Loaded json -> J.str ~default:"SEK" (J.field "currency" json) | Loading | Failed _ -> "SEK" in
+  let index = List.length cycles - 1 + offset in
+  let selected = List.nth cycles index in
+  let whole json = Fmt.whole locale ~code json in
+  let scopes =
+    if Ctx.has_household session then [ ("me", Msg.label_personal locale); ("household", Msg.label_household locale); ("family", Msg.label_family locale) ] else []
+  in
+  let head =
+    Ui.div ~cls:"page-head"
+      [ Vdom.Node.h1 [ Ui.text (Msg.nav_home locale) ];
+        Ui.div ~cls:"page-controls"
+          [ (if List.is_empty scopes then Vdom.Node.none
+             else Ui.div ~cls:"segmented" (List.map scopes ~f:(fun (value, label) -> Ui.button ~kind:(if String.equal value scope then "active" else "") label (set_scope value))));
+            Ui.period
+              ~label:(match selected with Some c -> Fmt.month_label locale (J.str (J.field "cycle" c)) | None -> "")
+              ~previous:(Msg.overview_previous locale, index <= 0 || offset <= -6, set_offset (offset - 1))
+              ~next:(Msg.overview_next locale, offset >= 0, set_offset (offset + 1)) ] ]
+  in
+  let figures (c : J.t) =
+    let savings = Fmt.to_float (J.field "savings" c) in
+    (* Compared only with earlier cycles that had income, and only when there are at least three:
+       a comparison with empty months says nothing. *)
+    let before = List.filteri cycles ~f:(fun i c -> i < index && i >= index - 6 && Float.(Fmt.to_float (J.field "income" c) > 0.)) in
+    let average = if List.is_empty before then 0. else List.sum (module Float) before ~f:(fun c -> Fmt.to_float (J.field "savings" c)) /. Float.of_int (List.length before) in
+    let trend =
+      if List.length before < 3 || Float.(abs average < 1.) then Vdom.Node.none
+      else
+        let change = (savings -. average) /. Float.abs average *. 100. in
+        Ui.div ~cls:("trend " ^ if Float.(change >= 0.) then "positive" else "negative")
+          [ Feather_icon.svg ~size:(`Px 16) ~stroke:(`Name "currentColor") ~stroke_width:(`Px 2) (if Float.(change >= 0.) then Trending_up else Trending_down);
+            Ui.span [ Ui.text (Msg.overview_vs_average ~change:(Fmt.percent ~signed:true locale change) locale) ] ]
+    in
+    let line label value = Ui.div ~cls:"figure-line" [ Ui.span ~cls:"figure-label" [ Ui.text label ]; Ui.span ~cls:"figure-value" [ Ui.text value ] ] in
+    Ui.div ~cls:"panel figures"
+      [ Ui.div ~cls:"figures-main"
+          [ Ui.div ~cls:"figure-label" [ Ui.text (Msg.overview_net_savings locale) ];
+            Ui.div ~cls:("hero " ^ Fmt.sign_tone (J.field "savings" c)) [ Ui.text (Fmt.signed_whole locale ~code (J.field "savings" c)) ];
+            trend;
+            (if J.bool (J.field "reconciled" c) then Vdom.Node.none else Ui.div ~cls:"provisional" [ Ui.text (Msg.label_provisional locale) ]) ];
+        Ui.div ~cls:"figures-side"
+          [ line (Msg.label_income locale) (whole (J.field "income" c));
+            line (Msg.overview_expenses locale) (whole (J.field "spending" c));
+            line (Msg.label_savings_rate locale)
+              (match J.str_opt (J.field "savings_rate" c) with
+              | Some rate -> Fmt.percent locale (Option.value (Float.of_string_opt (String.chop_suffix_if_exists rate ~suffix:"%")) ~default:0.)
+              | None -> "–") ] ]
+  in
+  let flow (c : J.t) categories_json =
+    let left, right = Flow.nodes ~locale ~code c categories_json in
+    let on_select id = navigate (Route.Transactions { offset; category = Some id }) in
+    Ui.div ~cls:"panel flow" (Vdom.Node.h2 [ Ui.text (Msg.overview_where locale) ] :: Flow.view ~on_select ~left ~right ())
+  in
+  let body =
+    match summary, selected with
+    | Failed _, _ | Loading, _ -> Remote.view ~locale summary ~f:(fun _ -> Vdom.Node.none)
+    | Loaded _, None -> Ui.empty (Msg.overview_empty locale)
+    | Loaded _, Some c when Float.(Fmt.to_float (J.field "income" c) = 0. && Fmt.to_float (J.field "spending" c) = 0.) ->
+        Ui.div ~cls:"panel empty-panel"
+          [ Ui.p (Msg.overview_empty locale); Ui.div ~cls:"actions" [ Ui.button ~kind:"primary" (Msg.nav_accounts locale) (navigate Route.Accounts) ] ]
+    | Loaded _, Some c -> Ui.div [ figures c; Remote.view ~locale categories ~f:(flow c) ]
+  in
+  let attention =
+    match Map.data views with
+    | [] -> Vdom.Node.none
+    | items ->
+        Ui.div ~cls:"attention"
+          [ Ui.div ~cls:"section-head" [ Vdom.Node.h2 [ Ui.text (Msg.overview_attention locale) ]; Ui.span ~cls:"count" [ Ui.text (Int.to_string (List.length items)) ] ];
+            Ui.div ~cls:"attention-list" items ]
+  in
+  Vdom.Node.main ~attrs:[ Vdom.Attr.class_ "page" ] [ head; body; attention ]

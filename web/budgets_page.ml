@@ -12,8 +12,9 @@ let page ~(ctx : Ctx.t) graph =
   let goals = Remote.load ~name:"savings_goals" ~args ~ctx graph in
   let accounts = Remote.load ~name:"list_accounts" ~ctx graph in
   let editing, set_editing = Bonsai.state Not_editing graph in
-  let%arr status and goals and accounts and scope and set_scope and editing and set_editing and locale = ctx.locale and changed = ctx.changed
-  and notify = ctx.notify and session = ctx.session in
+  let showing_goals, set_showing_goals = Bonsai.state false graph in
+  let%arr status and goals and accounts and scope and set_scope and editing and set_editing and showing_goals and set_showing_goals
+  and locale = ctx.locale and changed = ctx.changed and notify = ctx.notify and session = ctx.session in
   let code json = J.str ~default:"SEK" (J.field "currency" json) in
   let save name args =
     match%bind.Effect Api.run name (`Assoc (("scope", `String scope) :: args)) with
@@ -41,24 +42,27 @@ let page ~(ctx : Ctx.t) graph =
         [ Ui.button ~kind:"primary" (Msg.action_save locale) (save "set_budget" [ ("category_id", `String category); ("monthly_amount", `String amount); ("rollover", `Bool rollover) ]);
           Ui.button (Msg.action_cancel locale) (set_editing Not_editing) ] ()
   in
-  let line json l =
+  (* One row per budgeted category: spent (with a bar against the budget, red once over),
+     budget including anything carried over, and what remains. A click opens the editor. *)
+  let line json i l =
     let c = code json in
+    let whole v = Fmt.whole locale ~code:c (`String (Float.to_string v)) in
     let spent = Fmt.to_float (J.field "spent" l) and budget = Fmt.to_float (J.field "budget" l) +. Fmt.to_float (J.field "carried" l) in
-    let expected = Fmt.to_float (J.field "expected_by_now" l) in
     let left = budget -. spent in
-    let money_of f = Mf2_runtime.{ minor = Int64.of_float (Float.round (Float.abs f *. 100.)); scale = 2; code = c } in
     let category = J.str (J.path [ "category"; "id" ] l) and name = J.str (J.path [ "category"; "name" ] l) in
+    let tone = match J.str (J.field "status" l) with "over_budget" -> "over" | "ahead_of_pace" -> "ahead" | _ -> "on-pace" in
     match editing with
     | Budget b when String.equal b.category category -> budget_form ~category ~name ~amount:b.amount ~rollover:b.rollover
     | _ ->
         Vdom.Node.div
-          ~attrs:[ Vdom.Attr.class_ "row clickable"; Vdom.Attr.on_click (fun _ -> set_editing (Budget { category; amount = J.str (J.field "budget" l); rollover = J.bool (J.field "rollover" l) })) ]
-          [ Ui.div
-              [ Ui.div ~cls:"row-title" [ Ui.text name ];
-                Ui.meter ~marker:(if Float.(budget > 0.) then Some (expected /. budget) else None) (if Float.(budget > 0.) then spent /. budget else 0.);
-                Ui.div ~cls:"row-sub" [ Ui.text (Fmt.format_money locale ~code:c (J.field "spent" l) ^ " / " ^ Mf2_runtime.format_money locale (money_of budget)) ] ];
-            Ui.div ~cls:("amount " ^ if Float.(left < 0.) then "negative" else "")
-              [ Ui.text (if Float.(left < 0.) then Msg.label_over ~over:(money_of left) locale else Msg.label_left ~left:(money_of left) locale) ] ]
+          ~attrs:[ Vdom.Attr.class_ "row clickable budget-row"; Vdom.Attr.on_click (fun _ -> set_editing (Budget { category; amount = J.str (J.field "budget" l); rollover = J.bool (J.field "rollover" l) })) ]
+          [ Ui.div ~cls:"category-cell" [ Ui.span ~cls:(sprintf "tile c%d" ((i % 5) + 1)) [ Ui.text (Ui.initial name) ]; Ui.span ~cls:"row-title" [ Ui.text name ] ];
+            Ui.div ~cls:"spent-cell"
+              [ Ui.div ~cls:"amount" [ Ui.text (whole spent) ];
+                Ui.div ~cls:("bar " ^ tone)
+                  [ Vdom.Node.div ~attrs:[ Vdom.Attr.class_ "fill"; Vdom.Attr.style (Css_gen.width (`Percent (Percent.of_percentage (Float.clamp_exn (if Float.(budget > 0.) then spent /. budget *. 100. else 0.) ~min:0. ~max:100.)))) ] [] ] ];
+            Ui.div ~cls:"amount" [ Ui.text (whole budget) ];
+            Ui.div ~cls:("amount " ^ if Float.(left < 0.) then "negative" else "positive") [ Ui.text (whole left) ] ]
   in
   let goal json g =
     let c = code json in
@@ -74,14 +78,30 @@ let page ~(ctx : Ctx.t) graph =
         Ui.div ~cls:(if J.bool (J.field "on_track" g) then "positive" else "warning") [ Ui.text (if J.bool (J.field "on_track" g) then "✓" else "!") ] ]
   in
   let scopes = [ ("me", Msg.label_personal locale) ] @ if Ctx.has_household session then [ ("household", Msg.label_household locale) ] else [] in
-  Ui.page ~title:(Msg.budgets_title locale)
-    [ (if List.length scopes < 2 then Vdom.Node.none else Ui.div ~cls:"segmented"
-        (List.map scopes ~f:(fun (value, label) -> Ui.button ~kind:(if String.equal value scope then "active" else "") label (set_scope value))));
-      Remote.view ~locale status ~f:(fun json ->
+  let tab_button active label effect =
+    Vdom.Node.button ~attrs:[ Vdom.Attr.class_ ("tab-button" ^ if active then " active" else ""); Vdom.Attr.type_ "button"; Vdom.Attr.on_click (fun _ -> effect) ] [ Ui.text label ]
+  in
+  let head =
+    Ui.div ~cls:"page-head"
+      [ Ui.div [ Vdom.Node.h1 [ Ui.text (Msg.budgets_title locale) ]; Ui.div ~cls:"subtitle" [ Ui.text (Msg.budgets_subtitle locale) ] ];
+        Ui.div ~cls:"page-controls"
+          [ (if List.length scopes < 2 then Vdom.Node.none
+             else Ui.div ~cls:"segmented" (List.map scopes ~f:(fun (value, label) -> Ui.button ~kind:(if String.equal value scope then "active" else "") label (set_scope value))));
+            (match status with
+            | Loaded json -> Ui.div ~cls:"period" [ Ui.span ~cls:"period-label" [ Ui.text (Fmt.month_label locale (J.str (J.path [ "cycle"; "cycle" ] json))) ] ]
+            | _ -> Vdom.Node.none) ] ]
+  in
+  let tabs = Ui.div ~cls:"tabs" [ tab_button (not showing_goals) (Msg.budgets_tab_categories locale) (set_showing_goals false); tab_button showing_goals (Msg.label_goals locale) (set_showing_goals true) ] in
+  let categories =
+    [ Remote.view ~locale status ~f:(fun json ->
           let lines = J.list (J.field "lines" json) in
-          Ui.div
-            [ Ui.div ~cls:"eyebrow" [ Ui.text (Fmt.month_label locale (J.str (J.path [ "cycle"; "cycle" ] json))) ];
-              (if List.is_empty lines then Ui.empty (Msg.budgets_empty locale) else Ui.div ~cls:"list" (List.map lines ~f:(line json))) ]);
+          if List.is_empty lines then Ui.empty (Msg.budgets_empty locale)
+          else
+            Ui.div ~cls:"table budget-table"
+              (Ui.div ~cls:"table-head budget-row"
+                 [ Ui.span [ Ui.text (Msg.budgets_col_category locale) ]; Ui.span ~cls:"num" [ Ui.text (Msg.budgets_col_spent locale) ];
+                   Ui.span ~cls:"num" [ Ui.text (Msg.budgets_col_budget locale) ]; Ui.span ~cls:"num" [ Ui.text (Msg.budgets_col_remaining locale) ] ]
+              :: List.mapi lines ~f:(line json)));
       (match editing, unbudgeted with
       | Budget b, _ when not (List.mem budgeted b.category ~equal:String.equal) ->
           let name = Option.value_map (List.find unbudgeted ~f:(fun a -> String.equal a.id b.category)) ~default:"" ~f:(fun a -> a.name) in
@@ -92,9 +112,10 @@ let page ~(ctx : Ctx.t) graph =
             [ Ui.div ~cls:"section-title" [ Ui.text (Msg.budgets_no_budget locale) ];
               Ui.div ~cls:"chips"
                 (List.map unbudgeted ~f:(fun a ->
-                     Vdom.Node.span ~attrs:[ Vdom.Attr.class_ "chip"; Vdom.Attr.on_click (fun _ -> set_editing (Budget { category = a.id; amount = ""; rollover = false })) ] [ Ui.text a.name ])) ]);
-      Ui.div ~cls:"section-title" [ Ui.text (Msg.label_goals locale) ];
-      Remote.view ~locale goals ~f:(fun json ->
+                     Vdom.Node.span ~attrs:[ Vdom.Attr.class_ "chip"; Vdom.Attr.on_click (fun _ -> set_editing (Budget { category = a.id; amount = ""; rollover = false })) ] [ Ui.text a.name ])) ]) ]
+  in
+  let goals_view =
+    [ Remote.view ~locale goals ~f:(fun json ->
           match J.list (J.field "goals" json) with [] -> Ui.muted (Msg.goals_empty locale) | gs -> Ui.div ~cls:"list" (List.map gs ~f:(goal json)));
       (match editing with
       | Goal g ->
@@ -114,3 +135,5 @@ let page ~(ctx : Ctx.t) graph =
                      @ if String.is_empty g.monthly then [] else [ ("monthly_amount", `String g.monthly) ]));
                 Ui.button (Msg.action_cancel locale) (set_editing Not_editing) ] ()
       | _ -> Ui.div ~cls:"actions" [ Ui.button (Msg.action_new_goal locale) (set_editing (Goal { name = ""; target = ""; date = ""; monthly = "" } : editing)) ]) ]
+  in
+  Vdom.Node.main ~attrs:[ Vdom.Attr.class_ "page" ] ([ head; tabs ] @ if showing_goals then goals_view else categories)

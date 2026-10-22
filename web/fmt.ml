@@ -37,3 +37,14 @@ let month_label locale cycle =
 
 (* Saving is good news; dipping into savings isn't. *)
 let sign_tone amount = if Float.is_negative (to_float amount) then "negative" else "positive"
+
+(* Overview figures in whole currency units: "18 420 kr", not "18 420,00 kr". *)
+let whole locale ~code json =
+  Mf2_runtime.format_money locale { minor = Int64.of_float (Float.round_nearest (to_float json)); scale = 0; code }
+
+let signed_whole locale ~code json = (if Float.is_positive (to_float json) then "+" else "") ^ whole locale ~code json
+
+(* Whole percent, spaced the Swedish way where that applies: "28 %" / "28%". *)
+let percent ?(signed = false) locale x =
+  let n = Float.iround_nearest_exn x in
+  (if signed && n > 0 then "+" else "") ^ Int.to_string n ^ if String.is_prefix locale ~prefix:"sv" then " %" else "%"

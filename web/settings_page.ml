@@ -15,7 +15,8 @@ let sign_out = Effect.of_deferred_thunk Api.sign_out
 
 let page ~(ctx : Ctx.t) graph =
   let edits, set_edits = Bonsai.state None graph in
-  let%arr edits and set_edits and session = ctx.session and locale = ctx.locale and changed = ctx.changed and notify = ctx.notify in
+  let%arr edits and set_edits and session = ctx.session and locale = ctx.locale and changed = ctx.changed and notify = ctx.notify and theme = ctx.theme
+  and set_theme = ctx.set_theme in
   let draft = Option.value edits ~default:(draft_of_session session) in
   let set f = set_edits (Some (f draft)) in
   let save =
@@ -31,19 +32,37 @@ let page ~(ctx : Ctx.t) graph =
   in
   let timezones = List.map (J.list (J.field "timezones" session)) ~f:(fun t -> (J.str t, J.str t)) in
   let days = List.init 28 ~f:(fun i -> (Int.to_string (i + 1), Int.to_string (i + 1))) @ [ ("last", Msg.label_cycle_last_banking_day locale) ] in
-  Ui.page ~title:(Msg.settings_title locale)
-    [ Ui.card ~title:(J.str (J.path [ "user"; "display_name" ] session)) ~eyebrow:(J.str (J.path [ "user"; "email" ] session))
-        ~body:
-          [ Ui.div ~cls:"form-row"
-              [ Ui.field (Msg.label_language locale) (Ui.select ~value:draft.locale ~options:[ ("en", "English"); ("sv", "Svenska") ] ~on_change:(fun v -> set (fun d -> { d with locale = v })));
-                Ui.field (Msg.label_timezone locale) (Ui.select ~value:draft.timezone ~options:timezones ~on_change:(fun v -> set (fun d -> { d with timezone = v })));
-                Ui.field (Msg.label_currency locale) (Ui.input ~value:draft.currency ~on_input:(fun v -> set (fun d -> { d with currency = String.uppercase v })) ()) ];
-            Ui.div ~cls:"form-row"
-              [ Ui.field (Msg.label_cycle_start locale) (Ui.select ~value:draft.start ~options:days ~on_change:(fun v -> set (fun d -> { d with start = v })));
-                Ui.field (Msg.label_cycle_adjust locale)
-                  (Ui.select ~value:draft.adjustment
-                     ~options:[ ("previous_banking_day", Msg.label_cycle_previous locale); ("next_banking_day", Msg.label_cycle_next locale); ("none", Msg.label_cycle_none locale) ]
-                     ~on_change:(fun v -> set (fun d -> { d with adjustment = v }))) ] ]
-        ~actions:[ Ui.button ~kind:"primary" ~disabled:(Option.is_none edits) (Msg.action_save locale) save ] ();
-      Ui.div ~cls:"actions"
-        [ Ui.button ~kind:"danger" (Msg.action_sign_out locale) (let%bind.Effect () = sign_out in Bonsai_web.Effect.reload_page) ] ]
+  (* One setting per row: what it is (and what it affects) on the left, its control on the right. *)
+  let setting ?hint label control =
+    Ui.div ~cls:"row setting-row"
+      [ Ui.div [ Ui.div ~cls:"row-title" [ Ui.text label ]; (match hint with Some h -> Ui.div ~cls:"row-sub" [ Ui.text h ] | None -> Vdom.Node.none) ];
+        Ui.div ~cls:"setting-control" [ control ] ]
+  in
+  let section title rows = Ui.div [ Ui.div ~cls:"section-head" [ Vdom.Node.h2 [ Ui.text title ] ]; Ui.div ~cls:"table" rows ] in
+  let name = J.str (J.path [ "user"; "display_name" ] session) in
+  Vdom.Node.main ~attrs:[ Vdom.Attr.class_ "page" ]
+    [ Ui.div ~cls:"page-head" [ Ui.div [ Vdom.Node.h1 [ Ui.text (Msg.settings_title locale) ]; Ui.div ~cls:"subtitle" [ Ui.text (Msg.settings_subtitle locale) ] ] ];
+      section (Msg.settings_account locale)
+        [ Ui.div ~cls:"row"
+            [ Ui.div ~cls:"category-cell"
+                [ Ui.span ~cls:"tile" [ Ui.text (Ui.initial name) ];
+                  Ui.div [ Ui.div ~cls:"row-title" [ Ui.text name ]; Ui.div ~cls:"row-sub" [ Ui.text (J.str (J.path [ "user"; "email" ] session)) ] ] ];
+              Ui.button (Msg.action_sign_out locale) (let%bind.Effect () = sign_out in Bonsai_web.Effect.reload_page) ] ];
+      section (Msg.settings_general locale)
+        [ setting (Msg.label_language locale) (Ui.select ~value:draft.locale ~options:[ ("en", "English"); ("sv", "Svenska") ] ~on_change:(fun v -> set (fun d -> { d with locale = v })));
+          setting (Msg.label_timezone locale) (Ui.select ~value:draft.timezone ~options:timezones ~on_change:(fun v -> set (fun d -> { d with timezone = v })));
+          setting ~hint:(Msg.settings_currency_hint locale) (Msg.label_currency locale)
+            (Ui.input ~value:draft.currency ~on_input:(fun v -> set (fun d -> { d with currency = String.uppercase v })) ());
+          setting ~hint:(Msg.settings_cycle_hint locale) (Msg.label_cycle_start locale)
+            (Ui.select ~value:draft.start ~options:days ~on_change:(fun v -> set (fun d -> { d with start = v })));
+          setting (Msg.label_cycle_adjust locale)
+            (Ui.select ~value:draft.adjustment
+               ~options:[ ("previous_banking_day", Msg.label_cycle_previous locale); ("next_banking_day", Msg.label_cycle_next locale); ("none", Msg.label_cycle_none locale) ]
+               ~on_change:(fun v -> set (fun d -> { d with adjustment = v })));
+          Ui.div ~cls:"row table-foot" [ Ui.button ~kind:"primary" ~disabled:(Option.is_none edits) (Msg.action_save locale) save ] ];
+      (* Applies at once and stays on this device, so it needs no Save. *)
+      section (Msg.settings_appearance locale)
+        [ setting ~hint:(Msg.settings_theme_hint locale) (Msg.settings_theme locale)
+            (Ui.div ~cls:"segmented"
+               (List.map Theme.[ (System, Msg.theme_system locale); (Light, Msg.theme_light locale); (Dark, Msg.theme_dark locale) ] ~f:(fun (t, label) ->
+                    Ui.button ~kind:(if Theme.equal t theme then "active" else "") label (set_theme t)))) ] ]

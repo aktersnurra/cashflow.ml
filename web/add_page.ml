@@ -35,12 +35,15 @@ let page ~(ctx : Ctx.t) graph =
     | Ok _ -> Effect.Many [ set_draft None; changed; notify (if pending then Msg.add_saved_pending locale else Msg.add_saved locale); navigate Route.Home ]
     | Error message -> notify message
   in
-  Ui.page ~title:(Msg.add_title locale)
-    [ Ui.field (Msg.label_amount locale) (Ui.input ~type_:"text" ~value:d.amount ~placeholder:"0,00" ~on_input:(fun v -> set (fun d -> { d with amount = v })) ());
-      Ui.field (Msg.label_description locale) (Ui.input ~value:d.description ~on_input:(fun v -> set (fun d -> { d with description = v })) ());
-      Ui.div ~cls:"form-row"
-        [ Ui.field (Msg.label_from locale) (Ui.select ~value:d.from_account ~options:(options sources) ~on_change:(fun v -> set (fun d -> { d with from_account = v })));
-          Ui.field (Msg.label_to locale) (Ui.select ~value:d.to_account ~options:(options destinations) ~on_change:(fun v -> set (fun d -> { d with to_account = v })));
-          Ui.field (Msg.label_date locale) (Ui.input ~type_:"date" ~value:d.date ~on_input:(fun v -> set (fun d -> { d with date = v })) ()) ];
-      (if pending then Ui.muted (Msg.add_pending_note locale) else Vdom.Node.none);
-      Ui.div ~cls:"actions" [ Ui.button ~kind:"primary" ~disabled:(String.is_empty (String.strip d.amount)) (Msg.action_add locale) save ] ]
+  Vdom.Node.main ~attrs:[ Vdom.Attr.class_ "page" ]
+    [ Ui.div ~cls:"page-head" [ Ui.div [ Vdom.Node.h1 [ Ui.text (Msg.add_title locale) ]; Ui.div ~cls:"subtitle" [ Ui.text (Msg.add_subtitle locale) ] ] ];
+      Ui.div ~cls:"panel add-form"
+        [ Ui.div ~cls:"amount-field"
+            [ Ui.field (Msg.label_amount locale) (Ui.input ~type_:"text" ~value:d.amount ~placeholder:"0,00" ~on_input:(fun v -> set (fun d -> { d with amount = v })) ()) ];
+          Ui.field (Msg.label_description locale) (Ui.input ~value:d.description ~on_input:(fun v -> set (fun d -> { d with description = v })) ());
+          Ui.div ~cls:"form-row"
+            [ Ui.field (Msg.label_from locale) (Ui.select ~value:d.from_account ~options:(options sources) ~on_change:(fun v -> set (fun d -> { d with from_account = v })));
+              Ui.field (Msg.label_to locale) (Ui.select ~value:d.to_account ~options:(options destinations) ~on_change:(fun v -> set (fun d -> { d with to_account = v })));
+              Ui.field (Msg.label_date locale) (Ui.input ~type_:"date" ~value:d.date ~on_input:(fun v -> set (fun d -> { d with date = v })) ()) ];
+          (if pending then Ui.div ~cls:"provisional" [ Ui.text (Msg.add_pending_note locale) ] else Vdom.Node.none);
+          Ui.div ~cls:"actions" [ Ui.button ~kind:"primary" ~disabled:(String.is_empty (String.strip d.amount)) (Msg.action_add locale) save ] ] ]

@@ -24,7 +24,7 @@ fs.writeFileSync(out + '/export.csv', csv);
   };
   await run('desktop', { width: 1280, height: 860 }, async page => {
     await page.goto(base + '/');
-    await page.waitForSelector('.feed .card', { timeout: 15000 });
+    await page.waitForSelector('.page .panel, .page .empty', { timeout: 15000 });
     await page.screenshot({ path: out + '/01-home-empty.png' });
     // Open a checking account through the form.
     await page.click('.sidebar >> text=Accounts');
@@ -56,24 +56,24 @@ fs.writeFileSync(out + '/export.csv', csv);
     await page.waitForFunction(() => document.activeElement && document.activeElement.matches('.palette input'));
     await page.keyboard.type('Insights');
     await page.keyboard.press('Enter');
-    await page.waitForSelector('.chart', { timeout: 10000 });
+    await page.waitForSelector('.insight, .page .empty', { timeout: 10000 });
     await page.screenshot({ path: out + '/07-insights.png', fullPage: true });
-    for (const [label, file] of [['Budgets', '08-budgets'], ['Home', '09-home'], ['Household', '11-household'], ['Settings', '10-settings']]) {
+    for (const [label, file] of [['Budgets', '08-budgets'], ['Overview', '09-home'], ['Household', '11-household'], ['Settings', '10-settings']]) {
       await page.click(`.sidebar >> text=${label}`);
       await page.waitForTimeout(800);
       await page.screenshot({ path: `${out}/${file}.png`, fullPage: true });
     }
     // Switch to Swedish in Settings; the whole UI follows.
-    await page.selectOption('.card select >> nth=0', 'sv');
-    await page.click('.card .button.primary');
+    await page.selectOption('.setting-row select >> nth=0', 'sv');
+    await page.click('.table-foot .button.primary');
     await page.waitForSelector('.sidebar >> text=Konton', { timeout: 10000 });
-    await page.click('.sidebar >> text=Hem');
+    await page.click('.sidebar >> text=Översikt');
     await page.waitForTimeout(800);
     await page.screenshot({ path: out + '/12-home-sv.png', fullPage: true });
   });
   await run('phone', { width: 390, height: 844 }, async page => {
     await page.goto(base + '/');
-    await page.waitForSelector('.feed .card', { timeout: 15000 });
+    await page.waitForSelector('.page .panel, .page .empty', { timeout: 15000 });
     await page.screenshot({ path: out + '/20-phone-home.png' });
     await page.click('.tabbar >> text=Lägg till');
     await page.waitForTimeout(800);
