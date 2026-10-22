@@ -415,12 +415,14 @@ How much cash there will be, day by day, over the next 1, 3 or 6 months. *Cash* 
 
 - **Series** (`Cashflow_core.Series`): every regular way money enters or leaves a cash account, found in the last 400 days: bills (the recurring-payments detector), income (salary, expected on the next payday when it lands near one), and transfers to or from any other account (savings sweeps, the card bill at the average of the last three, amortisation, the household transfer). A series more than one interval overdue is treated as stopped; one due since the account's last import counts as due today.
 - **Household contribution**: the contribution plan (§4.5) replaces the detected household transfer, outgoing for a member, incoming for the household.
-- **Usual spending**: what each cash account paid for over the last three complete cycles, less the series, spread evenly over the days (over at least a whole cycle when there is less history).
+- **Usual spending**: what each cash account paid for over the last three complete cycles, less the series, spread evenly over the days (over at least a whole cycle when there is less history). With more than a year of history it follows the season: each calendar month is scaled by how it compared with the average month last year, shrunk halfway towards normal and kept between half and double, since one past December is one sample.
 - **Goals**: each goal's monthly amount is set aside on payday until its target. It is shown as a band under the line and doesn't change cash.
 - **Projection** (`Cashflow_core.Forecast`): a pure day-by-day run of each cash account. It returns the line, each account's lowest point and first day below zero, the dated payments with where each comes from, and the assumptions in words.
 - **What-if**: leave out series, add one-off amounts, or follow the budgets. It is drawn as a second line beside the unchanged baseline.
 
-The forecast is deterministic and says so: no range is shown, because nothing models one yet. A range from how far past forecasts were off is a possible later step. Every account the Overview's shortfall check flags must also go below zero in the forecast by payday, unless income arrives first; a property test checks this.
+- **Range**: the same projection is made from a start every week over the last year, as it would have been made that morning, and compared with the cash that followed. The range for a day ahead is the line plus the 10th and 90th percentile of those errors at that distance: 8 in 10 past forecasts landed inside it. It reaches only as far as there are 10 errors to measure and is never extrapolated; the chance of staying above zero is the share of whole past error paths that would keep the line at or above zero. Without enough history there is no range, and the page says so.
+
+The line itself is deterministic. Every account the Overview's shortfall check flags must also go below zero in the forecast by payday, unless income arrives first; a property test checks this.
 
 ## 11. Web UI
 

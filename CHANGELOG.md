@@ -9,7 +9,11 @@
   point, what's left before the next salary, what's due before then and where the line ends.
   Below it are accounts that would go below zero, the upcoming payments with where each comes
   from, what-ifs (leave a payment out, add a one-off amount, keep to the budgets) drawn beside
-  the baseline, and the assumptions in words. It is deterministic and shows no range.
+  the baseline, and the assumptions in words.
+- An 80% range around the forecast, measured by backtesting the same projection weekly over the
+  last year (8 in 10 past forecasts landed inside it), with the chance of staying above zero.
+  With more than a year of history, usual spending follows the season (a pricier December, a
+  cheaper holiday month).
 - Recurring income and transfers are now found as well as bills: salary on payday, savings
   sweeps, the card bill, the household transfer (`Cashflow_core.Series`). A bill is projected at
   its new price once two payments agree.
