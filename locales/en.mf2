@@ -401,3 +401,15 @@ forecast.money_out = Money out
 forecast.money_in = Money in
 forecast.overdraw_spending = Lowest {$amount :currency} on {$date :date}, from usual spending.
 action.see_forecast = See forecast
+forecast.legend_projected = Projected balance
+forecast.legend_range = 80% range
+forecast.range_note = 8 in 10 past forecasts landed inside the band.
+forecast.chance = Chance above zero
+forecast.based_on =
+  .input {$count :integer}
+  .match $count
+  one {{from 1 past forecast}}
+  * {{from {$count} past forecasts}}
+forecast.a.range = The range comes from {$count} past forecasts since {$date :date}, compared with what happened.
+forecast.a.no_range = There isn't enough history for a range yet: it comes from comparing past forecasts with what happened.
+forecast.a.seasonal = Usual spending in {$month} is adjusted {$percent}, from how {$last} went.

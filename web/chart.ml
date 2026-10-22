@@ -239,10 +239,11 @@ let grouped_bars ~(series : string list) ~(tick : float -> string) (periods : (s
 
 (* The forecast: cash per day, oldest first, [today] the index of today. The line is solid up to
    [solid] (as far as the imports reach) and dashed after it; [scenario] is a what-if line from
-   today on, beside it, and [earmarked] the band under the line that is set aside for goals. A
+   today on, beside it, [range] the band around the line from today on (low, high), and
+   [earmarked] the band under the line that is set aside for goals. A
    Today rule, red points where an account goes below zero, paydays as ticks on the axis and month
    names underneath. Hovering or tapping a day calls [on_hover], and [hover] draws its rule. *)
-let projection ~(cash : float list) ~(earmarked : float list) ~(scenario : float list option) ~solid ~today ~(overdraws : int list)
+let projection ~(cash : float list) ~(earmarked : float list) ~(scenario : float list option) ~(range : (float * float) list) ~solid ~today ~(overdraws : int list)
     ~(months : (int * string) list) ~(paydays : int list) ~(tick : float -> string) ~today_label ~what_if_label ~hover ~on_hover =
   let n = List.length cash in
   if n < 2 then Vdom.Node.none
@@ -251,8 +252,9 @@ let projection ~(cash : float list) ~(earmarked : float list) ~(scenario : float
     let cash = Array.of_list cash and earmarked = Array.of_list earmarked in
     let what_if = Option.map scenario ~f:Array.of_list in
     let free i = cash.(i) -. (if i < Array.length earmarked then earmarked.(i) else 0.) in
+    let spread = List.filteri range ~f:(fun k _ -> today + k < n) in
     let values =
-      Array.to_list cash @ List.init n ~f:free @ Option.value_map what_if ~default:[] ~f:Array.to_list
+      Array.to_list cash @ List.init n ~f:free @ Option.value_map what_if ~default:[] ~f:Array.to_list @ List.concat_map spread ~f:(fun (lo, hi) -> [ lo; hi ])
     in
     let lo, hi, step = scale (List.fold values ~init:Float.infinity ~f:Float.min) (List.fold values ~init:Float.neg_infinity ~f:Float.max) in
     let hi = if Float.(hi <= lo) then lo +. step else hi in
@@ -276,6 +278,14 @@ let projection ~(cash : float list) ~(earmarked : float list) ~(scenario : float
              text ~x:(left -. 8.) ~y:(y t +. 4.) ~anchor:"end" ~c:"axis-label" (tick t) ])
       @ List.map months ~f:(fun (i, label) -> text ~x:(x i) ~y:(height -. 6.) ~anchor:"middle" ~c:"axis-label" label)
       @ List.map paydays ~f:(fun i -> S.Node.line ~attrs:[ S.Attr.x1 (x i); S.Attr.x2 (x i); S.Attr.y1 (height -. bottom); S.Attr.y2 (height -. bottom +. 5.); cls "payday" ] [])
+      @ (match spread with
+        | [] | [ _ ] -> []
+        | _ ->
+            [ S.Node.polygon
+                ~attrs:
+                  [ S.Attr.points (List.mapi spread ~f:(fun k (_, hi) -> (x (today + k), y hi)) @ List.rev (List.mapi spread ~f:(fun k (lo, _) -> (x (today + k), y lo))));
+                    cls "range" ]
+                [] ])
       @ (match banded with
         | [] -> []
         | _ -> [ S.Node.polygon ~attrs:[ S.Attr.points (List.map banded ~f:(fun i -> (x i, y cash.(i))) @ List.rev_map banded ~f:(fun i -> (x i, y (free i)))); cls "band" ] [] ])

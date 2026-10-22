@@ -90,9 +90,17 @@ let page ~(ctx : Ctx.t) graph =
       Ui.div ~cls:"kpis forecast-kpis"
         [ kpi ~tone:(if Float.(D.value f.lowest < 0.) then "negative" else "") (Msg.forecast_lowest locale) (whole f.lowest) (Msg.forecast_on ~date:(date f.lowest_date) locale);
           before_salary;
-          kpi
-            (if Option.is_some salary then Msg.forecast_due_before_salary locale else Msg.forecast_due_next_month locale)
-            (whole_float (Float.abs due_total)) (Msg.forecast_payments ~count:(List.length due) locale);
+          (match f.chance_positive with
+          | Some p ->
+              let forecasts = List.find_map f.assumptions ~f:(fun a -> if String.equal (J.str (J.field "kind" a)) "range_from" then Some (J.int (J.field "forecasts" a)) else None) in
+              kpi
+                ~tone:(if p < 80 then "negative" else "")
+                (Msg.forecast_chance locale) (Fmt.percent locale (Float.of_int p))
+                (Option.value_map forecasts ~default:"" ~f:(fun count -> Msg.forecast_based_on ~count locale))
+          | None ->
+              kpi
+                (if Option.is_some salary then Msg.forecast_due_before_salary locale else Msg.forecast_due_next_month locale)
+                (whole_float (Float.abs due_total)) (Msg.forecast_payments ~count:(List.length due) locale));
           kpi (Msg.forecast_end ~date:(date f.horizon_end) locale) (whole last_point.cash) "" ]
     in
     (* The chart, and under it one line: what the hovered day holds, or what the line is. *)
@@ -112,21 +120,31 @@ let page ~(ctx : Ctx.t) graph =
       | Some i when i < n ->
           let p = List.nth_exn timeline i in
           let on_day = List.filter f.items ~f:(fun it -> String.equal it.date p.date) in
+          let spread =
+            match List.find f.range ~f:(fun (d, _, _) -> String.equal d p.date) with
+            | Some (_, low, high) -> Ui.span ~cls:"muted num" [ Ui.text (sprintf "(%s – %s)" (whole low) (whole high)) ]
+            | None -> Vdom.Node.none
+          in
           Ui.div ~cls:"projection-readout"
-            [ Ui.span ~cls:"readout-date" [ Ui.text (nice_date p.date) ]; Ui.span ~cls:"amount" [ Ui.text (whole p.cash) ];
+            [ Ui.span ~cls:"readout-date" [ Ui.text (nice_date p.date) ]; Ui.span ~cls:"amount" [ Ui.text (whole p.cash) ]; spread;
               Ui.span ~cls:"muted" [ Ui.text (String.concat ~sep:", " (List.map on_day ~f:(fun it -> item_name it ^ " " ^ whole it.amount))) ] ]
-      | _ -> Ui.div ~cls:"projection-readout muted" [ Ui.text (Msg.forecast_note locale) ]
+      | _ -> Ui.div ~cls:"projection-readout muted" [ Ui.text (if List.is_empty f.range then Msg.forecast_note locale else Msg.forecast_range_note locale) ]
     in
     let chart =
       Ui.div ~cls:"panel"
         [ kpis;
           Chart.projection ~cash:(List.init n ~f:cash_at)
-            ~earmarked:(List.map timeline ~f:(fun p -> D.value p.earmarked)) ~scenario ~solid ~today:today_index ~overdraws ~months:months_axis ~paydays
+            ~earmarked:(List.map timeline ~f:(fun p -> D.value p.earmarked)) ~scenario
+            ~range:(List.map f.range ~f:(fun (_, low, high) -> (D.value low, D.value high))) ~solid ~today:today_index ~overdraws ~months:months_axis ~paydays
             ~tick:Cashflow_page.short ~today_label:(Msg.forecast_today locale) ~what_if_label:(Msg.forecast_what_if locale) ~hover ~on_hover:set_hover;
           readout;
-          (if List.exists f.baseline ~f:(fun p -> Float.(D.value p.earmarked > 0.)) then
-             Ui.div ~cls:"legend" [ Ui.span [ Ui.span ~cls:"dot band-dot" []; Ui.text (Msg.forecast_set_aside locale) ] ]
-           else Vdom.Node.none) ]
+          Ui.div ~cls:"legend"
+            ([ Ui.span [ Ui.span ~cls:"dot projected-dot" []; Ui.text (Msg.forecast_legend_projected locale) ] ]
+            @ (if List.is_empty f.range then [] else [ Ui.span [ Ui.span ~cls:"dot range-dot" []; Ui.text (Msg.forecast_legend_range locale) ] ])
+            @
+            if List.exists f.baseline ~f:(fun p -> Float.(D.value p.earmarked > 0.)) then
+              [ Ui.span [ Ui.span ~cls:"dot band-dot" []; Ui.text (Msg.forecast_set_aside locale) ] ]
+            else []) ]
     in
     (* Accounts that go below zero, with the payments that take them there. *)
     let overdraw =
@@ -274,6 +292,13 @@ let page ~(ctx : Ctx.t) graph =
       | "short_history" -> (
           match J.int (J.field "days" a) with 0 -> Some (Msg.forecast_a_no_history locale) | days -> Some (Msg.forecast_a_short ~days locale))
       | "no_income_detected" -> Some (Msg.forecast_a_no_income locale)
+      | "range_from" -> Some (Msg.forecast_a_range ~count:(Int.to_string (J.int (J.field "forecasts" a))) ~date:(d "since") locale)
+      | "no_range_yet" -> Some (Msg.forecast_a_no_range locale)
+      | "seasonal" ->
+          let month = J.int (J.field "month" a) and year = J.int (J.field "year" a) and percent = J.int (J.field "percent" a) in
+          Some
+            (Msg.forecast_a_seasonal ~month:(Mf2_runtime.month_name locale month)
+               ~percent:(Fmt.percent ~signed:true locale (Float.of_int percent)) ~last:(Fmt.month_label locale (sprintf "%04d-%02d" year month)) locale)
       | _ -> None
     in
     let assumptions =

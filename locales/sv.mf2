@@ -400,3 +400,15 @@ forecast.money_out = Pengar ut
 forecast.money_in = Pengar in
 forecast.overdraw_spending = Lägst {$amount :currency} den {$date :date}, av vanlig konsumtion.
 action.see_forecast = Se prognos
+forecast.legend_projected = Beräknat saldo
+forecast.legend_range = 80 % intervall
+forecast.range_note = 8 av 10 tidigare prognoser hamnade inom fältet.
+forecast.chance = Chans över noll
+forecast.based_on =
+  .input {$count :integer}
+  .match $count
+  one {{från 1 tidigare prognos}}
+  * {{från {$count} tidigare prognoser}}
+forecast.a.range = Intervallet bygger på {$count} tidigare prognoser sedan {$date :date}, jämförda med vad som hände.
+forecast.a.no_range = Det finns inte tillräckligt med historik för ett intervall än: det bygger på att jämföra tidigare prognoser med vad som hände.
+forecast.a.seasonal = Vanlig konsumtion i {$month} justeras {$percent}, utifrån hur {$last} gick.

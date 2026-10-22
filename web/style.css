@@ -362,6 +362,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
 .projection .zero { stroke: var(--line-strong); stroke-width: 1; }
 .projection .axis-label { font-size: 12px; fill: var(--text-3); font-variant-numeric: lining-nums tabular-nums; }
 .projection .payday { stroke: var(--text-3); stroke-width: 1; }
+.projection .range { fill: color-mix(in srgb, var(--c1) 20%, transparent); }
 .projection .band { fill: color-mix(in srgb, var(--c-savings) 22%, transparent); }
 .projection .today { stroke: var(--line-strong); stroke-width: 1; }
 .projection .today-label { font-size: 12px; fill: var(--text-2); }
@@ -376,6 +377,8 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
 .projection-readout { display: flex; gap: 12px; align-items: baseline; min-height: 21px; margin-top: 8px; font-size: 13px; }
 .projection-readout .readout-date { font-weight: 600; }
 .band-dot { background: color-mix(in srgb, var(--c-savings) 45%, transparent); border-radius: 2px; }
+.range-dot { background: color-mix(in srgb, var(--c1) 35%, transparent); border-radius: 2px; }
+.projected-dot { background: var(--line-chart); }
 .forecast-row, .row.forecast-row { display: grid; grid-template-columns: 64px minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) 104px; gap: 16px; align-items: center; }
 .table .row.forecast-row { padding-top: 8px; padding-bottom: 8px; }
 .forecast-row .button.ghost { height: 26px; justify-self: end; }

@@ -29,6 +29,8 @@ type t = {
   scenario : point list option;
   lowest_date : string;
   lowest : J.t;
+  range : (string * J.t * J.t) list;  (** date, low, high, from today *)
+  chance_positive : int option;  (** percent *)
   accounts : outlook list;
   items : item list;
   assumptions : J.t list;  (** each { kind, ...figures }; the page words them *)
@@ -59,5 +61,7 @@ let of_json json =
     baseline = List.map (J.list (J.field "baseline" json)) ~f:point;
     scenario = (match J.field "scenario" json with `Null -> None | s -> Some (List.map (J.list s) ~f:point));
     lowest_date = J.str (J.path [ "lowest"; "date" ] json); lowest = J.path [ "lowest"; "cash" ] json;
+    range = List.map (J.list (J.field "range" json)) ~f:(fun r -> (J.str (J.field "date" r), J.field "low" r, J.field "high" r));
+    chance_positive = (match J.field "chance_positive" json with `Int p -> Some p | _ -> None);
     accounts = List.map (J.list (J.field "accounts" json)) ~f:outlook; items = List.map (J.list (J.field "items" json)) ~f:item;
     assumptions = J.list (J.field "assumptions" json) }
