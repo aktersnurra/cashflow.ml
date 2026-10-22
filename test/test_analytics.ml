@@ -355,7 +355,8 @@ let test_cashflow_query_boundary () =
     let scripted = W.Effects.run { W.Effects.handle = (fun (type a) (op : a W.Effect_ops.t) : a -> match op with
       | Now -> now
       | Resolve_currency code -> Result.map_error (fun _ -> W.Reporting_error.Unknown_currency code) (Service.currency service code)
-      | Load_cashflow _ -> Ok facts) } (fun () -> W.Reporting.cashflow_summary ~access:alice ~scope ~cycles:2 ()) in
+      | Load_cashflow _ -> Ok facts
+      | Load_forecast _ -> Alcotest.fail "no forecast here") } (fun () -> W.Reporting.cashflow_summary ~access:alice ~scope ~cycles:2 ()) in
     let scripted = match scripted with Ok report -> report | Error _ -> Alcotest.fail "scripted report failed" in
     Alcotest.(check string) "live/scripted parity" (Yojson.Safe.to_string expected)
       (Yojson.Safe.to_string (Query.cashflow_summary.encode legacy scripted.cycles));

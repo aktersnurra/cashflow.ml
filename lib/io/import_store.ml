@@ -47,6 +47,11 @@ let last_import =
   stmt "SELECT max(created_at) FROM import_batches WHERE account_id = ? AND undone_at IS NULL" Codec.(account_id @-> nil)
     (one (row Codec.(nullable time @-> nil) Fun.id))
 
+(* The latest statement date imported into an account, leaving out undone imports. *)
+let imported_through_stmt =
+  stmt "SELECT max(last_date) FROM import_batches WHERE account_id = ? AND undone_at IS NULL" Codec.(account_id @-> nil)
+    (one (row Codec.(nullable date @-> nil) Fun.id))
+
 let insert_batch =
   stmt
     "INSERT INTO import_batches (id, account_id, file_sha256, file_name, format, row_count, new_count, duplicate_count, \
@@ -87,6 +92,7 @@ let find_active_batch db ~account_id ~sha = run db active_batch_for_file account
 let find_batch db id = run db batch_by_id id
 let batches db ~account_id ~limit = run db batches_of_account account_id limit
 let last_import_at db account_id = run db last_import account_id
+let imported_through db account_id = run db imported_through_stmt account_id
 let save_batch db ~user_id (b : batch) =
   run db insert_batch b.batch_id b.account_id b.file_sha256 b.file_name b.format b.row_count b.new_count b.duplicate_count b.matched_count
     b.first_date b.last_date user_id b.created_at

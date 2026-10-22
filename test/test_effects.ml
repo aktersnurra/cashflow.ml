@@ -8,7 +8,8 @@ let handler = { Effects.handle = (fun (type a) (op : a Effect_ops.t) : a ->
   | Now -> clock
   | Resolve_currency "SEK" -> Ok sek
   | Resolve_currency code -> Error (Reporting_error.Unknown_currency code)
-  | Load_cashflow _ -> Error (Reporting_error.Storage_unavailable Load_cashflow)) }
+  | Load_cashflow _ -> Error (Reporting_error.Storage_unavailable Load_cashflow)
+  | Load_forecast _ -> Error (Reporting_error.Storage_unavailable Load_forecast)) }
 let check = Alcotest.(check bool)
 let typed () =
   check "normal return" true (Effects.run handler (fun () -> 42) = 42);
@@ -76,7 +77,8 @@ let access_fibers () =
         | Load_cashflow request ->
             incr loads;
             check "fiber request access" true (Reporting_context.access (Cashflow_request.context request) == accesses.(i));
-            Ok {Cashflow_facts.accounts=[]; transfers=[]; reconciled_through=None}) } in
+            Ok {Cashflow_facts.accounts=[]; transfers=[]; reconciled_through=None}
+        | Load_forecast _ -> failwith "no forecast here") } in
       let report = ok (Effects.run local (fun () ->
         Reporting.cashflow_summary ~access:accesses.(i) ~scope:Me ~cycles:1 ())) in
       check "fiber report clock" true (C.Date.compare (Reporting_context.today report.context) (C.Time.local_date C.Time.utc times.(i)) = 0);

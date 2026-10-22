@@ -43,7 +43,7 @@ let run : type a. Service.t -> Access.t -> a t -> (a * Insights.ctx, [> Service.
   match query with
   | Cashflow_summary (common, cycles) ->
       let module W = Cashflow_workflow in
-      let result = Reporting_live.run ~db:service.db ~access ~now:service.now (fun () ->
+      let result = Reporting_live.run ~service ~access (fun () ->
         W.Reporting.cashflow_summary ~access ~scope:common.scope ?currency:common.currency ~cycles ()) in
       let* report = Result.map_error (function
         | W.Reporting_error.Invalid_currency reason -> `Invalid reason
@@ -51,6 +51,8 @@ let run : type a. Service.t -> Access.t -> a t -> (a * Insights.ctx, [> Service.
         | Household_required -> `Invalid "you don't belong to a household, so use scope \"me\""
         | Access_denied -> `Forbidden "access denied"
         | Invalid_range _ -> `Invalid "from_date is after to_date"
+        | Invalid_horizon _ -> `Invalid "cycles must be 1, 3 or 6"
+        | Invalid_scenario reason -> `Invalid reason
         | Storage_unavailable operation -> `Storage_unavailable operation) result in
       let context = report.W.Reporting.context in
       let ctx : Insights.ctx = { service; access = W.Reporting_context.access context;

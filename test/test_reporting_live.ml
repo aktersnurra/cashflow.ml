@@ -1,5 +1,6 @@
 module Db_guard = Cashflow_io.Db_guard
 module Id_generator = Cashflow_io.Id_generator
+module Import_store = Cashflow_io.Import_store
 module Planning_store = Cashflow_io.Planning_store
 module Reporting_live = Cashflow_io.Reporting_live
 module Service = Cashflow_io.Service
@@ -11,7 +12,7 @@ let get = function Ok x -> x | Error _ -> Alcotest.fail "unexpected reporting er
 let request access =
   let context = get (Reporting_context.make ~access ~scope:Analytics.Me ~currency:(get (Currency.make ~code:"SEK" ~scale:2)) ~now) in
   get (Cashflow_request.make ~context ~first:(date "2026-09-25") ~last:(date "2026-10-22"))
-let load service access req = Reporting_live.run ~db:service.Service.db ~access ~now:service.now (fun () -> Effects.perform (Effect_ops.Load_cashflow req))
+let load service access req = Reporting_live.run ~service ~access (fun () -> Effects.perform (Effect_ops.Load_cashflow req))
 let with_wal_service f =
   let path = Filename.temp_file "reporting-wal-" ".sqlite3" in
   Fun.protect ~finally:(fun () ->
@@ -76,7 +77,7 @@ let storage () =
   let service = make_service () in
   let access = sign_in service "alice" in
   Sql.exec_script service.db "ALTER TABLE currencies RENAME TO unavailable_currencies";
-  let result = Reporting_live.run ~db:service.db ~access ~now:service.now (fun () -> Reporting.cashflow_summary ~access ~scope:Me ~cycles:1 ()) in
+  let result = Reporting_live.run ~service ~access (fun () -> Reporting.cashflow_summary ~access ~scope:Me ~cycles:1 ()) in
   Alcotest.(check bool) "typed SQL failure" true (result = Error (Reporting_error.Storage_unavailable Resolve_currency))
 let reconciliation () =
   let service = make_service () in
@@ -204,7 +205,7 @@ let unexpected_loading_exception () =
     if !acquisitions = 1 then raise original;
     f ())) };
   let caught = try
-    Reporting_live.run ~db:service.db ~access ~now:service.now (fun () ->
+    Reporting_live.run ~service ~access (fun () ->
       Fun.protect ~finally:(fun () -> incr cleanup) (fun () ->
         ignore (Effects.perform (Effect_ops.Load_cashflow req))));
     false
@@ -221,4 +222,52 @@ let unexpected_loading_exception () =
   Alcotest.(check bool) "later load has no active transaction" false (Sql.in_transaction service.db);
   Alcotest.(check bool) "guard released after reuse" false (guard.held ())
 
-let () = Alcotest.run "Reporting_live" ["live", List.map (fun (n,f) -> Alcotest.test_case n `Quick f) ["invalid_stored_currency",invalid_stored_currency;"report_reads_during_writer",report_reads_during_writer;"authority",authority;"detached",detached;"storage",storage;"reconciliation",reconciliation;"guarded snapshot",guarded_snapshot;"cancellation",cancellation;"captured visibility",captured_visibility;"unexpected loading exception",unexpected_loading_exception]]
+
+(* Forecast loading: the same authority as the cash-flow report, the latest imported date per
+   account, goals in the report's currency, and the household contribution plan. *)
+let forecast_request ?(scope = Analytics.Me) access =
+  let context = get (Reporting_context.make ~access ~scope ~currency:(get (Currency.make ~code:"SEK" ~scale:2)) ~now) in
+  get (Forecast_request.make ~context ~horizon:1)
+let load_forecast service access req = Reporting_live.run ~service ~access (fun () -> Effects.perform (Effect_ops.Load_forecast req))
+let goal ?(currency = "SEK") owner name monthly : Planning_store.goal =
+  { goal_id = Id_generator.household () |> Household_id.to_string; goal_owner = owner; name; currency; target_amount = 5_000_000L; target_date = None;
+    monthly_amount = Some monthly; earmarks = [] }
+let forecast_facts () =
+  let service = make_service () in
+  let alice = sign_in service ~admin:true "alice" and bob = sign_in service "bob" in
+  Alcotest.(check bool) "foreign principal" true (load_forecast service alice (forecast_request bob) = Error Reporting_error.Access_denied);
+  let checking = open_checking service alice "Checking" in
+  let batch n last undone : Import_store.batch =
+    { batch_id = "batch-" ^ string_of_int n; account_id = checking; file_sha256 = "sha-" ^ string_of_int n; file_name = None; format = "csv"; row_count = 1;
+      new_count = 1; duplicate_count = 0; matched_count = 0; first_date = Some (date "2026-10-01"); last_date = Some (date last); created_at = now; undone }
+  in
+  Import_store.save_batch service.db ~user_id:(Access.user alice).id (batch 1 "2026-10-18" false);
+  Import_store.save_batch service.db ~user_id:(Access.user alice).id (batch 2 "2026-10-20" false);
+  Import_store.undo_batch service.db ~now "batch-2";
+  Planning_store.save_goal service.db ~now (goal (Access.personal alice) "Car" 300_000L);
+  Planning_store.save_goal service.db ~now (goal ~currency:"EUR" (Access.personal alice) "Euro trip" 10_000L);
+  let facts = get (load_forecast service alice (forecast_request alice)) in
+  Alcotest.(check (option string)) "an undone import doesn't count" (Some "2026-10-18")
+    (Option.map Date.to_string (List.assoc_opt checking facts.imported_through));
+  Alcotest.(check (list string)) "goals in SEK" [ "Car" ] (List.map (fun (g : Forecast.goal) -> g.goal_name) facts.goals);
+  Alcotest.(check bool) "no household, no plan" true (facts.contribution = None)
+
+let forecast_contribution () =
+  let service = make_service () in
+  let alice = sign_in service ~admin:true "alice" in
+  let household = ok (Service.create_household service alice ~name:"Home" ~default_currency:"SEK") in
+  let alice = Service.access_for service (Access.user alice) in
+  let checking = open_checking service alice "Checking" in
+  let salary = account_named service alice "Salary" in
+  ignore (ok (Service.add_entry service alice { (entry "salary" ~from_account:salary ~to_account:checking 3_000_000) with value_date = date "2026-09-01" }));
+  Planning_store.save_goal service.db ~now (goal (Owner.Household household.id) "Buffer" 1_000_000L);
+  (match (get (load_forecast service alice (forecast_request alice))).contribution with
+   | Some (Forecast.Outgoing { due_now; per_cycle }) ->
+       Alcotest.(check int64) "the whole target, alone" 1_000_000L per_cycle;
+       Alcotest.(check int64) "nothing paid yet" 1_000_000L due_now
+   | _ -> Alcotest.fail "expected my planned transfer");
+  (match (get (load_forecast service alice (forecast_request ~scope:Household alice))).contribution with
+   | Some (Forecast.Incoming [ m ]) -> Alcotest.(check int64) "alice's transfer, to the household" 1_000_000L m.per_cycle
+   | _ -> Alcotest.fail "expected each member's transfer");
+  Alcotest.(check bool) "family: inside the scope" true ((get (load_forecast service alice (forecast_request ~scope:Family alice))).contribution = None)
+let () = Alcotest.run "Reporting_live" ["live", List.map (fun (n,f) -> Alcotest.test_case n `Quick f) ["invalid_stored_currency",invalid_stored_currency;"report_reads_during_writer",report_reads_during_writer;"authority",authority;"detached",detached;"storage",storage;"reconciliation",reconciliation;"guarded snapshot",guarded_snapshot;"cancellation",cancellation;"captured visibility",captured_visibility;"unexpected loading exception",unexpected_loading_exception;"forecast facts",forecast_facts;"forecast contribution",forecast_contribution]]
