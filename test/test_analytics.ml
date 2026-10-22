@@ -359,10 +359,37 @@ let test_cashflow_query_boundary () =
   Alcotest.(check bool) "household before currency" true
     (Query.run service alone (Query.Cashflow_summary (common, 1)) = Error (`Invalid "you don't belong to a household, so use scope \"me\""))
 
+let test_legacy_query_dispatch () =
+  let service, access, category = scenario () in
+  let check : type a. a Query.descriptor -> a Query.t -> (Insights.ctx -> a) -> unit =
+    fun descriptor query calculate ->
+      let scope = if String.equal descriptor.name "contribution_plan" || String.equal descriptor.name "settle_up_status" then Analytics.Household else Me in
+      let ctx = ok (Insights.context service access ~scope ()) in
+      let expected = descriptor.encode ctx (calculate ctx) in
+      let calls = ref 0 in
+      let service = {service with now=(fun () -> incr calls; now)} in
+      let value, ctx = ok (Query.run service access query) in
+      Alcotest.(check string) descriptor.name (Yojson.Safe.to_string expected) (Yojson.Safe.to_string (descriptor.encode ctx value));
+      Alcotest.(check int) "legacy clock sampled once" 1 !calls
+  in
+  let common : Query.common = {scope=Me; currency=None} in
+  let household = {common with scope=Household} in
+  check Query.spending_by_category (Spending_by_category (common, Cycle_offset 0, true)) (fun ctx -> Insights.spending_by_category ctx ~period:(Cycle_offset 0) ~compare_previous:true);
+  check Query.category_trend (Category_trend (common, category.account.id, 2)) (fun ctx -> ok (Insights.category_trend ctx ~category:category.account.id ~cycles:2));
+  check Query.net_worth (Net_worth (common, 2)) (fun ctx -> Insights.net_worth ctx ~cycles:2);
+  check Query.largest_expenses (Largest_expenses (common, Cycle_offset 0, 3)) (fun ctx -> Insights.largest_expenses ctx ~period:(Cycle_offset 0) ~limit:3);
+  check Query.runway (Runway common) Insights.runway;
+  check Query.recurring (Recurring common) Insights.recurring;
+  check Query.budget_status (Budget_status (common, 0)) (fun ctx -> Insights.budget_status ctx ~cycle_offset:0);
+  check Query.contribution_plan (Contribution_plan (household, Some "1000.00", [User_id.to_string (Access.user access).id, "2000.00"])) (fun ctx -> ok (Insights.contribution_plan ctx ~target:(Some 100000L) ~incomes:[User_id.to_string (Access.user access).id, 200000L]));
+  check Query.settle_up (Settle_up household) (fun ctx -> ok (Insights.settle_up ctx));
+  check Query.goals (Goals common) Insights.goals
+
 let () =
   Alcotest.run "analytics"
     [ ( "insights",
-        [ Alcotest.test_case "cashflow query boundary" `Quick test_cashflow_query_boundary;
+        [ Alcotest.test_case "legacy query dispatch" `Quick test_legacy_query_dispatch;
+          Alcotest.test_case "cashflow query boundary" `Quick test_cashflow_query_boundary;
           Alcotest.test_case "cashflow by scope" `Quick test_cashflow_by_scope;
           Alcotest.test_case "categories, recurring and budgets" `Quick test_categories_recurring_and_budgets;
           Alcotest.test_case "contribution plan" `Quick test_contribution_plan;

@@ -77,6 +77,11 @@ val transaction : db -> (unit -> 'a) -> 'a
 (** [BEGIN IMMEDIATE] ... [COMMIT], rolled back if the function raises. Nested calls become
     savepoints, so a service can group several operations that each use a transaction. *)
 
+val read_snapshot : db -> (unit -> 'value) -> 'value
+(** [BEGIN DEFERRED] at the outer boundary, with the same guard, savepoints and exception
+    cleanup as {!transaction}. The first read pins the snapshot. Intended for read callbacks;
+    this signature does not enforce read-only SQL. *)
+
 val in_transaction : db -> bool
 
 val changes : db -> int

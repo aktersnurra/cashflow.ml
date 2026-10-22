@@ -6,13 +6,7 @@ type report = { context : Reporting_context.t; cycles : Analytics.cycle_summary 
 let ( let* ) = Result.bind
 
 let cashflow_summary ~access ~scope ?currency ~cycles () =
-  let user = Access.user access in
-  let household = Access.household access in
-  let* default_currency = match scope, household with
-    | Analytics.Me, _ -> Ok user.default_currency
-    | (Household | Family), None -> Error Reporting_error.Household_required
-    | (Household | Family), Some h -> Ok h.default_currency
-  in
+  let* default_currency = Reporting_context.default_currency ~access ~scope in
   let* currency = Effects.perform (Resolve_currency (Option.value currency ~default:default_currency)) in
   let now = Effects.perform Now in
   let* context = Reporting_context.make ~access ~scope ~currency ~now in

@@ -199,6 +199,7 @@ let test_reporting_envelopes () =
     (`Assoc ["jsonrpc", `String "2.0"; "id", `Int 1; "result", `Assoc ["resultType", `String "complete";
       "content", `List [`Assoc ["type", `String "text"; "text", `String (Yojson.Safe.to_string success)]];
       "structuredContent", success]]) (body_json response);
+  Sql.exec_script deps.service.db "INSERT INTO currencies (code, scale) VALUES ('BAD!', 2)";
   List.iter (fun (args,message) ->
     let response = http args in
     Alcotest.(check int) "HTTP validation" 422 response.status;
@@ -208,7 +209,8 @@ let test_reporting_envelopes () =
       (`Assoc ["jsonrpc", `String "2.0"; "id", `Int 1; "result", `Assoc ["resultType", `String "complete";
         "content", `List [`Assoc ["type", `String "text"; "text", `String message]];
         "isError", `Bool true]]) (body_json response))
-    [`Assoc ["currency", `String "BAD"], "unknown currency BAD";
+    [`Assoc ["currency", `String "BAD!"], "currency code \"BAD!\" must be three uppercase letters";
+     `Assoc ["currency", `String "BAD"], "unknown currency BAD";
      `Assoc ["scope", `String "household"], "you don't belong to a household, so use scope \"me\""];
   (* Only report storage is broken; session and bearer authentication remain intact. *)
   Sql.exec_script deps.service.db "ALTER TABLE currencies RENAME TO unavailable_currencies";

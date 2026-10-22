@@ -12,6 +12,44 @@ let request access =
   let context = get (Reporting_context.make ~access ~scope:Analytics.Me ~currency:(get (Currency.make ~code:"SEK" ~scale:2)) ~now) in
   get (Cashflow_request.make ~context ~first:(date "2026-09-25") ~last:(date "2026-10-22"))
 let load service access req = Reporting_live.run ~db:service.Service.db ~access ~now:service.now (fun () -> Effects.perform (Effect_ops.Load_cashflow req))
+let with_wal_service f =
+  let path = Filename.temp_file "reporting-wal-" ".sqlite3" in
+  Fun.protect ~finally:(fun () ->
+    List.iter (fun suffix -> let file = path ^ suffix in if Sys.file_exists file then Sys.remove file) [""; "-wal"; "-shm"])
+    (fun () ->
+      let db = Sql.open_db path in
+      Fun.protect ~finally:(fun () -> Sql.close db) (fun () ->
+        Cashflow_io.Schema.migrate db;
+        let service = Service.make ~now:(fun () -> now) db in
+        let access = sign_in service "alice" in
+        let writer = Sql.open_db path in
+        Fun.protect ~finally:(fun () -> Sql.close writer) (fun () ->
+          Sql.exec_script db "PRAGMA busy_timeout = 0";
+          Sql.exec_script writer "PRAGMA busy_timeout = 0";
+          f service access writer)))
+
+let report_reads_during_writer () =
+  with_wal_service (fun service access writer ->
+    Sql.transaction writer (fun () ->
+      Sql.exec_script writer "UPDATE accounts SET name = 'Uncommitted' WHERE name = 'Salary'";
+      let lock = try Sql.transaction service.db (fun () -> ()); "no conflict" with Sql.Sql_error message -> message in
+      Alcotest.(check string) "existing immediate writer conflict" "exec: BUSY (database is locked)" lock;
+      let result = Cashflow_io.Query.execute service access (Cashflow_io.Query.Any Cashflow_io.Query.cashflow_summary) ["cycles", `Int 1] in
+      Alcotest.(check (result string string)) "public report succeeds during WAL writer"
+        (Ok "me")
+        (Result.map (fun json -> Yojson.Safe.Util.(json |> member "scope" |> to_string))
+          (Result.map_error Service.error_to_string result))));
+  ()
+
+let invalid_stored_currency () =
+  with_wal_service (fun service access _ ->
+    Sql.exec_script service.db "INSERT INTO currencies (code, scale) VALUES ('BAD!', 2)";
+    let reason = "currency code \"BAD!\" must be three uppercase letters" in
+    let invalid_reason = function Error (`Invalid message) -> message | _ -> Alcotest.fail "expected Invalid" in
+    Alcotest.(check string) "legacy currency reason" reason (invalid_reason (Service.currency service "BAD!"));
+    let result = Cashflow_io.Query.execute service access (Cashflow_io.Query.Any Cashflow_io.Query.cashflow_summary) ["currency", `String "BAD!"] in
+    Alcotest.(check string) "query currency reason" reason (invalid_reason result))
+
 let authority () =
   let service = make_service () in
   let alice = sign_in service "alice" and bob = sign_in service "bob" in
@@ -183,4 +221,4 @@ let unexpected_loading_exception () =
   Alcotest.(check bool) "later load has no active transaction" false (Sql.in_transaction service.db);
   Alcotest.(check bool) "guard released after reuse" false (guard.held ())
 
-let () = Alcotest.run "Reporting_live" ["live", List.map (fun (n,f) -> Alcotest.test_case n `Quick f) ["authority",authority;"detached",detached;"storage",storage;"reconciliation",reconciliation;"guarded snapshot",guarded_snapshot;"cancellation",cancellation;"captured visibility",captured_visibility;"unexpected loading exception",unexpected_loading_exception]]
+let () = Alcotest.run "Reporting_live" ["live", List.map (fun (n,f) -> Alcotest.test_case n `Quick f) ["invalid_stored_currency",invalid_stored_currency;"report_reads_during_writer",report_reads_during_writer;"authority",authority;"detached",detached;"storage",storage;"reconciliation",reconciliation;"guarded snapshot",guarded_snapshot;"cancellation",cancellation;"captured visibility",captured_visibility;"unexpected loading exception",unexpected_loading_exception]]

@@ -151,11 +151,11 @@ let run db (Stmt { sql; params; mode }) =
   in
   go params [] (fun values -> exclusive db (fun () -> execute db sql values mode))
 
-let transaction db f =
+let with_transaction begin_outer db f =
   exclusive db @@ fun () ->
   let savepoint = Printf.sprintf "cashflow_%d" db.depth in
   let begin_, commit, rollback =
-    if db.depth = 0 then ("BEGIN IMMEDIATE", "COMMIT", "ROLLBACK")
+    if db.depth = 0 then (begin_outer, "COMMIT", "ROLLBACK")
     else ("SAVEPOINT " ^ savepoint, "RELEASE " ^ savepoint, "ROLLBACK TO " ^ savepoint ^ "; RELEASE " ^ savepoint)
   in
   exec_script db begin_;
@@ -169,6 +169,9 @@ let transaction db f =
       db.depth <- db.depth - 1;
       (try exec_script db rollback with Sql_error _ -> ());
       raise exn
+
+let transaction db f = with_transaction "BEGIN IMMEDIATE" db f
+let read_snapshot db f = with_transaction "BEGIN DEFERRED" db f
 
 exception Rollback_result
 

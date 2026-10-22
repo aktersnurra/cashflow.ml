@@ -13,7 +13,7 @@ let resolve_currency db code =
   storage Reporting_error.Resolve_currency (fun () ->
     match Sql.(run db (stmt "SELECT scale FROM currencies WHERE code = ?" (text @-> nil) (opt (row (int @-> nil) Fun.id)))) code with
     | None -> Error (Reporting_error.Unknown_currency code)
-    | Some scale -> Result.map_error (fun _ -> Reporting_error.Unknown_currency code) (Currency.make ~code ~scale))
+    | Some scale -> Result.map_error (fun (`Invalid_currency reason) -> Reporting_error.Invalid_currency reason) (Currency.make ~code ~scale))
 
 let load_cashflow db access request =
   let context = Cashflow_request.context request in
@@ -21,7 +21,7 @@ let load_cashflow db access request =
      || not (List.for_all (Access.can_use access) (Reporting_context.owners context)) then
     Error Reporting_error.Access_denied
   else storage Reporting_error.Load_cashflow (fun () ->
-    Sql.transaction db (fun () ->
+    Sql.read_snapshot db (fun () ->
       let accounts = List.concat_map (Account_store.for_owner db) (Access.owners access) in
       let transfers = Transfer_query.between db access ~first:(Cashflow_request.first request) ~last:(Cashflow_request.last request) in
       let book = Analytics.make_book ~accounts ~owners:(Reporting_context.owners context) ~currency:(Reporting_context.currency context) in

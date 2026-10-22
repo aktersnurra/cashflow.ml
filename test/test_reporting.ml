@@ -69,6 +69,25 @@ let context_and_order () =
  let fallback = Access.make ~user:{user with timezone="invalid"} ~household:None in
  let ctx = ok (Reporting_context.make ~access:fallback ~scope:Me ~currency:sek ~now) in
  Alcotest.(check string) "timezone fallback" "2026-10-21" (Date.to_string (Reporting_context.today ctx))
+let distinct_scope_settings () =
+ let household = {household with pay_cycle=Pay_cycle_setting.calendar_month} in
+ let access = Access.make ~user ~household:(Some household) in
+ List.iter (fun (scope, code, setting, owners) ->
+   List.iter (fun override ->
+     let events = ref [] in
+     let handler = { Effects.handle = (fun (type a) (op : a Effect_ops.t) : a -> match op with
+       | Resolve_currency code -> events := !events @ [code]; Ok (if String.equal code "EUR" then eur else sek)
+       | Now -> events := !events @ ["now"]; now
+       | Load_cashflow _ -> events := !events @ ["load"]; Ok facts) } in
+     let report = ok (Effects.run handler (fun () -> Reporting.cashflow_summary ~access ~scope ?currency:override ~cycles:1 ())) in
+     Alcotest.(check (list string)) "scope default or override and single clock" [Option.value override ~default:code; "now"; "load"] !events;
+     Alcotest.(check string) "scope setting" (Pay_cycle_setting.to_string setting) (Pay_cycle_setting.to_string (Reporting_context.setting report.context));
+     Alcotest.(check bool) "scope owners" true (List.equal Owner.equal owners (Reporting_context.owners report.context));
+     Alcotest.(check string) "user timezone" "2026-10-22" (Date.to_string (Reporting_context.today report.context)))
+     [None; Some "SEK"])
+   [Analytics.Me, "SEK", user.pay_cycle, [Access.personal access];
+    Household, "EUR", household.pay_cycle, [Owner.Household hid];
+    Family, "EUR", household.pay_cycle, [Access.personal access; Owner.Household hid]]
 let edge_cases () =
  let empty = current (run ~facts:{facts with transfers=[]} ()) in
  Alcotest.(check (option int)) "zero income rate" None empty.savings_rate_bp;
@@ -94,4 +113,4 @@ let storage_errors () =
    | Now | Load_cashflow _ -> Alcotest.fail "must stop at currency") } in
  let result = Effects.run handler (fun () -> Reporting.cashflow_summary ~access ~scope:Me ~cycles:1 ()) in
  Alcotest.(check bool) "typed currency storage failure" true (result = Error (Reporting_error.Storage_unavailable Resolve_currency))
-let () = Alcotest.run "Reporting" ["workflow", List.map (fun (n,f) -> Alcotest.test_case n `Quick f) ["literal scopes",scopes;"context and ordering",context_and_order;"edge cases",edge_cases;"storage errors",storage_errors]]
+let () = Alcotest.run "Reporting" ["workflow", List.map (fun (n,f) -> Alcotest.test_case n `Quick f) ["distinct scope settings",distinct_scope_settings;"literal scopes",scopes;"context and ordering",context_and_order;"edge cases",edge_cases;"storage errors",storage_errors]]

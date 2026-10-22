@@ -29,24 +29,24 @@ type _ t =
   | Settle_up : common -> Insights.owed list t
   | Goals : common -> Insights.goal_progress list t
 
-let common_of : type a. a t -> common = function
-  | Cashflow_summary (c, _) | Spending_by_category (c, _, _) | Category_trend (c, _, _) | Net_worth (c, _)
-  | Largest_expenses (c, _, _) | Runway c | Recurring c | Budget_status (c, _) | Contribution_plan (c, _, _) | Settle_up c
-  | Goals c ->
-      c
-
 let amount_arg (ctx : Insights.ctx) name text =
   Option.to_result ~none:(`Invalid (Printf.sprintf "%s must be a decimal amount like 1240.50" name))
     (Json.parse_decimal ~scale:(Currency.scale ctx.currency) text)
 
 let run : type a. Service.t -> Access.t -> a t -> (a * Insights.ctx, [> Service.error ]) result =
  fun service access query ->
+  let with_legacy_ctx common f =
+    let* ctx = Insights.context service access ~scope:common.scope ?currency:common.currency () in
+    let* value = f ctx in
+    Ok (value, ctx)
+  in
   match query with
   | Cashflow_summary (common, cycles) ->
       let module W = Cashflow_workflow in
       let result = Reporting_live.run ~db:service.db ~access ~now:service.now (fun () ->
         W.Reporting.cashflow_summary ~access ~scope:common.scope ?currency:common.currency ~cycles ()) in
       let* report = Result.map_error (function
+        | W.Reporting_error.Invalid_currency reason -> `Invalid reason
         | W.Reporting_error.Unknown_currency code -> `Invalid ("unknown currency " ^ code)
         | Household_required -> `Invalid "you don't belong to a household, so use scope \"me\""
         | Access_denied -> `Forbidden "access denied"
@@ -58,33 +58,28 @@ let run : type a. Service.t -> Access.t -> a t -> (a * Insights.ctx, [> Service.
         currency = W.Reporting_context.currency context; setting = W.Reporting_context.setting context;
         today = W.Reporting_context.today context } in
       Ok (report.cycles, ctx)
-  | _ ->
-  let common = common_of query in
-  (* A plain match rather than let*, so the result type each constructor fixes reaches the branches. *)
-  match Insights.context service access ~scope:common.scope ?currency:common.currency () with
-  | Error _ as error -> error
-  | Ok ctx -> (
-  match query with
-  (* Handled above; Insights.cashflow_summary remains only for the transitional attention path. *)
-  | Cashflow_summary _ -> assert false
-  | Spending_by_category (_, period, compare_previous) -> Ok ((Insights.spending_by_category ctx ~period ~compare_previous), ctx)
-  | Category_trend (_, category, cycles) -> let* trend = Insights.category_trend ctx ~category ~cycles in Ok (trend, ctx)
-  | Net_worth (_, cycles) -> Ok ((Insights.net_worth ctx ~cycles), ctx)
-  | Largest_expenses (_, period, limit) -> Ok ((Insights.largest_expenses ctx ~period ~limit), ctx)
-  | Runway _ -> Ok ((Insights.runway ctx), ctx)
-  | Recurring _ -> Ok ((Insights.recurring ctx), ctx)
-  | Budget_status (_, cycle_offset) -> Ok ((Insights.budget_status ctx ~cycle_offset), ctx)
-  | Contribution_plan (_, target, incomes) ->
-      let* target = match target with None -> Ok None | Some t -> Result.map Option.some (amount_arg ctx "target" t) in
-      let* incomes =
-        List.fold_right
-          (fun (member, text) acc -> let* acc = acc in let* v = amount_arg ctx "income" text in Ok ((member, v) :: acc))
-          incomes (Ok [])
-      in
-      let* plan = Insights.contribution_plan ctx ~target ~incomes in
-      Ok (plan, ctx)
-  | Settle_up _ -> let* owed = Insights.settle_up ctx in Ok (owed, ctx)
-  | Goals _ -> Ok ((Insights.goals ctx), ctx))
+  | Spending_by_category (common, period, compare_previous) ->
+      with_legacy_ctx common (fun ctx -> Ok (Insights.spending_by_category ctx ~period ~compare_previous))
+  | Category_trend (common, category, cycles) ->
+      with_legacy_ctx common (fun ctx -> Insights.category_trend ctx ~category ~cycles)
+  | Net_worth (common, cycles) -> with_legacy_ctx common (fun ctx -> Ok (Insights.net_worth ctx ~cycles))
+  | Largest_expenses (common, period, limit) ->
+      with_legacy_ctx common (fun ctx -> Ok (Insights.largest_expenses ctx ~period ~limit))
+  | Runway common -> with_legacy_ctx common (fun ctx -> Ok (Insights.runway ctx))
+  | Recurring common -> with_legacy_ctx common (fun ctx -> Ok (Insights.recurring ctx))
+  | Budget_status (common, cycle_offset) ->
+      with_legacy_ctx common (fun ctx -> Ok (Insights.budget_status ctx ~cycle_offset))
+  | Contribution_plan (common, target, incomes) ->
+      with_legacy_ctx common (fun ctx ->
+        let* target = match target with None -> Ok None | Some t -> Result.map Option.some (amount_arg ctx "target" t) in
+        let* incomes =
+          List.fold_right
+            (fun (member, text) acc -> let* acc = acc in let* v = amount_arg ctx "income" text in Ok ((member, v) :: acc))
+            incomes (Ok [])
+        in
+        Insights.contribution_plan ctx ~target ~incomes)
+  | Settle_up common -> with_legacy_ctx common Insights.settle_up
+  | Goals common -> with_legacy_ctx common (fun ctx -> Ok (Insights.goals ctx))
 
 (* Arguments *)
 

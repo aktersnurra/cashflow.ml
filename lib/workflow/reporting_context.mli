@@ -1,4 +1,5 @@
 type t
+val default_currency : access:Cashflow_core.Access.t -> scope:Cashflow_core.Analytics.scope -> (string, Reporting_error.t) result
 val make : access:Cashflow_core.Access.t -> scope:Cashflow_core.Analytics.scope -> currency:Cashflow_core.Currency.t -> now:Ptime.t -> (t, Reporting_error.t) result
 val access : t -> Cashflow_core.Access.t
 val scope : t -> Cashflow_core.Analytics.scope

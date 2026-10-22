@@ -107,7 +107,7 @@
  (name test_reporting_live)
  (enabled_if (= %{context_name} default))
  (modules test_reporting_live test_service_support)
- (libraries alcotest cashflow_io cashflow_core cashflow_workflow eio eio_main))
+ (libraries alcotest cashflow_io cashflow_core cashflow_workflow eio eio_main yojson))
 
 (test
  (name test_id_generator)
