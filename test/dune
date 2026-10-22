@@ -80,6 +80,13 @@
  (libraries alcotest cashflow_io eio eio_main))
 
 (test
+ (name test_series)
+ (enabled_if (= %{context_name} default))
+ (modules test_series core_fixtures)
+ (libraries alcotest cashflow_core hegel ptime)
+ (preprocess (pps ppx_hegel_test)))
+
+(test
  (name test_core)
  (enabled_if (= %{context_name} default))
  (modules test_core)
