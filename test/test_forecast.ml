@@ -82,7 +82,11 @@ let missing_import () =
   let checking = checking ~balance:100_000L () in
   let with_import on = project (input [ checking ] ~imported:[ (id checking, date on) ] ~series:[ series ~account:checking "bill:el" (-50_000L) "2026-10-20" ]) in
   Alcotest.(check (list string)) "not imported yet: due today" [ "2026-10-22"; "2026-11-20" ] (dates (items_of (with_import "2026-10-18") "bill:el"));
-  Alcotest.(check (list string)) "imported without it: skipped" [ "2026-11-20" ] (dates (items_of (with_import "2026-10-21") "bill:el"))
+  Alcotest.(check (list string)) "imported without it: skipped" [ "2026-11-20" ] (dates (items_of (with_import "2026-10-21") "bill:el"));
+  (* Without imports, as the Overview does: a payment from the last five days may not be entered yet. *)
+  let without_import next = dates (items_of (project (input [ checking ] ~series:[ series ~account:checking "bill:el" (-50_000L) next ])) "bill:el") in
+  Alcotest.(check (list string)) "no imports, three days late: due today" [ "2026-10-22"; "2026-11-19" ] (without_import "2026-10-19");
+  Alcotest.(check (list string)) "no imports, ten days late: skipped" [ "2026-11-12" ] (without_import "2026-10-12")
 
 let plan_replaces_household_transfer () =
   let checking = checking ~balance:2_000_000L () in
@@ -186,8 +190,60 @@ let history () =
     (Date.to_string (fst (List.hd f.history)));
   Alcotest.(check (option int64)) "until yesterday" None (on "2026-10-22")
 
+(* The Overview's card and the forecast agree: an account the card says the bills before payday
+   would overdraw also goes below zero in the forecast by payday, unless income is projected into
+   it first. The forecast may warn about more, since it also counts usual spending. *)
+let agree ~today (i : Forecast.input) =
+  let i = { i with today } in
+  let cycle = Cycle.cycle_of setting today in
+  let payday = Date.add_days cycle.last 1 in
+  let flagged = Analytics.shortfalls i.book ~today ~until:cycle.last (Analytics.recurring_payments i.book i.transfers) in
+  let f = Forecast.project { i with series = Series.detect i.book ~cash:(fun a -> List.exists (fun (o : Account_info.t) -> Account_id.equal (id o) a && o.account.kind = Asset) i.accounts) ~setting i.transfers } Forecast.no_scenario in
+  List.for_all
+    (fun (s : Analytics.shortfall) ->
+      let a = s.short_account.account.id in
+      let o = List.find (fun (o : Forecast.outlook) -> Account_id.equal o.account.account.id a) f.accounts in
+      (match o.overdraw with Some d -> Date.compare d payday <= 0 | None -> false)
+      || List.exists (fun (it : Forecast.item) -> it.kind = Income && Account_id.equal it.account a && Date.compare it.date payday <= 0) f.items)
+    flagged,
+  flagged, f
+
+let monthly_history ~from ~to_ ?counterparty name day minor months =
+  List.map (fun m -> transfer ~from ~to_ ?counterparty (Printf.sprintf "2026-%02d-%02d" m day) minor name) months
+
+let card_and_forecast () =
+  let today = date "2026-10-10" in
+  let rent_due balance = input [ checking ~balance (); rent; groceries; salary ] ~transfers:(monthly_history ~from:(checking ()) ~to_:rent "HYRA" 15 150_000L [ 7; 8; 9 ]) in
+  let ok, flagged, f = agree ~today (rent_due 100_000L) in
+  Alcotest.(check bool) "both warn" true (ok && flagged <> [] && Option.is_some (List.hd f.accounts).overdraw);
+  let spending = List.map2 (fun on v -> transfer ~from:(checking ()) ~to_:groceries on v "ICA") [ "2026-07-01"; "2026-07-20"; "2026-09-10" ] [ 500_000L; 700_000L; 600_000L ] in
+  let i = rent_due 200_000L in
+  let ok, flagged, f = agree ~today { i with transfers = i.transfers @ spending } in
+  Alcotest.(check bool) "only the forecast warns, from usual spending" true (ok && flagged = [] && Option.is_some (List.hd f.accounts).overdraw);
+  let i = rent_due 100_000L in
+  let pay = monthly_history ~from:salary ~to_:(checking ()) ~counterparty:"ACME" "LÖN" 12 3_000_000L [ 7; 8; 9 ] in
+  let ok, flagged, f = agree ~today { i with transfers = i.transfers @ pay } in
+  Alcotest.(check bool) "salary first: the card warns, the forecast doesn't need to" true (ok && flagged <> [] && Option.is_none (List.hd f.accounts).overdraw)
+
 (* Properties over random accounts, series and spending. *)
 open Hegel
+
+(* Random steady bills and sometimes a salary, on a random day of the cycle. *)
+let agreement tc =
+  let int lo hi = draw tc (integers ~min_value:lo ~max_value:hi ()) in
+  let checking = checking ~balance:(Int64.of_int (int 0 2_000_000)) () in
+  let bills =
+    List.concat
+      (List.init (int 1 4) (fun n ->
+           let months = if draw tc (booleans ()) then [ 7; 8; 9 ] else [ 6; 7; 8; 9 ] in
+           monthly_history ~from:checking ~to_:rent ~counterparty:(Printf.sprintf "Bill %d" n) "X" (int 1 28) (Int64.of_int (int 1_000 900_000)) months))
+  in
+  let pay = if draw tc (booleans ()) then monthly_history ~from:salary ~to_:checking ~counterparty:"ACME" "LÖN" (int 1 28) 2_000_000L [ 7; 8; 9 ] else [] in
+  let today = Date.add_days (date "2026-09-25") (int 0 27) in
+  let ok, _, _ = agree ~today (input [ checking; rent; salary ] ~transfers:(bills @ pay)) in
+  if not ok then failwith "the card warns but the forecast doesn't"
+
+let%hegel_test card_and_forecast_agree tc = agreement tc [@@settings Settings.create ~test_cases:300 ()]
 
 let draw_input tc =
   let int lo hi = draw tc (integers ~min_value:lo ~max_value:hi ()) in
@@ -248,4 +304,7 @@ let () =
           Alcotest.test_case "shorter than a cycle" `Quick shorter_than_a_cycle;
           Alcotest.test_case "assumptions" `Quick assumptions; Alcotest.test_case "a one-off" `Quick one_off;
           Alcotest.test_case "keep to my budgets" `Quick follow_budgets; Alcotest.test_case "history" `Quick history ] );
-      ("properties", [ Alcotest.test_case "deterministic, lowest, items add up, flat, leaving out" `Slow forecast_laws ]) ]
+      ("agreement", [ Alcotest.test_case "the Overview card and the forecast" `Quick card_and_forecast ]);
+      ( "properties",
+        [ Alcotest.test_case "deterministic, lowest, items add up, flat, leaving out" `Slow forecast_laws;
+          Alcotest.test_case "the card never warns alone" `Slow card_and_forecast_agree ] ) ]

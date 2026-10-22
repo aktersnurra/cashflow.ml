@@ -91,7 +91,8 @@ let rec dates_until (input : input) s ~last date = if before last date then [] e
 
 (* [None] for a series more than one interval overdue. A payment due since the account's last
    import may just not be imported yet, so it is due today; one the import already covers was
-   skipped this time. *)
+   skipped this time. An account without imports gets five days, as the Overview's shortfall
+   check does (Analytics.shortfalls). *)
 let series_dates (input : input) ~last (s : Series.t) =
   let next = s.next_expected in
   if before (following input s next) input.today then None
@@ -100,7 +101,9 @@ let series_dates (input : input) ~last (s : Series.t) =
     let rest = dates_until input s ~last (following input s next) in
     match imported_for input s.account with
     | Some through when before through next -> Some (input.today :: rest)
-    | _ -> Some rest
+    | Some _ -> Some rest
+    | None when not (before next (Date.add_days input.today (-5))) -> Some (input.today :: rest)
+    | None -> Some rest
 
 let cycles_until (input : input) last =
   let rec go (cycle : Cycle.t) = if before last cycle.first then [] else cycle :: go (Cycle.next input.setting cycle) in
