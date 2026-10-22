@@ -8,7 +8,7 @@
 
 **Tech Stack:** Stock OCaml 5.5.1, Stdlib effects, Eio, SQLite/WAL, Base/Ptime, Dune; existing OCaml 5.1.1 web context.
 
-**Spec:** `docs/superpowers/specs/2026-10-22-reporting-review-corrections-design.md` (records the user's approved Claude-review scope); original milestone design remains applicable except its prohibition on SQL changes is superseded narrowly by the approved read-snapshot correction.
+**Spec:** `design/superpowers/specs/2026-10-22-reporting-review-corrections-design.md` (records the user's approved Claude-review scope); original milestone design remains applicable except its prohibition on SQL changes is superseded narrowly by the approved read-snapshot correction.
 
 ## Global Constraints
 
