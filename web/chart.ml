@@ -242,13 +242,16 @@ let grouped_bars ~(series : string list) ~(tick : float -> string) (periods : (s
    today on, beside it, [range] the band around the line from today on (low, high), and
    [earmarked] the band under the line that is set aside for goals. A
    Today rule, red points where an account goes below zero, paydays as ticks on the axis and month
-   names underneath. Hovering or tapping a day calls [on_hover], and [hover] draws its rule. *)
-let projection ~(cash : float list) ~(earmarked : float list) ~(scenario : float list option) ~(range : (float * float) list) ~solid ~today ~(overdraws : int list)
+   names underneath. Hovering or tapping a day calls [on_hover], and [hover] draws its rule.
+   [`Narrow] is the phone's shape: taller for its width, so the line isn't flattened and the text
+   stays its real size. *)
+let projection ~shape ~(cash : float list) ~(earmarked : float list) ~(scenario : float list option) ~(range : (float * float) list) ~solid ~today ~(overdraws : int list)
     ~(months : (int * string) list) ~(paydays : int list) ~(tick : float -> string) ~today_label ~what_if_label ~hover ~on_hover =
   let n = List.length cash in
   if n < 2 then Vdom.Node.none
   else
-    let width = 640. and height = 260. and left = 52. and right = 12. and top = 22. and bottom = 26. in
+    let width, height, left = match shape with `Wide -> (640., 260., 52.) | `Narrow -> (340., 260., 40.) in
+    let right = 12. and top = 22. and bottom = 26. in
     let cash = Array.of_list cash and earmarked = Array.of_list earmarked in
     let what_if = Option.map scenario ~f:Array.of_list in
     let free i = cash.(i) -. (if i < Array.length earmarked then earmarked.(i) else 0.) in
@@ -271,7 +274,8 @@ let projection ~(cash : float list) ~(earmarked : float list) ~(scenario : float
     let column = plot_w /. Float.of_int (n - 1) in
     S.Node.svg
       ~attrs:
-        [ S.Attr.viewbox ~min_x:0. ~min_y:0. ~width ~height; cls "projection"; Vdom.Attr.create "role" "img";
+        [ S.Attr.viewbox ~min_x:0. ~min_y:0. ~width ~height; cls (match shape with `Wide -> "projection wide" | `Narrow -> "projection narrow");
+          Vdom.Attr.create "role" "img";
           Vdom.Attr.on_mouseleave (fun _ -> on_hover None) ]
       (List.concat_map ticks ~f:(fun t ->
            [ S.Node.line ~attrs:[ S.Attr.x1 left; S.Attr.x2 (width -. right); S.Attr.y1 (y t); S.Attr.y2 (y t); cls (if Float.(t = 0.) then "zero" else "grid") ] [];

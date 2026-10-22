@@ -66,7 +66,7 @@ fs.writeFileSync(out + '/export.csv', csv);
     // Forecast: one imported month has no recurring payments yet, so Upcoming says so; a one-off
     // draws the what-if line, and removing it takes the line away.
     await page.click('.sidebar >> text=Forecast');
-    await page.waitForSelector('svg.projection', { timeout: 10000 });
+    await page.waitForSelector('svg.projection >> visible=true', { timeout: 10000 });
     const kpis = await page.locator('.forecast-kpis .kpi').count();
     if (kpis !== 4) throw new Error(`forecast: ${kpis} key numbers`);
     await page.waitForSelector('text=No regular payments found yet');
@@ -75,7 +75,7 @@ fs.writeFileSync(out + '/export.csv', csv);
     await page.fill('.what-if-form .field >> nth=1 >> input', 'Sofa');
     await page.fill('.what-if-form .field >> nth=2 >> input', '12000');
     await page.click('.what-if-actions .button.primary');
-    await page.waitForSelector('svg.projection .line.what-if', { timeout: 10000 });
+    await page.waitForSelector('svg.projection >> visible=true >> .line.what-if', { timeout: 10000 });
     await page.screenshot({ path: out + '/13-forecast.png', fullPage: true });
     await page.click('.what-if .chip >> text=Sofa');
     await page.waitForSelector('svg.projection .line.what-if', { state: 'detached', timeout: 10000 });

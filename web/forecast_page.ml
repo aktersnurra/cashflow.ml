@@ -134,10 +134,12 @@ let page ~(ctx : Ctx.t) graph =
     in
     let chart =
       Ui.div ~cls:"panel"
-        [ Chart.projection ~cash:(List.init n ~f:cash_at)
-            ~earmarked:(List.map timeline ~f:(fun p -> D.value p.earmarked)) ~scenario
-            ~range:(List.map f.range ~f:(fun (_, low, high) -> (D.value low, D.value high))) ~solid ~today:today_index ~overdraws ~months:months_axis ~paydays
-            ~tick:Cashflow_page.short ~today_label:(Msg.forecast_today locale) ~what_if_label:(Msg.forecast_what_if locale) ~hover ~on_hover:set_hover;
+        (List.map [ `Wide; `Narrow ] ~f:(fun shape ->
+             Chart.projection ~shape ~cash:(List.init n ~f:cash_at)
+               ~earmarked:(List.map timeline ~f:(fun p -> D.value p.earmarked)) ~scenario
+               ~range:(List.map f.range ~f:(fun (_, low, high) -> (D.value low, D.value high))) ~solid ~today:today_index ~overdraws ~months:months_axis ~paydays
+               ~tick:Cashflow_page.short ~today_label:(Msg.forecast_today locale) ~what_if_label:(Msg.forecast_what_if locale) ~hover ~on_hover:set_hover)
+        @ [
           readout;
           Ui.div ~cls:"legend"
             ([ Ui.span [ Ui.span ~cls:"dot projected-dot" []; Ui.text (Msg.forecast_legend_projected locale) ] ]
@@ -146,7 +148,7 @@ let page ~(ctx : Ctx.t) graph =
             if List.exists f.baseline ~f:(fun p -> Float.(D.value p.earmarked > 0.)) then
               [ Ui.span [ Ui.span ~cls:"dot band-dot" []; Ui.text (Msg.forecast_set_aside locale) ] ]
             else []);
-          kpis ]
+          kpis ])
     in
     (* Accounts that go below zero, with the payments that take them there. *)
     let overdraw =

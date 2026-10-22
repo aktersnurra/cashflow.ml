@@ -358,6 +358,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
 .forecast-kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 20px 0 0; padding-top: 18px; border-top: 1px solid var(--line); }
 .kpi-sub { font-size: 13px; line-height: 16px; color: var(--text-3); margin-top: 2px; min-height: 16px; }
 .projection { display: block; width: 100%; height: auto; margin-top: 0; font-family: var(--font); }
+.projection.narrow { display: none; }
 .projection .grid { stroke: var(--line); stroke-width: 1; }
 .projection .zero { stroke: var(--line-strong); stroke-width: 1; }
 .projection .axis-label { font-size: 12px; fill: var(--text-3); font-variant-numeric: lining-nums tabular-nums; }
@@ -374,7 +375,8 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
 .projection .hover-rule { stroke: var(--text-3); stroke-width: 1; }
 .projection .hover-dot { fill: var(--line-chart); stroke: var(--panel); stroke-width: 2; }
 .projection .hit { fill: transparent; cursor: crosshair; }
-.projection-readout { display: flex; gap: 12px; align-items: baseline; min-height: 21px; margin-top: 8px; font-size: 13px; }
+.projection-readout { display: flex; flex-wrap: wrap; gap: 2px 12px; align-items: baseline; min-height: 21px; margin-top: 8px; font-size: 13px; }
+.projection-readout .readout-date, .projection-readout .amount, .projection-readout .num { white-space: nowrap; }
 .projection-readout .readout-date { font-weight: 600; }
 .band-dot { background: color-mix(in srgb, var(--c-savings) 45%, transparent); border-radius: 2px; }
 .range-dot { background: color-mix(in srgb, var(--c1) 35%, transparent); border-radius: 2px; }
@@ -441,6 +443,6 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
   .what-if-form { grid-template-columns: 1fr 1fr; }
   .what-if-form > :nth-child(2) { grid-column: 1 / -1; order: -1; }
   .what-if-actions { flex-wrap: wrap; }
-  .projection .axis-label, .projection .today-label, .projection .what-if-label { font-size: 20px; }
+  .projection.wide { display: none; } .projection.narrow { display: block; }
   .assumptions { padding: 12px 16px 12px 32px; }
 }
