@@ -1,6 +1,6 @@
 # Streaming financial advisor
 
-Status: draft for user approval. This document authorizes neither implementation nor changes to production data.
+Status: approved by the user on 2026-10-22 for implementation planning. Implementation awaits review of the separate plan and selection of its execution method; production data changes are not authorized.
 
 ## 1. Intent and decisions
 
@@ -17,9 +17,9 @@ Make cashflow feel attentive: explain what matters, help investigate it, and eve
 - Long-term direction includes scoped memory, event-triggered findings, and approval-gated actions.
 - Deliver the first slice as seamless conversation, streaming, read-only financial tools, and cancellation. Add memory and financial actions afterwards.
 
-### Proposed defaults in this document
+### Defaults approved with this document
 
-These are design choices for approval, not statements that the user separately selected them: private conversation ownership; pinned personal/household data scopes; separate consent for Advisor data disclosure; HTTP endpoint shapes; durable replay and recovery rules; bounded run limits; history retention; and the initial tool allowlist. Sections below make each concrete. Exact module and endpoint names may be refined in the implementation plan without weakening these contracts.
+The user approved the design as a whole, including the author-proposed defaults: private conversation ownership; pinned personal/household data scopes; separate consent for Advisor data disclosure; HTTP endpoint shapes; durable replay and recovery rules; bounded run limits; history retention; the initial tool allowlist; originating-session cancellation; and retry attempts under the same user turn. These were not individually user-selected requirements. Sections below make each concrete. Exact module and endpoint names may be refined in the implementation plan without weakening these contracts.
 
 ### Non-goals and anti-goals
 
