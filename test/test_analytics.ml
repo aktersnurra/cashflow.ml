@@ -97,6 +97,19 @@ let test_categories_recurring_and_budgets () =
       Alcotest.(check string) "status" "on_pace" (str [ "status" ] line)
   | other -> Alcotest.failf "expected one budget line, got %s" (Yojson.Safe.to_string other)
 
+(* Regular visits to the same café are not a subscription: the amounts vary too much. *)
+let test_irregular_spending_is_not_recurring () =
+  let service, alice, groceries = scenario () in
+  let checking = account_named service alice "Checking" in
+  List.iteri
+    (fun i (on, value) ->
+      let e = entry (Printf.sprintf "cafe %d" i) ~from_account:checking ~to_account:groceries.account.id value in
+      ignore (ok (Service.add_entry service alice { e with value_date = date on; memo = { e.memo with counterparty = Some "Espresso House" } })))
+    [ ("2026-07-05", 65_00); ("2026-08-04", 410_00); ("2026-09-06", 120_00); ("2026-10-05", 300_00) ];
+  match field [ "payments" ] (query service alice "recurring_payments" []) with
+  | `List [ only ] -> Alcotest.(check string) "only the subscription" "Spotify AB" (str [ "merchant" ] only)
+  | other -> Alcotest.failf "expected only spotify, got %s" (Yojson.Safe.to_string other)
+
 let test_contribution_plan () =
   let service, alice, _ = scenario () in
   let bob = sign_in service "bob" in
@@ -392,6 +405,7 @@ let () =
           Alcotest.test_case "cashflow query boundary" `Quick test_cashflow_query_boundary;
           Alcotest.test_case "cashflow by scope" `Quick test_cashflow_by_scope;
           Alcotest.test_case "categories, recurring and budgets" `Quick test_categories_recurring_and_budgets;
+          Alcotest.test_case "irregular spending is not recurring" `Quick test_irregular_spending_is_not_recurring;
           Alcotest.test_case "contribution plan" `Quick test_contribution_plan;
           Alcotest.test_case "net worth with a loan" `Quick test_net_worth_with_a_loan;
           Alcotest.test_case "goal report currency" `Quick test_goal_report_currency;

@@ -235,11 +235,17 @@ let recurring_payments book transfers =
           List.filteri (fun i _ -> i > 0) charges
           |> List.mapi (fun i (t : Transfer.t) -> Date.days_between ~first:(List.nth charges i).value_date ~last:t.value_date)
         in
+        let typical = median Int64.compare (List.map amount charges) in
+        (* A bill or subscription costs about the same each time; regular visits to a shop or
+           café don't. At least two thirds of the charges must be within 25% of the typical
+           amount, which still lets a price change or a varying utility bill through. *)
+        let near_typical (t : Transfer.t) = Int64.compare (Int64.mul (Int64.abs (Int64.sub (amount t) typical)) 4L) (Int64.abs typical) <= 0 in
+        let close = List.length (List.filter near_typical charges) in
         match cadence_of_interval (median Int.compare intervals) with
         | None -> acc
+        | Some _ when close * 3 < count * 2 -> acc
         | Some (cadence, step) ->
             let last = List.nth charges (count - 1) and previous = List.nth charges (count - 2) in
-            let typical = median Int64.compare (List.map amount charges) in
             let merchant_name = String.trim (match last.memo.counterparty with Some c when String.trim c <> "" -> c | _ -> last.memo.description) in
             { merchant; merchant_name; cadence; typical_amount = typical; last_amount = amount last; previous_amount = amount previous;
               last_date = last.value_date;
