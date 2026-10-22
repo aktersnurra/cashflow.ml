@@ -55,7 +55,9 @@ let forecast ~access ~scope ?currency ~horizon ~scenario () =
   let owners = Reporting_context.owners context and setting = Reporting_context.setting context in
   let book = Analytics.make_book ~accounts:facts.accounts ~owners ~currency in
   let cash id = match book.inside id with Some info -> info.account.kind = Asset && not (Analytics.is_investment info) | None -> false in
-  let series = Cashflow_core.Series.detect book ~cash ~setting facts.transfers in
+  (* Series come from the last 400 days; the older history is for the backtest. *)
+  let recent = List.filter (fun (t : Cashflow_core.Transfer.t) -> Cashflow_core.Date.compare t.value_date (Cashflow_core.Date.add_days today (-400)) >= 0) facts.transfers in
+  let series = Cashflow_core.Series.detect book ~cash ~setting recent in
   let input : F.input =
     { today; setting; horizon; book; owners; accounts = facts.accounts; imported_through = facts.imported_through; transfers = facts.transfers;
       series; budgets = facts.budgets; goals = facts.goals; contribution = facts.contribution }

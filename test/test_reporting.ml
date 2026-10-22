@@ -130,7 +130,7 @@ let run_forecast ?(horizon=1) ?(scenario=Forecast_request.no_scenario) ?(load=fu
     | Load_cashflow _ -> Alcotest.fail "no cash-flow load"
     | Load_forecast request ->
         events := !events @ ["load"];
-        Alcotest.(check string) "400 days back" "2025-09-17" (Date.to_string (Forecast_request.since request));
+        Alcotest.(check string) "800 days back" "2024-08-13" (Date.to_string (Forecast_request.since request));
         Alcotest.(check int) "horizon" horizon (Forecast_request.horizon request);
         load request) } in
   let result = Effects.run handler (fun () -> Reporting.forecast ~access ~scope:Me ~horizon ~scenario ()) in

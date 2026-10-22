@@ -4,4 +4,4 @@ let no_scenario = { leave_out = []; one_off = []; follow_budgets = false }
 let make ~context ~horizon = if List.mem horizon [1; 3; 6] then Ok {context; horizon} else Error (Reporting_error.Invalid_horizon horizon)
 let context t = t.context
 let horizon t = t.horizon
-let since t = Cashflow_core.Date.add_days (Reporting_context.today t.context) (-400)
+let since t = Cashflow_core.Date.add_days (Reporting_context.today t.context) (-800)

@@ -130,6 +130,9 @@ let test_forecast_query () =
   Alcotest.(check string) "basis" "monthly 4 2026-07-02" (String.concat " " [ str [ "basis"; "cadence" ] first; str [ "basis"; "occurrences" ] first; str [ "basis"; "since" ] first ]);
   Alcotest.(check bool) "says no income was found" true
     (match field [ "assumptions" ] f with `List a -> List.exists (fun a -> str [ "kind" ] a = "no_income_detected") a | _ -> false);
+  Alcotest.(check string) "too little history for a range" "[] null" (str [ "range" ] f ^ " " ^ str [ "chance_positive" ] f);
+  Alcotest.(check bool) "and it says so" true
+    (match field [ "assumptions" ] f with `List a -> List.exists (fun a -> str [ "kind" ] a = "no_range_yet") a | _ -> false);
   Alcotest.(check (list string)) "stable ids" (List.map (str [ "id" ]) (items f)) (List.map (str [ "id" ]) (items (forecast [])));
   let last key json = match field [ key ] json with `List points -> str [ "cash" ] (List.nth points (List.length points - 1)) | _ -> Alcotest.fail key in
   let minor text = Option.get (Json.parse_decimal ~scale:2 text) in

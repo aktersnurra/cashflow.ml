@@ -435,8 +435,10 @@ let forecast =
     description =
       "Cash day by day over the coming months: today's balances in the asset accounts not tagged \"investment\", plus the \
        recurring payments, income and transfers found in the last 400 days, the household contribution plan, and usual spending \
-       (the average of the last three complete pay cycles, less those payments). It is a single deterministic line, not a range, \
-       and assumptions lists what it assumes. items are the dated payments (kind: " ^ item_kinds ^ "); accounts gives each \
+       (the average of the last three complete pay cycles, less those payments, adjusted for the season after a year of \
+       history). The line is deterministic, and assumptions lists what it assumes. range is the cash 8 in 10 past forecasts landed between, from \
+       backtesting the same projection weekly over the last year (empty without enough history); chance_positive is the \
+       percent of those past forecasts whose errors would keep cash at or above zero. items are the dated payments (kind: " ^ item_kinds ^ "); accounts gives each \
        account's lowest point and the first day it goes below zero. A scenario adds a what-if line without changing the baseline.";
     properties =
       common_props
@@ -487,6 +489,9 @@ let forecast =
           | Other_currency accounts -> [ ("kind", `String "other_currency"); ("accounts", `List (List.map Json.account_ref accounts)) ]
           | Short_history days -> [ ("kind", `String "short_history"); ("days", `Int days) ]
           | No_income_detected -> [ ("kind", `String "no_income_detected") ]
+          | Range_from { forecasts; since } -> [ ("kind", `String "range_from"); ("forecasts", `Int forecasts); ("since", Json.date since) ]
+          | No_range_yet -> [ ("kind", `String "no_range_yet") ]
+          | Seasonal { month; year; percent } -> [ ("kind", `String "seasonal"); ("month", `Int month); ("year", `Int year); ("percent", `Int percent) ]
         in
         let point (p : Forecast.point) = `Assoc [ ("date", Json.date p.date); ("cash", m p.cash); ("earmarked", m p.earmarked) ] in
         envelope ctx
@@ -495,6 +500,8 @@ let forecast =
             ("baseline", `List (List.map point f.baseline));
             ("scenario", Json.option (fun points -> `List (List.map (fun (p : Forecast.point) -> `Assoc [ ("date", Json.date p.date); ("cash", m p.cash) ]) points)) f.scenario);
             ("lowest", `Assoc [ ("date", Json.date (fst f.lowest)); ("cash", m (snd f.lowest)) ]);
+            ("range", `List (List.map (fun (d, low, high) -> `Assoc [ ("date", Json.date d); ("low", m low); ("high", m high) ]) f.range));
+            ("chance_positive", Json.option (fun p -> `Int p) f.chance_positive);
             ( "accounts",
               `List
                 (List.map
