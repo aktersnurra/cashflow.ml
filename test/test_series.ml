@@ -47,6 +47,16 @@ let monthly_bill () =
   Alcotest.(check bool) "against the category" true (Account_id.equal (id subscriptions) s.counter);
   check_date "next" "2026-11-05" s.next_expected
 
+(* After a price change, two payments at the new price are the price now, even while older ones
+   still outnumber them. *)
+let new_price () =
+  let series =
+    detect
+      (monthly ~from:checking ~to_:subscriptions ~counterparty:"Spotify AB" "SPOTIFY"
+         [ ("2026-05-15", 11_900L); ("2026-06-15", 11_900L); ("2026-07-15", 11_900L); ("2026-08-15", 11_900L); ("2026-09-15", 12_900L); ("2026-10-15", 12_900L) ])
+  in
+  Alcotest.(check int64) "the new price" (-12_900L) (find series "bill:spotify ab").amount
+
 (* A card bill follows what was bought on the card, so only its timing has to be regular. *)
 let varying_card_bill () =
   let series =
@@ -128,6 +138,7 @@ let () =
   Alcotest.run "series"
     [ ( "detect",
         [ Alcotest.test_case "salary on the adjusted payday" `Quick salary_on_payday; Alcotest.test_case "a monthly bill" `Quick monthly_bill;
+          Alcotest.test_case "a new price" `Quick new_price;
           Alcotest.test_case "a varying card bill" `Quick varying_card_bill;
           Alcotest.test_case "a savings sweep and the household transfer" `Quick savings_sweep_and_household_transfer;
           Alcotest.test_case "what is not a series" `Quick not_series ] );

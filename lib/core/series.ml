@@ -26,12 +26,15 @@ let group key transfers =
   List.iter (fun t -> match key t with Some k -> Hashtbl.replace groups k (t :: Option.value (Hashtbl.find_opt groups k) ~default:[]) | None -> ()) transfers;
   Hashtbl.fold (fun k payments acc -> (k, payments) :: acc) groups []
 
+(* A bill is expected at its usual amount, except after a price change: once the last two
+   payments agree, that is the price now. *)
 let bills book ~cash transfers =
   Analytics.recurring_payments book transfers
   |> List.filter (fun (r : Analytics.recurring) -> cash r.paid_from)
   |> List.map (fun (r : Analytics.recurring) ->
          { id = "bill:" ^ r.merchant; kind = Bill; name = r.merchant_name; cadence = r.cadence; account = r.paid_from;
-           counter = (match r.category with Some c -> c.account.id | None -> r.paid_from); amount = Int64.neg r.typical_amount;
+           counter = (match r.category with Some c -> c.account.id | None -> r.paid_from);
+           amount = Int64.neg (if Int64.equal r.last_amount r.previous_amount then r.last_amount else r.typical_amount);
            last_amount = Int64.neg r.last_amount; category = r.category; first_date = r.first_date; last_date = r.last_date;
            next_expected = r.next_expected; occurrences = r.occurrences })
 
