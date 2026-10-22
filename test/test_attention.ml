@@ -6,6 +6,8 @@ module Llm = Cashflow_io.Llm
 module Service = Cashflow_io.Service
 module Store_sqlite = Cashflow_io.Store_sqlite
 module Str_compat = Cashflow_core.Str_compat
+module Analytics = Cashflow_core.Analytics
+module Currency = Cashflow_core.Currency
 
 open Test_service_support
 

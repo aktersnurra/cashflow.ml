@@ -231,8 +231,6 @@ let test_undo_after_share () =
   Alcotest.(check (list (pair string int64))) "nothing left in the household's books" [] (sum_of service alice (Household household.id));
   Alcotest.(check (list (pair string int64))) "or alice's" [] (sum_of service alice (Access.personal alice))
 
-(* A contribution that came in as two imported rows: pairing it is idempotent, counts as the
-   contribution in both scopes, and undoing either import puts the other row back in the inbox. *)
 (* Undoing both imports of a paired move: the first undo puts the other row back in the inbox; the
    second must not bring back the first row, whose own import is gone. Found by the service
    property test: the revived row could be shared, posting household transfers for nothing. *)
@@ -255,6 +253,8 @@ let test_undo_does_not_revive_a_row () =
   Alcotest.(check bool) "and can't be shared" true (Result.is_error (Inbox.share service alice ~transfer_id:out_id ~household_category_id:groceries));
   Alcotest.(check (list (pair string int64))) "nothing left in alice's books" [] (sum_of service alice (Access.personal alice))
 
+(* A contribution that came in as two imported rows: pairing it is idempotent, counts as the
+   contribution in both scopes, and undoing either import puts the other row back in the inbox. *)
 let test_pairing_a_contribution () =
   let service, alice, _, checking, shared = household_setup () in
   let ctx = Import.context service alice in
