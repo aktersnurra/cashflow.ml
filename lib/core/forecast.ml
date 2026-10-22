@@ -267,11 +267,30 @@ let usual_spending (input : input) cash scenario ~horizon_end =
       cash
   in
   let flat = Int64.of_int (cycle_days * 10_000) in
+  (* What the bills still scheduled in a category cost a cycle: keeping to its budget leaves only
+     the rest to spend, since the bills are already items. *)
+  let scheduled k =
+    List.fold_left
+      (fun sum (s : Series.t) ->
+        match s.kind, s.category with
+        | Bill, Some c when Account_id.equal c.account.id k && not (List.mem s.id scenario.leave_out) ->
+            let a = Int64.abs s.amount in
+            sum
+            +:
+            (match s.cadence with
+            | Monthly -> a
+            | Weekly -> Int64.div (Int64.mul a (Int64.of_int cycle_days)) 7L
+            | Quarterly -> Int64.div a 3L
+            | Yearly -> Int64.div a 12L)
+        | _ -> sum)
+      0L input.series
+  in
   let budget_parts =
     if not scenario.follow_budgets then []
     else
       List.concat_map
         (fun (k, budget) ->
+          let budget = Int64.max 0L (budget -: scheduled k) in
           let shares = List.filter_map (fun (_, _, a, k', v) -> if Account_id.equal k k' then Some (a, v) else None) entries in
           let category_total = List.fold_left (fun sum (_, v) -> sum +: v) 0L shares in
           if Int64.compare category_total 0L > 0 then List.map (fun (a, v) -> (a, Int64.div (Int64.mul budget v) category_total, flat, false)) shares

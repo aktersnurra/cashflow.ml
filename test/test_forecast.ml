@@ -15,9 +15,9 @@ let salary = account 7 Income "Salary"
 let shared = account 8 Asset "Shared" ~owner:household
 let euros = { (account 9 Asset "Euro account") with account = { (account 9 Asset "Euro account").account with currency = Result.get_ok (Currency.make ~code:"EUR" ~scale:2) } }
 
-let series ?(kind = Series.Bill) ?(cadence = Analytics.Monthly) ?counter ~(account : Account_info.t) series_id amount next : Series.t =
+let series ?(kind = Series.Bill) ?(cadence = Analytics.Monthly) ?counter ?category ~(account : Account_info.t) series_id amount next : Series.t =
   { id = series_id; kind; name = series_id; cadence; account = id account; counter = id (Option.value counter ~default:account); amount;
-    last_amount = amount; category = None; first_date = date "2026-01-01"; last_date = Date.add_days (date next) (-30);
+    last_amount = amount; category; first_date = date "2026-01-01"; last_date = Date.add_days (date next) (-30);
     next_expected = date next; occurrences = 5 }
 
 let input ?(horizon = 1) ?(imported = []) ?(transfers = []) ?(series = []) ?(budgets = []) ?(goals = []) ?contribution accounts : Forecast.input =
@@ -177,6 +177,24 @@ let follow_budgets () =
   let cycle_days = Cycle.day_count (Cycle.cycle_of setting today) in
   check_cash "the budget instead of the history"
     (Int64.sub 5_000_000L (Int64.div (Int64.mul 150_000L (Int64.of_int days)) (Int64.of_int cycle_days)))
+    (last_cash (Option.get f.scenario))
+
+(* Keeping to a budget replaces what the category usually costs; the bills scheduled in it are
+   already items, so only what the budget leaves after them is spread as spending. *)
+let budget_after_bills () =
+  let checking = checking ~balance:5_000_000L () in
+  let rent_only = input [ checking; rent ] ~budgets:[ (id rent, 900_000L) ] ~series:[ series ~account:checking ~counter:rent ~category:rent "bill:hyra" (-900_000L) "2026-11-01" ] in
+  let f = project rent_only ~scenario:{ Forecast.no_scenario with follow_budgets = true } in
+  check_cash "rent's budget is the rent" (last_cash f.baseline) (last_cash (Option.get f.scenario));
+  let history = List.map (fun on -> transfer ~from:checking ~to_:groceries on 300_000L "ICA") [ "2026-07-01"; "2026-08-01"; "2026-09-01" ] in
+  let mixed =
+    input [ checking; groceries ] ~transfers:history ~budgets:[ (id groceries, 400_000L) ]
+      ~series:[ series ~account:checking ~counter:groceries ~category:groceries "bill:matkasse" (-100_000L) "2026-11-03" ]
+  in
+  let f = project mixed ~scenario:{ Forecast.no_scenario with follow_budgets = true } in
+  let days = Date.days_between ~first:today ~last:f.horizon_end and cycle_days = Cycle.day_count (Cycle.cycle_of setting today) in
+  check_cash "the bill, and what the budget leaves after it"
+    (Int64.sub (Int64.sub 5_000_000L 100_000L) (Int64.div (Int64.mul 300_000L (Int64.of_int days)) (Int64.of_int cycle_days)))
     (last_cash (Option.get f.scenario))
 
 (* History is worked back from today's balance by undoing later transfers. *)
@@ -376,7 +394,8 @@ let () =
           Alcotest.test_case "usual spending" `Quick usual_spending; Alcotest.test_case "short history" `Quick short_history;
           Alcotest.test_case "shorter than a cycle" `Quick shorter_than_a_cycle;
           Alcotest.test_case "assumptions" `Quick assumptions; Alcotest.test_case "a one-off" `Quick one_off;
-          Alcotest.test_case "keep to my budgets" `Quick follow_budgets; Alcotest.test_case "history" `Quick history ] );
+          Alcotest.test_case "keep to my budgets" `Quick follow_budgets;
+          Alcotest.test_case "a budget after its bills" `Quick budget_after_bills; Alcotest.test_case "history" `Quick history ] );
       ("agreement", [ Alcotest.test_case "the Overview card and the forecast" `Quick card_and_forecast ]);
       ( "range",
         [ Alcotest.test_case "exact history, no width" `Quick exact_history; Alcotest.test_case "seasons" `Quick seasons;
