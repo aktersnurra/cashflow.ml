@@ -1,0 +1,224 @@
+module Db_guard = Cashflow_io.Db_guard
+module Id_generator = Cashflow_io.Id_generator
+module Planning_store = Cashflow_io.Planning_store
+module Reporting_live = Cashflow_io.Reporting_live
+module Service = Cashflow_io.Service
+module Sql = Cashflow_io.Sql
+open Cashflow_core
+open Cashflow_workflow
+open Test_service_support
+let get = function Ok x -> x | Error _ -> Alcotest.fail "unexpected reporting error"
+let request access =
+  let context = get (Reporting_context.make ~access ~scope:Analytics.Me ~currency:(get (Currency.make ~code:"SEK" ~scale:2)) ~now) in
+  get (Cashflow_request.make ~context ~first:(date "2026-09-25") ~last:(date "2026-10-22"))
+let load service access req = Reporting_live.run ~db:service.Service.db ~access ~now:service.now (fun () -> Effects.perform (Effect_ops.Load_cashflow req))
+let with_wal_service f =
+  let path = Filename.temp_file "reporting-wal-" ".sqlite3" in
+  Fun.protect ~finally:(fun () ->
+    List.iter (fun suffix -> let file = path ^ suffix in if Sys.file_exists file then Sys.remove file) [""; "-wal"; "-shm"])
+    (fun () ->
+      let db = Sql.open_db path in
+      Fun.protect ~finally:(fun () -> Sql.close db) (fun () ->
+        Cashflow_io.Schema.migrate db;
+        let service = Service.make ~now:(fun () -> now) db in
+        let access = sign_in service "alice" in
+        let writer = Sql.open_db path in
+        Fun.protect ~finally:(fun () -> Sql.close writer) (fun () ->
+          Sql.exec_script db "PRAGMA busy_timeout = 0";
+          Sql.exec_script writer "PRAGMA busy_timeout = 0";
+          f service access writer)))
+
+let report_reads_during_writer () =
+  with_wal_service (fun service access writer ->
+    Sql.transaction writer (fun () ->
+      Sql.exec_script writer "UPDATE accounts SET name = 'Uncommitted' WHERE name = 'Salary'";
+      let lock = try Sql.transaction service.db (fun () -> ()); "no conflict" with Sql.Sql_error message -> message in
+      Alcotest.(check string) "existing immediate writer conflict" "exec: BUSY (database is locked)" lock;
+      let result = Cashflow_io.Query.execute service access (Cashflow_io.Query.Any Cashflow_io.Query.cashflow_summary) ["cycles", `Int 1] in
+      Alcotest.(check (result string string)) "public report succeeds during WAL writer"
+        (Ok "me")
+        (Result.map (fun json -> Yojson.Safe.Util.(json |> member "scope" |> to_string))
+          (Result.map_error Service.error_to_string result))));
+  ()
+
+let invalid_stored_currency () =
+  with_wal_service (fun service access _ ->
+    Sql.exec_script service.db "INSERT INTO currencies (code, scale) VALUES ('BAD!', 2)";
+    let reason = "currency code \"BAD!\" must be three uppercase letters" in
+    let invalid_reason = function Error (`Invalid message) -> message | _ -> Alcotest.fail "expected Invalid" in
+    Alcotest.(check string) "legacy currency reason" reason (invalid_reason (Service.currency service "BAD!"));
+    let result = Cashflow_io.Query.execute service access (Cashflow_io.Query.Any Cashflow_io.Query.cashflow_summary) ["currency", `String "BAD!"] in
+    Alcotest.(check string) "query currency reason" reason (invalid_reason result))
+
+let authority () =
+  let service = make_service () in
+  let alice = sign_in service "alice" and bob = sign_in service "bob" in
+  Alcotest.(check bool) "foreign principal" true (load service alice (request bob) = Error Reporting_error.Access_denied);
+  let fake_household : Household.t = { id=Id_generator.household (); name="foreign"; default_currency="SEK"; report_split_bp=5000; pay_cycle=Pay_cycle_setting.default; created_by=(Access.user alice).id; created_at=now } in
+  let forged = Access.make ~user:(Access.user alice) ~household:(Some fake_household) in
+  let context = get (Reporting_context.make ~access:forged ~scope:Household ~currency:(get (Currency.make ~code:"SEK" ~scale:2)) ~now) in
+  let req = get (Cashflow_request.make ~context ~first:(date "2026-09-25") ~last:(date "2026-10-22")) in
+  Alcotest.(check bool) "foreign owner" true (load service alice req = Error Reporting_error.Access_denied)
+let detached () =
+  let service = make_service () in
+  let access = sign_in service "alice" in
+  let facts = get (load service access (request access)) in
+  let count = List.length facts.accounts in
+  let checking = open_checking service access "Later" in
+  let salary = account_named service access "Salary" in
+  ignore (ok (Service.add_entry service access (entry "later salary" ~from_account:salary ~to_account:checking 10000)));
+  Alcotest.(check int) "detached accounts" count (List.length facts.accounts);
+  Alcotest.(check int) "detached transfers" 0 (List.length facts.transfers);
+  let later = get (load service access (request access)) in
+  Alcotest.(check int) "new accounts" (count+1) (List.length later.accounts);
+  Alcotest.(check int) "new transfers" 1 (List.length later.transfers)
+let storage () =
+  let service = make_service () in
+  let access = sign_in service "alice" in
+  Sql.exec_script service.db "ALTER TABLE currencies RENAME TO unavailable_currencies";
+  let result = Reporting_live.run ~db:service.db ~access ~now:service.now (fun () -> Reporting.cashflow_summary ~access ~scope:Me ~cycles:1 ()) in
+  Alcotest.(check bool) "typed SQL failure" true (result = Error (Reporting_error.Storage_unavailable Resolve_currency))
+let reconciliation () =
+  let service = make_service () in
+  let access = sign_in service ~admin:true "alice" in
+  let household = ok (Service.create_household service access ~name:"Home" ~default_currency:"SEK") in
+  let access = Service.access_for service (Access.user access) in
+  let bank = open_checking service access ~statement_backed:true "Bank" in
+  ignore (open_checking service access ~owner:(Owner.Household household.id) ~statement_backed:true "Shared unreconciled");
+  ignore (ok (Service.open_account service access ~key:(key "eur-bank") ~owner:(Access.personal access) ~kind:Asset ~name:"EUR unreconciled" ~currency:"EUR"
+    ~flags:Account.no_flags ~details:{Account_info.no_details with statement_backed=true}));
+  let checkpoint : Planning_store.checkpoint = { checkpoint_id="bank"; account_id=bank; on_date=date "2026-10-22"; statement_balance=0L; ledger_balance=0L; source="manual" } in
+  Planning_store.add_checkpoint service.db ~now ~user_id:(Access.user access).id ~source:"manual" checkpoint;
+  let req = request access in
+  let facts = get (load service access req) in
+  Alcotest.(check (option string)) "scope/currency reconciliation filter" (Some "2026-10-22") (Option.map Date.to_string facts.reconciled_through);
+  Sql.exec_script service.db "DELETE FROM reconciliation_checkpoints";
+  Alcotest.(check (option string)) "detached reconciliation" (Some "2026-10-22") (Option.map Date.to_string facts.reconciled_through);
+  Alcotest.(check bool) "later reconciliation" true ((get (load service access req)).reconciled_through = None);
+  Sql.exec_script service.db "ALTER TABLE reconciliation_checkpoints RENAME TO unavailable_checkpoints";
+  Alcotest.(check bool) "typed snapshot storage failure" true (load service access req = Error (Reporting_error.Storage_unavailable Load_cashflow));
+  Alcotest.(check bool) "failed snapshot rolled back" false (Sql.in_transaction service.db)
+
+let guarded_snapshot () =
+  Eio_main.run @@ fun _ ->
+  let service = make_service () in
+  let access = sign_in service "alice" in
+  let req = request access in
+  let guard = Db_guard.make () in
+  let acquisitions = ref 0 in
+  let entered, signal_entered = Eio.Promise.create () in
+  let release, signal_release = Eio.Promise.create () in
+  Sql.set_guard service.db { guard with exclusive = (fun f -> guard.exclusive (fun () ->
+    incr acquisitions;
+    if !acquisitions = 1 then (Eio.Promise.resolve signal_entered (); Eio.Promise.await release);
+    (* Yield while the outer mark is held; nested statements must not reacquire. *)
+    Eio.Fiber.yield (); f ())) };
+  let snapshot = ref None in
+  Eio.Fiber.both
+    (fun () -> snapshot := Some (get (load service access req)))
+    (fun () -> Eio.Promise.await entered;
+      Eio.Promise.resolve signal_release ();
+      Sql.(run service.db (stmt "UPDATE accounts SET name = 'Competing' WHERE name = 'Salary'" nil exec)));
+  Alcotest.(check int) "report plus competing statement" 2 !acquisitions;
+  let snapshot = Option.get !snapshot in
+  Alcotest.(check bool) "no competing account in snapshot" false
+    (List.exists (fun (i : Account_info.t) -> i.account.name = "Competing") snapshot.accounts);
+  Alcotest.(check bool) "later snapshot sees mutation" true
+    (List.exists (fun (i : Account_info.t) -> i.account.name = "Competing") (get (load service access req)).accounts)
+
+let cancellation () =
+  Eio_main.run @@ fun _ ->
+  let service = make_service () in
+  let access = sign_in service "alice" in
+  let req = request access in
+  let guard = Db_guard.make () in
+  let owner_ready, owner_signal = Eio.Promise.create () in
+  let release, release_signal = Eio.Promise.create () in
+  let waiting, waiting_signal = Eio.Promise.create () in
+  let cancelled = ref false in
+  let acquisitions = ref 0 in
+  Sql.set_guard service.db { guard with exclusive = (fun f ->
+    incr acquisitions;
+    if !acquisitions = 2 then Eio.Promise.resolve waiting_signal ();
+    guard.exclusive f) };
+  Eio.Fiber.both
+    (fun () -> Sql.transaction service.db (fun () ->
+      Eio.Promise.resolve owner_signal (); Eio.Promise.await release))
+    (fun () ->
+      Eio.Promise.await owner_ready;
+      (try Eio.Switch.run (fun sw ->
+        Eio.Fiber.fork ~sw (fun () ->
+          try ignore (load service access req) with Eio.Cancel.Cancelled _ -> cancelled := true);
+        Eio.Promise.await waiting;
+        Eio.Switch.fail sw Exit)
+       with Exit -> ());
+      Eio.Promise.resolve release_signal ());
+  Alcotest.(check bool) "cancelled while waiting" true !cancelled;
+  ignore (get (load service access req));
+  Alcotest.(check bool) "transaction unwound" false (Sql.in_transaction service.db)
+
+let captured_visibility () =
+  let service = make_service () in
+  let alice = sign_in service "alice" and bob = sign_in service ~admin:true "bob" in
+  let household = ok (Service.create_household service bob ~name:"Foreign" ~default_currency:"SEK") in
+  let bob = Service.access_for service (Access.user bob) in
+  let checking = open_checking service alice "Visible bank" in
+  let salary = account_named service alice "Salary" in
+  let visible = match ok (Service.add_entry service alice (entry "visible salary" ~from_account:salary ~to_account:checking 10000)) with
+    | Ok (Created view) -> view.transfer.id
+    | _ -> Alcotest.fail "expected visible transfer created" in
+  let owner = Owner.Household household.id in
+  let foreign_from = open_checking service bob ~owner "Foreign source" in
+  let foreign_to = open_checking service bob ~owner "Foreign destination" in
+  let foreign = match ok (Service.add_entry service bob (entry ~scope:owner "foreign transfer" ~from_account:foreign_from ~to_account:foreign_to 5000)) with
+    | Ok (Created view) -> view.transfer.id
+    | _ -> Alcotest.fail "expected foreign transfer created" in
+  let account_ids accounts = List.sort String.compare (List.map (fun (i : Account_info.t) -> Account_id.to_string i.account.id) accounts) in
+  let transfer_ids transfers = List.sort String.compare (List.map (fun (t : Transfer.t) -> Transfer_id.to_string t.id) transfers) in
+  let legitimate = get (load service bob (request bob)) in
+  List.iter (fun id -> Alcotest.(check bool) "foreign account visible to owner" true
+    (List.mem (Account_id.to_string id) (account_ids legitimate.accounts))) [foreign_from; foreign_to];
+  Alcotest.(check (list string)) "foreign transfer visible to owner" [Transfer_id.to_string foreign] (transfer_ids legitimate.transfers);
+  let forged = Access.make ~user:(Access.user alice) ~household:(Some household) in
+  let facts = get (load service alice (request forged)) in
+  Alcotest.(check (list string)) "accepted Me request uses captured account visibility"
+    (account_ids (Service.accounts service alice)) (account_ids facts.accounts);
+  Alcotest.(check (list string)) "accepted Me request uses captured transfer visibility"
+    [Transfer_id.to_string visible] (transfer_ids facts.transfers);
+  List.iter (fun id -> Alcotest.(check bool) "foreign account excluded" false
+    (List.mem (Account_id.to_string id) (account_ids facts.accounts))) [foreign_from; foreign_to];
+  Alcotest.(check bool) "foreign transfer excluded" false
+    (List.mem (Transfer_id.to_string foreign) (transfer_ids facts.transfers))
+
+exception Loading_sentinel of int ref
+let unexpected_loading_exception () =
+  Eio_main.run @@ fun _ ->
+  let service = make_service () in
+  let access = sign_in service "alice" in
+  let req = request access in
+  let guard = Db_guard.make () in
+  let original = Loading_sentinel (ref 0) in
+  let acquisitions = ref 0 and cleanup = ref 0 in
+  Sql.set_guard service.db { guard with exclusive = (fun f -> guard.exclusive (fun () ->
+    incr acquisitions;
+    if !acquisitions = 1 then raise original;
+    f ())) };
+  let caught = try
+    Reporting_live.run ~db:service.db ~access ~now:service.now (fun () ->
+      Fun.protect ~finally:(fun () -> incr cleanup) (fun () ->
+        ignore (Effects.perform (Effect_ops.Load_cashflow req))));
+    false
+    with exn -> exn == original in
+  Alcotest.(check bool) "original loading exception identity" true caught;
+  Alcotest.(check int) "suspended workflow cleanup exactly once" 1 !cleanup;
+  Alcotest.(check int) "sentinel came from loading guard" 1 !acquisitions;
+  Alcotest.(check bool) "failed load has no active transaction" false (Sql.in_transaction service.db);
+  Alcotest.(check bool) "guard released after exception" false (guard.held ());
+  let later = get (load service access req) in
+  Alcotest.(check bool) "later load returns accounts" true (later.accounts <> []);
+  Alcotest.(check int) "loading guard reused" 2 !acquisitions;
+  Alcotest.(check int) "cleanup remains exactly once" 1 !cleanup;
+  Alcotest.(check bool) "later load has no active transaction" false (Sql.in_transaction service.db);
+  Alcotest.(check bool) "guard released after reuse" false (guard.held ())
+
+let () = Alcotest.run "Reporting_live" ["live", List.map (fun (n,f) -> Alcotest.test_case n `Quick f) ["invalid_stored_currency",invalid_stored_currency;"report_reads_during_writer",report_reads_during_writer;"authority",authority;"detached",detached;"storage",storage;"reconciliation",reconciliation;"guarded snapshot",guarded_snapshot;"cancellation",cancellation;"captured visibility",captured_visibility;"unexpected loading exception",unexpected_loading_exception]]

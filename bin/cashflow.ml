@@ -1,3 +1,27 @@
+module Config = Cashflow_io.Config
+module Db_guard = Cashflow_io.Db_guard
+module Http_server = Cashflow_io.Http_server
+module Https = Cashflow_io.Https
+module Id_generator = Cashflow_io.Id_generator
+module Json = Cashflow_io.Json
+module Ledger = Cashflow_io.Ledger
+module Llm = Cashflow_io.Llm
+module Logging = Cashflow_io.Logging
+module Oidc = Cashflow_io.Oidc
+module Schema = Cashflow_io.Schema
+module Service = Cashflow_io.Service
+module Sql = Cashflow_io.Sql
+module Store_sqlite = Cashflow_io.Store_sqlite
+module Web_auth = Cashflow_io.Web_auth
+module Access = Cashflow_core.Access
+module Account_id = Cashflow_core.Account_id
+module Csv = Cashflow_core.Csv
+module Date = Cashflow_core.Date
+module Ledger_core = Cashflow_core.Ledger_core
+module Statement_format = Cashflow_core.Statement_format
+module Time = Cashflow_core.Time
+module Xlsx = Cashflow_core.Xlsx
+
 let with_config path f =
   match Config.load path with
   | Error reason -> Logs.err (fun m -> m "invalid configuration: %s" reason); 1
@@ -29,7 +53,7 @@ let verify path =
               List.iter (fun (m : Ledger_core.mismatch) -> Logs.err (fun l -> l "account %s: stored balances differ from its transfers" (Account_id.to_string m.account_id))) mismatches;
               1))
 
-let env () : Ledger_core.env = { now = Ptime_clock.now; fresh_account_id = Account_id.fresh; fresh_transfer_id = Transfer_id.fresh }
+let env () : Ledger_core.env = { now = Ptime_clock.now; fresh_account_id = Id_generator.account; fresh_transfer_id = Id_generator.transfer }
 
 (* Run daily from cron: voids pending transfers past their expiry date. *)
 let void_expired path =

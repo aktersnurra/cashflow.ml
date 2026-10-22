@@ -1,3 +1,16 @@
+module Commands = Cashflow_io.Commands
+module Insights = Cashflow_io.Insights
+module Json = Cashflow_io.Json
+module Planning_store = Cashflow_io.Planning_store
+module Query = Cashflow_io.Query
+module Service = Cashflow_io.Service
+module Account_id = Cashflow_core.Account_id
+module Analytics = Cashflow_core.Analytics
+module Currency = Cashflow_core.Currency
+module Household = Cashflow_core.Household
+module Owner = Cashflow_core.Owner
+module User_id = Cashflow_core.User_id
+
 open Test_service_support
 
 let field path json =
@@ -264,17 +277,130 @@ let test_goal_keeps_its_owner () =
   Alcotest.(check string) "renamed" "New sofa" stored.name;
   Alcotest.(check bool) "still the household's" true (Owner.equal stored.goal_owner (List.hd household.owners))
 
+let test_contribution_reversal () =
+  let service, alice, _ = scenario () in
+  let ctx = ok (Insights.context service alice ~scope:Household ()) in
+  let cycle = Insights.current_cycle ctx in
+  let contribution = List.find (fun (t : Transfer.t) -> t.memo.description = "to household")
+      (Insights.transfers ctx ~first:cycle.first ~last:cycle.last) in
+  let plan () =
+    let report = query service alice "contribution_plan"
+        [ ("target", `String "20000"); ("incomes", `Assoc [ (User_id.to_string (Access.user alice).id, `String "30000") ]) ] in
+    match field [ "members" ] report with `List [ member ] -> member | _ -> Alcotest.fail "expected one member"
+  in
+  Alcotest.(check string) "contributed" "10000.00" (str [ "transferred" ] (plan ()));
+  Alcotest.(check string) "reversed" "created" (label (ok (Service.reverse service alice ~key:(key "reverse contribution") ~transfer_id:contribution.id ())));
+  let member = plan () in
+  Alcotest.(check string) "reversal nets out" "0.00" (str [ "transferred" ] member);
+  Alcotest.(check string) "still due" "20000.00" (str [ "remaining" ] member)
+
+let test_income_category_trend () =
+  let service, alice, groceries = scenario () in
+  let salary = account_named service alice "Salary" in
+  let total category =
+    let report = query service alice "category_trend" [ ("category_id", `String (Account_id.to_string category)); ("cycles", `Int 1) ] in
+    match field [ "cycles" ] report with `List [ cycle ] -> str [ "total" ] cycle | _ -> Alcotest.fail "expected one cycle"
+  in
+  Alcotest.(check string) "income is credit-normal" "30000.00" (total salary);
+  Alcotest.(check string) "expense stays debit-normal" "4000.00" (total groceries.account.id);
+  let ctx = ok (Insights.context service alice ~scope:Me ()) in
+  let cycle = Insights.current_cycle ctx in
+  let pay = List.find (fun (t : Transfer.t) -> t.memo.description = "salary")
+      (Insights.transfers ctx ~first:cycle.first ~last:cycle.last) in
+  Alcotest.(check string) "reversed" "created" (label (ok (Service.reverse service alice ~key:(key "reverse salary") ~transfer_id:pay.id ())));
+  Alcotest.(check string) "income reversal cancels out" "0.00" (total salary);
+  let checking = account_named service alice "Checking" in
+  Alcotest.(check string) "income returned" "created"
+    (label (ok (Service.add_entry service alice (entry "return salary" ~from_account:checking ~to_account:salary 1_000_00))));
+  Alcotest.(check string) "returned income is negative" "-1000.00" (total salary);
+  Alcotest.(check string) "expenses unaffected" "4000.00" (total groceries.account.id)
+
+let test_budget_rollover_report () =
+  let service, alice, groceries = scenario () in
+  let ctx = ok (Insights.context service alice ~scope:Me ()) in
+  List.iter
+    (fun (effective_from, rollover) ->
+      ignore (ok (Insights.set_budget ctx ~category_id:groceries.account.id ~monthly_amount:6_000_00L ~rollover ~effective_from:(Some effective_from))))
+    [ ("2026-09", false); ("2026-10", true); ("2026-11", false) ];
+  List.iter
+    (fun (offset, expected) ->
+      let report = query service alice "budget_status" [ ("cycle_offset", `Int offset) ] in
+      match field [ "lines" ] report with
+      | `List [ line ] -> Alcotest.(check string) "effective rollover" expected (str [ "rollover" ] line)
+      | _ -> Alcotest.fail "expected one budget line")
+    [ (0, "true"); (-1, "false") ]
+
+let test_cashflow_query_boundary () =
+  let service, alice, _ = scenario () in
+  List.iter (fun scope ->
+    let legacy = ok (Insights.context service alice ~scope ()) in
+    let expected = Query.cashflow_summary.encode legacy (Insights.cashflow_summary legacy ~cycles:2) in
+    let module W = Cashflow_workflow in
+    let first, last = Insights.span (Insights.recent_cycles legacy 2) in
+    let facts : W.Cashflow_facts.t = { accounts=Insights.accounts legacy;
+      transfers=Insights.transfers legacy ~first ~last; reconciled_through=Insights.reconciled_through legacy } in
+    let scripted = W.Effects.run { W.Effects.handle = (fun (type a) (op : a W.Effect_ops.t) : a -> match op with
+      | Now -> now
+      | Resolve_currency code -> Result.map_error (fun _ -> W.Reporting_error.Unknown_currency code) (Service.currency service code)
+      | Load_cashflow _ -> Ok facts) } (fun () -> W.Reporting.cashflow_summary ~access:alice ~scope ~cycles:2 ()) in
+    let scripted = match scripted with Ok report -> report | Error _ -> Alcotest.fail "scripted report failed" in
+    Alcotest.(check string) "live/scripted parity" (Yojson.Safe.to_string expected)
+      (Yojson.Safe.to_string (Query.cashflow_summary.encode legacy scripted.cycles));
+    let calls = ref 0 in
+    let service = { service with now = (fun () -> incr calls; now) } in
+    let actual = query service alice "cashflow_summary" ["scope", `String (Analytics.scope_to_string scope); "cycles", `Int 2] in
+    Alcotest.(check string) "complete legacy parity" (Yojson.Safe.to_string expected) (Yojson.Safe.to_string actual);
+    Alcotest.(check int) "one captured clock sample" 1 !calls) [Analytics.Me; Household; Family];
+  let alone = sign_in service "alone" in
+  let common : Query.common = { scope=Me; currency=Some "BAD" } in
+  Alcotest.(check bool) "unsupported currency" true
+    (Query.run service alone (Query.Cashflow_summary (common, 1)) = Error (`Invalid "unknown currency BAD"));
+  let common = { common with scope=Household } in
+  Alcotest.(check bool) "household before currency" true
+    (Query.run service alone (Query.Cashflow_summary (common, 1)) = Error (`Invalid "you don't belong to a household, so use scope \"me\""))
+
+let test_legacy_query_dispatch () =
+  let service, access, category = scenario () in
+  let check : type a. a Query.descriptor -> a Query.t -> (Insights.ctx -> a) -> unit =
+    fun descriptor query calculate ->
+      let scope = if String.equal descriptor.name "contribution_plan" || String.equal descriptor.name "settle_up_status" then Analytics.Household else Me in
+      let ctx = ok (Insights.context service access ~scope ()) in
+      let expected = descriptor.encode ctx (calculate ctx) in
+      let calls = ref 0 in
+      let service = {service with now=(fun () -> incr calls; now)} in
+      let value, ctx = ok (Query.run service access query) in
+      Alcotest.(check string) descriptor.name (Yojson.Safe.to_string expected) (Yojson.Safe.to_string (descriptor.encode ctx value));
+      Alcotest.(check int) "legacy clock sampled once" 1 !calls
+  in
+  let common : Query.common = {scope=Me; currency=None} in
+  let household = {common with scope=Household} in
+  check Query.spending_by_category (Spending_by_category (common, Cycle_offset 0, true)) (fun ctx -> Insights.spending_by_category ctx ~period:(Cycle_offset 0) ~compare_previous:true);
+  check Query.category_trend (Category_trend (common, category.account.id, 2)) (fun ctx -> ok (Insights.category_trend ctx ~category:category.account.id ~cycles:2));
+  check Query.net_worth (Net_worth (common, 2)) (fun ctx -> Insights.net_worth ctx ~cycles:2);
+  check Query.largest_expenses (Largest_expenses (common, Cycle_offset 0, 3)) (fun ctx -> Insights.largest_expenses ctx ~period:(Cycle_offset 0) ~limit:3);
+  check Query.runway (Runway common) Insights.runway;
+  check Query.recurring (Recurring common) Insights.recurring;
+  check Query.budget_status (Budget_status (common, 0)) (fun ctx -> Insights.budget_status ctx ~cycle_offset:0);
+  check Query.contribution_plan (Contribution_plan (household, Some "1000.00", [User_id.to_string (Access.user access).id, "2000.00"])) (fun ctx -> ok (Insights.contribution_plan ctx ~target:(Some 100000L) ~incomes:[User_id.to_string (Access.user access).id, 200000L]));
+  check Query.settle_up (Settle_up household) (fun ctx -> ok (Insights.settle_up ctx));
+  check Query.goals (Goals common) Insights.goals
+
 let () =
   Alcotest.run "analytics"
     [ ( "insights",
-        [ Alcotest.test_case "cashflow by scope" `Quick test_cashflow_by_scope;
+        [ Alcotest.test_case "legacy query dispatch" `Quick test_legacy_query_dispatch;
+          Alcotest.test_case "cashflow query boundary" `Quick test_cashflow_query_boundary;
+          Alcotest.test_case "cashflow by scope" `Quick test_cashflow_by_scope;
           Alcotest.test_case "categories, recurring and budgets" `Quick test_categories_recurring_and_budgets;
           Alcotest.test_case "contribution plan" `Quick test_contribution_plan;
           Alcotest.test_case "net worth with a loan" `Quick test_net_worth_with_a_loan;
           Alcotest.test_case "goal report currency" `Quick test_goal_report_currency;
           Alcotest.test_case "contribution target currency" `Quick test_contribution_target_currency;
           Alcotest.test_case "goal update currency" `Quick test_goal_update_currency;
-          Alcotest.test_case "a goal keeps its owner" `Quick test_goal_keeps_its_owner ] );
+          Alcotest.test_case "a goal keeps its owner" `Quick test_goal_keeps_its_owner;
+          Alcotest.test_case "contribution reversal" `Quick test_contribution_reversal;
+          Alcotest.test_case "income category trend" `Quick test_income_category_trend;
+          Alcotest.test_case "budget rollover report" `Quick test_budget_rollover_report ] );
       ( "arithmetic",
         [ Alcotest.test_case "rounding keeps the total" `Quick test_rounding_keeps_the_total;
           Alcotest.test_case "decimals" `Quick test_decimals; Alcotest.test_case "json amounts" `Quick test_json_amounts;

@@ -1,0 +1,6 @@
+(library
+ (name cashflow_io)
+ (enabled_if (= %{context_name} default))
+ (wrapped true)
+ (libraries cashflow_core cashflow_workflow base ptime ptime.clock.os uuidm sqlite3 yojson digestif jose eio eio_posix cohttp-eio tls-eio x509 mirage-crypto mirage-crypto-rng mirage-crypto-rng.unix uri domain-name base64 logs unix httpun httpun-eio gluten bigstringaf sexplib sexplib0 zipc xmlm)
+ (preprocess (pps ppx_sexp_conv)))

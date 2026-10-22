@@ -46,6 +46,9 @@ It is a single OCaml binary serving MCP, a JSON API and the web UI over HTTP, ba
 
 ## Building
 
+Native tests also require Python 3 (`conf-python-3`, test-only), for the library
+boundary regression using the stock compiler's `ocamldep`.
+
 The server needs OCaml 5.5:
 
 ```sh
@@ -127,13 +130,42 @@ by this client.
 
 ## Layout
 
-- `lib/ledger_core.ml`, `lib/ledger.ml`: the ledger's rules, pure, and `Ledger.Make (Store)`
-- `lib/sql.ml`, `lib/db_guard.ml`: typed SQLite statements (a printf-style GADT), and request fibers taking turns with the connection
-- `lib/service.ml`, `lib/access.ml`: use cases, and the capability that scopes them to what a user may see
-- `lib/statement_format.ml`, `lib/xlsx.ml`, `lib/csv.ml`: bank formats, and reading spreadsheets and CSV into cells
-- `lib/import.ml`, `lib/inbox.ml`, `lib/suggest.ml`: the statement pipeline and triage
-- `lib/analytics.ml`, `lib/insights.ml`, `lib/query.ml`: analytics, and the query GADT the MCP tools come from
-- `lib/attention.ml`: the landing page's feed
-- `lib/commands.ml`, `lib/mcp.ml`, `lib/http_server.ml`, `lib/web_auth.ml`: the outside world
+`lib/core/` is the native-only wrapped `cashflow_core` library, exposed as
+`Cashflow_core.<Module>`. It has no direct system IO dependencies. Legacy ledger
+callbacks can still be IO-backed by callers; this is not a referential-transparency
+guarantee for production writes. `lib/workflow/` is wrapped `cashflow_workflow`
+(`Cashflow_workflow.<Module>`), depending only on core, Base and Ptime.
+`lib/io/` is wrapped `cashflow_io` (`Cashflow_io.<Module>`), depending on both
+and the concrete adapters. There is no flat `cashflow` library; the executable
+and package are still named `cashflow`.
+
+Only the cashflow-summary query is effect-backed in production: `Query.run`
+installs `Reporting_live` for captured access, one clock sample and detached
+cashflow facts, then creates the legacy JSON encoder context. HTTP/API and MCP
+reach it through the registered query, without extra outer handlers. The
+attention feed still uses legacy `Insights.cashflow_summary`, sharing the IO
+`Reconciliation` rule with the live interpreter.
+
+The remaining IO workflows are ledger writes/pending lifecycle, service commands,
+planning/valuation and other queries, statement import/inbox triage, and attention
+orchestration (including optional LLM calls). `Ledger` and mutable `Mem_store`
+remain in IO. Next extract store-owned records before migrating their write
+workflows; migrate writes, then import orchestration, then attention. This is the
+reporting milestone, not a fully effect-backed application. The browser and
+shared MF2 libraries remain independent of all three native libraries.
+
+`test/check_library_boundaries.py` checks Dune library declarations and real
+`ocamldep` source/interface dependency closure, including indirect forbidden
+edges and unallocated implementations. `dune runtest` also exercises owned
+negative fixtures; it does not prove purity of injected ledger callbacks.
+
+- `lib/core/ledger_core.ml`, `lib/io/ledger.ml`: the ledger's rules and `Ledger.Make (Store)`
+- `lib/io/sql.ml`, `lib/io/db_guard.ml`: typed SQLite statements (a printf-style GADT), and request fibers taking turns with the connection
+- `lib/io/service.ml`, `lib/core/access.ml`: use cases, and the capability that scopes them to what a user may see
+- `lib/core/statement_format.ml`, `lib/core/xlsx.ml`, `lib/core/csv.ml`: bank formats, and reading spreadsheets and CSV into cells
+- `lib/io/import.ml`, `lib/io/inbox.ml`, `lib/core/suggest.ml`: the statement pipeline and triage
+- `lib/core/analytics.ml`, `lib/io/insights.ml`, `lib/io/query.ml`: analytics, and the query GADT the MCP tools come from
+- `lib/io/attention.ml`: the landing page's feed
+- `lib/io/commands.ml`, `lib/io/mcp.ml`, `lib/io/http_server.ml`, `lib/io/web_auth.ml`: the outside world
 - `web/`: the Bonsai UI; `locales/`: its messages; `tools/mf2c`: the message compiler
 - `test/`: Alcotest suites against real SQLite, and the Hegel state machines

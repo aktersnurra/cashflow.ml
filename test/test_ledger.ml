@@ -1,3 +1,6 @@
+module Id_generator = Cashflow_io.Id_generator
+module Account_id = Cashflow_core.Account_id
+
 open Test_support
 
 module Suite (S : STORE) = struct
@@ -43,7 +46,7 @@ let test_duplicate_key_within_a_batch_exists () =
 let test_account_rules () =
   let store, env, checking, salary, _ = setup () in
   let euros = open_account store env "euros" Asset ~currency:eur in
-  let missing = Account_id.fresh () in
+  let missing = Id_generator.account () in
   expect
     [ failed `Accounts_must_be_different; failed `Debit_account_not_found; failed `Credit_account_not_found;
       failed `Accounts_must_have_same_currency ]
@@ -67,7 +70,7 @@ let test_balance_limits_include_pending () =
 
 let test_linked_chain_is_atomic () =
   let store, env, checking, salary, groceries = setup () in
-  let missing = Account_id.fresh () in
+  let missing = Id_generator.account () in
   expect [ failed `Linked_event_failed; failed `Credit_account_not_found; created ]
     (submit_ok store env
        [ transfer "first" ~linked:true ~debit:checking ~credit:salary 100_00; transfer "second" ~debit:groceries ~credit:missing 1;
@@ -147,7 +150,7 @@ let test_reversal () =
   Alcotest.check int64 "expense undone" 0L (balance store groceries);
   expect [ exists ] (submit_ok store env [ reverse "undo" food_id ]);
   expect [ failed `Transfer_already_reversed; failed `Transfer_not_reversible; failed `Transfer_not_found ]
-    (submit_ok store env [ reverse "undo-again" food_id; reverse "undo-undo" reversal_id; reverse "nothing" (Transfer_id.fresh ()) ])
+    (submit_ok store env [ reverse "undo-again" food_id; reverse "undo-undo" reversal_id; reverse "nothing" (Id_generator.transfer ()) ])
 
 let test_correction_is_a_linked_reversal_and_repost () =
   let store, env, checking, salary, groceries = setup () in

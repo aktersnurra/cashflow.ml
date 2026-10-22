@@ -78,7 +78,21 @@ OCaml's advanced features are used where they rule out a class of bugs or remove
 - **Platform note:** Hegel loads a native `libhegel`, which is published for Linux and macOS (Apple Silicon) only. Tests therefore run on the development machine and in CI, not on the FreeBSD NUC; the production binary doesn't depend on Hegel. CI pins the `libhegel` version and sets `HEGEL_LIBHEGEL_NO_DOWNLOAD=1` once it is cached.
 - **Invariants:** balances equal the sum of transfers, replaying a batch changes nothing, and posted balances never break an account's flags.
 
-**Not used:** OCaml 5 effect handlers are not used directly beyond what Eio provides, and there are no ppx-heavy DSLs. JSON codecs use `jsont` combinators, which work on both the server and in js_of_ocaml.
+**Reporting milestone:** native code is allocated to wrapped `cashflow_core`,
+`cashflow_workflow` and `cashflow_io` libraries (see README Layout). Core cannot
+import workflow or IO; workflow cannot import IO, Eio or SQLite. Core's legacy
+injected ledger callbacks may still perform IO: dependency closure is not a
+purity proof. `Ledger` and mutable `Mem_store` remain in IO.
+
+Only the registered cashflow-summary query uses stock OCaml 5
+`Stdlib.Effect.Deep` handlers directly. `Query.run` installs the live interpreter;
+HTTP/API and MCP use that same entry point. Its facts are detached values, not
+DB-backed callbacks. The attention feed retains the legacy summary path, with
+one shared IO reconciliation helper. Other queries, writes, service commands,
+planning/valuation, import/inbox and attention remain legacy IO workflows.
+Extract store-owned records before migrating the corresponding writes, then
+import orchestration, then attention. Browser and shared MF2 libraries remain
+independent; JSON encoding remains in native IO, not the reporting workflow.
 
 ## 3. Ledger core (TigerBeetle rules)
 
@@ -591,7 +605,7 @@ Analytics are SQL aggregations over `transfer` grouped by `value_date`. With a f
 
 - **The server** builds and runs natively on FreeBSD. Eio picks its POSIX backend; io_uring is Linux-only and would make no measurable difference at this scale.
 - **The web UI:** Bonsai v0.17 (the last opam release) needs OCaml 5.1, while the server uses 5.5. The UI therefore builds in a second opam switch through `dune-workspace.web`, with every stanza marked for its context. The MF2 runtime, the generated messages and `mf2c` are plain OCaml and build in both. The UI's output is static files, built in CI or anywhere else and served by `cashflow serve`.
-- **Commands:** every use case is one entry in `lib/commands.ml`. The MCP tools and the web API (`/api/commands/<name>`) are both generated from that table, which replaces the separate REST routes sketched in §13.
+- **Commands:** every use case is one entry in `lib/io/commands.ml`. The MCP tools and the web API (`/api/commands/<name>`) are both generated from that table, which replaces the separate REST routes sketched in §13.
 - **Configuration** is one typed S-expression file (`cashflow.example.sexp`), parsed with derived converters into a record. Unknown fields are errors with their position, and secrets can be inline, in a file or in an environment variable. `cashflow check-config` validates it.
 - **JSON** uses yojson throughout (as kcal does) rather than `jsont`; the UI reads the same JSON with small helpers.
 

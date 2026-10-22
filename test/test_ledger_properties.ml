@@ -1,3 +1,7 @@
+module Id_generator = Cashflow_io.Id_generator
+module Account_id = Cashflow_core.Account_id
+module Transfer_id = Cashflow_core.Transfer_id
+
 open Hegel
 open Test_support
 
@@ -34,7 +38,7 @@ let draw_account tc state = state.accounts.(draw tc (integers ~min_value:0 ~max_
 
 (* An existing id from the pool, or occasionally an unknown one. *)
 let draw_reference tc pool =
-  if Stateful.Pool.size pool = 0 || draw tc (booleans ~p:0.1 ()) then Transfer_id.fresh ()
+  if Stateful.Pool.size pool = 0 || draw tc (booleans ~p:0.1 ()) then Id_generator.transfer ()
   else draw_silent tc (Stateful.Pool.values_reusable pool)
 
 let draw_date tc = Date.add_days today (draw tc (integers ~min_value:(-3) ~max_value:3 ()))

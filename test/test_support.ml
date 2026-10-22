@@ -1,13 +1,28 @@
+module Id_generator = Cashflow_io.Id_generator
+module Ledger = Cashflow_io.Ledger
+module Mem_store = Cashflow_io.Mem_store
+module Store_sqlite = Cashflow_io.Store_sqlite
+module Account = Cashflow_core.Account
+module Amount = Cashflow_core.Amount
+module Currency = Cashflow_core.Currency
+module Date = Cashflow_core.Date
+module Idempotency_key = Cashflow_core.Idempotency_key
+module Ledger_core = Cashflow_core.Ledger_core
+module Ledger_error = Cashflow_core.Ledger_error
+module Ledger_event = Cashflow_core.Ledger_event
+module Owner = Cashflow_core.Owner
+module Transfer = Cashflow_core.Transfer
+
 let sek = Result.get_ok (Currency.make ~code:"SEK" ~scale:2)
 let eur = Result.get_ok (Currency.make ~code:"EUR" ~scale:2)
-let me = Owner.User (User_id.fresh ())
-let household = Owner.Household (Household_id.fresh ())
+let me = Owner.User (Id_generator.user ())
+let household = Owner.Household (Id_generator.household ())
 
 (* Deterministic clock and ids, so tests never depend on real time. *)
 let env () : Ledger_core.env =
   let ticks = ref 0 in
   { now = (fun () -> incr ticks; Option.get (Ptime.of_float_s (1_760_000_000. +. float !ticks)));
-    fresh_account_id = Account_id.fresh; fresh_transfer_id = Transfer_id.fresh }
+    fresh_account_id = Id_generator.account; fresh_transfer_id = Id_generator.transfer }
 
 let key value = Result.get_ok (Idempotency_key.of_string value)
 let amount value = Option.get (Amount.of_int64 (Int64.of_int value))

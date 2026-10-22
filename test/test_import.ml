@@ -1,3 +1,18 @@
+module Import = Cashflow_io.Import
+module Import_store = Cashflow_io.Import_store
+module Inbox = Cashflow_io.Inbox
+module Planning_store = Cashflow_io.Planning_store
+module Query = Cashflow_io.Query
+module Service = Cashflow_io.Service
+module Account_id = Cashflow_core.Account_id
+module Csv = Cashflow_core.Csv
+module Household = Cashflow_core.Household
+module Owner = Cashflow_core.Owner
+module Statement_format = Cashflow_core.Statement_format
+module Str_compat = Cashflow_core.Str_compat
+module Transfer_id = Cashflow_core.Transfer_id
+module User_id = Cashflow_core.User_id
+
 open Test_service_support
 
 let field path json = List.fold_left (fun json name -> match json with `Assoc fields -> Option.value (List.assoc_opt name fields) ~default:`Null | _ -> `Null) json path
@@ -216,8 +231,6 @@ let test_undo_after_share () =
   Alcotest.(check (list (pair string int64))) "nothing left in the household's books" [] (sum_of service alice (Household household.id));
   Alcotest.(check (list (pair string int64))) "or alice's" [] (sum_of service alice (Access.personal alice))
 
-(* A contribution that came in as two imported rows: pairing it is idempotent, counts as the
-   contribution in both scopes, and undoing either import puts the other row back in the inbox. *)
 (* Undoing both imports of a paired move: the first undo puts the other row back in the inbox; the
    second must not bring back the first row, whose own import is gone. Found by the service
    property test: the revived row could be shared, posting household transfers for nothing. *)
@@ -240,6 +253,8 @@ let test_undo_does_not_revive_a_row () =
   Alcotest.(check bool) "and can't be shared" true (Result.is_error (Inbox.share service alice ~transfer_id:out_id ~household_category_id:groceries));
   Alcotest.(check (list (pair string int64))) "nothing left in alice's books" [] (sum_of service alice (Access.personal alice))
 
+(* A contribution that came in as two imported rows: pairing it is idempotent, counts as the
+   contribution in both scopes, and undoing either import puts the other row back in the inbox. *)
 let test_pairing_a_contribution () =
   let service, alice, _, checking, shared = household_setup () in
   let ctx = Import.context service alice in
@@ -260,11 +275,20 @@ let test_pairing_a_contribution () =
   in
   Alcotest.(check (list string)) "alice: SL spent, 1000 to the household" [ "1000.00"; "0.00"; "1000.00"; "0.00" ] (flows "me");
   Alcotest.(check (list string)) "household: 1000 in from alice" [ "0.00"; "0.00"; "0.00"; "1000.00" ] (flows "household");
+  let contributed () =
+    let report = ok (Query.execute service alice (Option.get (Query.find "contribution_plan"))
+        [ ("target", `String "1000"); ("incomes", `Assoc [ (User_id.to_string (Access.user alice).id, `String "30000") ]) ]) in
+    match field [ "members" ] report with
+    | `List [ member ] -> field [ "transferred" ] member
+    | _ -> Alcotest.fail "expected one member"
+  in
+  Alcotest.(check string) "paired contribution counts" {|"1000.00"|} (Yojson.Safe.to_string (contributed ()));
   ignore (ok_import (Import.undo ctx ~batch_id:in_batch.batch.batch_id));
   Alcotest.(check bool) "the other side is back in the inbox" true
     (List.exists (fun (v : Inbox.item_view) -> Transfer_id.equal v.item.transfer_id out_id) (Inbox.list service alice ~limit:50));
   (* Gross flows keep both moves, as for any reversed contribution; what she saved is as after the import. *)
-  Alcotest.(check (list string)) "and alice's books net out" [ "2000.00"; "0.00"; "1000.00"; "1000.00" ] (flows "me")
+  Alcotest.(check (list string)) "and alice's books net out" [ "2000.00"; "0.00"; "1000.00"; "1000.00" ] (flows "me");
+  Alcotest.(check string) "undo takes back the contribution" {|"0.00"|} (Yojson.Safe.to_string (contributed ()))
 
 (* A move entered by hand between two accounts whose statements are both imported: the first
    statement posts it, the second only confirms its own side. *)

@@ -1,3 +1,6 @@
+module Config = Cashflow_io.Config
+module Str_compat = Cashflow_core.Str_compat
+
 let minimal =
   {|((database /tmp/db.sqlite3) (listen 127.0.0.1:8081) (public_url https://cashflow.example)
     (oidc ((issuer https://id.example) (audience https://cashflow.example))))|}

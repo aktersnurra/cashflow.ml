@@ -2,56 +2,56 @@
  (name test_ledger)
  (enabled_if (= %{context_name} default))
  (modules test_ledger test_support)
- (libraries alcotest cashflow))
+ (libraries alcotest cashflow_io cashflow_core))
 
 (test
  (name test_ledger_properties)
  (enabled_if (= %{context_name} default))
  (modules test_ledger_properties test_support)
- (libraries alcotest cashflow hegel)
+ (libraries alcotest cashflow_io cashflow_core hegel)
  (preprocess (pps ppx_hegel_test)))
 
 (test
  (name test_service)
  (enabled_if (= %{context_name} default))
  (modules test_service test_service_support)
- (libraries alcotest cashflow))
+ (libraries alcotest cashflow_io cashflow_core))
 
 (test
  (name test_analytics)
  (enabled_if (= %{context_name} default))
  (modules test_analytics test_service_support)
- (libraries alcotest cashflow yojson))
+ (libraries alcotest cashflow_io cashflow_core cashflow_workflow yojson))
 
 (test
  (name test_xlsx)
  (enabled_if (= %{context_name} default))
  (modules test_xlsx)
- (libraries alcotest cashflow zipc))
+ (libraries alcotest cashflow_core zipc))
 
 (test
  (name test_import)
  (enabled_if (= %{context_name} default))
  (modules test_import test_service_support)
- (libraries alcotest cashflow yojson zipc))
+ (libraries alcotest cashflow_io cashflow_core yojson zipc))
 
 (test
  (name test_http)
  (enabled_if (= %{context_name} default))
  (modules test_http test_service_support)
- (libraries alcotest cashflow yojson uri))
+ (libraries alcotest cashflow_io cashflow_core yojson uri))
 
 (test
  (name test_attention)
  (enabled_if (= %{context_name} default))
  (modules test_attention test_service_support)
- (libraries alcotest cashflow yojson))
+ (libraries alcotest cashflow_io cashflow_core yojson))
 
 (test
  (name test_llm)
  (enabled_if (= %{context_name} default))
  (modules test_llm test_service_support)
- (libraries alcotest cashflow yojson))
+ (libraries alcotest cashflow_io cashflow_core yojson))
 
 (test
  (name test_mf2)
@@ -63,18 +63,78 @@
  (name test_config)
  (enabled_if (= %{context_name} default))
  (modules test_config)
- (libraries alcotest cashflow sexplib unix)
+ (libraries alcotest cashflow_io cashflow_core sexplib unix)
  (deps ../cashflow.example.sexp))
 
 (tests
  (names test_import_properties test_service_properties)
  (enabled_if (= %{context_name} default))
  (modules test_import_properties test_service_properties test_service_support)
- (libraries alcotest cashflow hegel)
+ (libraries alcotest cashflow_io cashflow_core hegel)
  (preprocess (pps ppx_hegel_test)))
 
 (test
  (name test_sql)
  (enabled_if (= %{context_name} default))
  (modules test_sql)
- (libraries alcotest cashflow eio eio_main))
+ (libraries alcotest cashflow_io eio eio_main))
+
+(test
+ (name test_core)
+ (enabled_if (= %{context_name} default))
+ (modules test_core)
+ (libraries alcotest cashflow_core))
+
+(test
+ (name test_effects)
+ (enabled_if (= %{context_name} default))
+ (modules test_effects)
+ (libraries alcotest cashflow_workflow cashflow_core eio eio_main))
+
+(test
+ (name test_reporting)
+ (enabled_if (= %{context_name} default))
+ (modules test_reporting)
+ (libraries alcotest cashflow_workflow cashflow_core))
+
+(test
+ (name test_reconciliation)
+ (enabled_if (= %{context_name} default))
+ (modules test_reconciliation test_service_support)
+ (libraries alcotest cashflow_io cashflow_core))
+
+(test
+ (name test_reporting_live)
+ (enabled_if (= %{context_name} default))
+ (modules test_reporting_live test_service_support)
+ (libraries alcotest cashflow_io cashflow_core cashflow_workflow eio eio_main yojson))
+
+(test
+ (name test_id_generator)
+ (enabled_if (= %{context_name} default))
+ (modules test_id_generator)
+ (libraries alcotest cashflow_io cashflow_core uuidm))
+
+(rule
+ (alias check-library-boundaries)
+ (enabled_if (= %{context_name} default))
+ (deps check_library_boundaries.py test_check_library_boundaries.py (source_tree ../lib)
+  (glob_files_rec ../bin/dune) (glob_files_rec ../shared/dune)
+  (glob_files_rec ../tools/dune) (glob_files_rec ../locales/dune)
+  (glob_files_rec ../web/dune) (glob_files_rec dune))
+ (action
+  (progn
+   (chdir .. (run python3 test/check_library_boundaries.py))
+   (run python3 test_check_library_boundaries.py))))
+
+(alias
+ (name runtest)
+ (enabled_if (= %{context_name} default))
+ (deps (alias check-library-boundaries) (alias check-library-boundaries-sandbox)))
+
+(rule
+ (alias check-library-boundaries-sandbox)
+ (enabled_if (= %{context_name} default))
+ (deps test_check_library_boundaries_dune.py check_library_boundaries.py
+  test_check_library_boundaries.py dune)
+ (action (run python3 test_check_library_boundaries_dune.py)))

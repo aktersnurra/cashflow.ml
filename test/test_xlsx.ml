@@ -1,3 +1,5 @@
+module Xlsx = Cashflow_core.Xlsx
+
 let workbook rows =
   let parts =
     [ ("xl/workbook.xml", {|<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet r:id="rId1"/></sheets></workbook>|});

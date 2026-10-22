@@ -1,0 +1,5 @@
+(library
+ (name cashflow_workflow)
+ (wrapped true)
+ (enabled_if (= %{context_name} default))
+ (libraries cashflow_core base ptime))
