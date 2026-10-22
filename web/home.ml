@@ -89,7 +89,9 @@ let card_view ~(ctx : Ctx.t) (key : string Bonsai.t) (card : J.t Bonsai.t) graph
           (Ui.muted (Msg.card_shortfall_body ~due:(m (J.field "due" data)) ~available:(m (J.field "available" data)) ~short:(m (J.field "short_by" data)) locale)
           :: List.map (J.list (J.field "upcoming" data)) ~f:(fun u ->
                  Ui.muted (Msg.card_shortfall_item ~merchant:(J.str (J.field "merchant" u)) ~amount:(m (J.field "amount" u)) ~date:(Fmt.date_json (J.field "expected" u)) locale)))
-        ~actions:[ Ui.button ~kind:"primary" (Msg.action_move_money locale) (navigate Route.Add); done_; later ] ()
+        ~actions:
+          [ Ui.button ~kind:"primary" (Msg.action_move_money locale) (navigate Route.Add); Ui.button (Msg.action_see_forecast locale) (navigate Route.Forecast);
+            done_; later ] ()
   | "unusual_spend" ->
       let category = J.str (J.path [ "category"; "name" ] data) in
       let spent = Fmt.to_float (J.field "spent" data) and usual = Fmt.to_float (J.field "usual" data) in

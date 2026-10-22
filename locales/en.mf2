@@ -400,3 +400,4 @@ forecast.a.cards = Card purchases reach your cash when the card bill is paid.
 forecast.money_out = Money out
 forecast.money_in = Money in
 forecast.overdraw_spending = Lowest {$amount :currency} on {$date :date}, from usual spending.
+action.see_forecast = See forecast
