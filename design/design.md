@@ -405,8 +405,22 @@ These live in the service layer and are shared by the MCP and the UI. Each one t
 | `runway()` | liquid assets divided by average monthly spending over the last three months |
 | `contribution_plan(target?)` | §4.5 |
 | `settle_up_status()` | §4.6 |
+| `forecast(horizon, scenario?)` | §10.1 |
 
 When the ledger has no data for a period, these return `null` with a reason, not zero (the kcal convention). An unreconciled month is returned with a flag rather than hidden.
+
+### 10.1 Forecast
+
+How much cash there will be, day by day, over the next 1, 3 or 6 months. *Cash* is the scope's asset accounts not tagged `investment`; loans, cards and investments enter only through money moving between them and a cash account, so card purchases reach cash when the card bill is paid.
+
+- **Series** (`Cashflow_core.Series`): every regular way money enters or leaves a cash account, found in the last 400 days: bills (the recurring-payments detector), income (salary, expected on the next payday when it lands near one), and transfers to or from any other account (savings sweeps, the card bill at the average of the last three, amortisation, the household transfer). A series more than one interval overdue is treated as stopped; one due since the account's last import counts as due today.
+- **Household contribution**: the contribution plan (§4.5) replaces the detected household transfer, outgoing for a member, incoming for the household.
+- **Usual spending**: what each cash account paid for over the last three complete cycles, less the series, spread evenly over the days (over at least a whole cycle when there is less history).
+- **Goals**: each goal's monthly amount is set aside on payday until its target. It is shown as a band under the line and doesn't change cash.
+- **Projection** (`Cashflow_core.Forecast`): a pure day-by-day run of each cash account. It returns the line, each account's lowest point and first day below zero, the dated payments with where each comes from, and the assumptions in words.
+- **What-if**: leave out series, add one-off amounts, or follow the budgets. It is drawn as a second line beside the unchanged baseline.
+
+The forecast is deterministic and says so: no range is shown, because nothing models one yet. A range from how far past forecasts were off is a possible later step. Every account the Overview's shortfall check flags must also go below zero in the forecast by payday, unless income arrives first; a property test checks this.
 
 ## 11. Web UI
 
@@ -437,6 +451,7 @@ On desktop, the same pages add the sidebar, the command palette and keyboard sho
 | **Account** | transfer list (reversals shown inline with their originals), CSV drop zone, reconciliation history |
 | **Budgets** | envelopes for this cycle, editing with effective dates, rollover, savings goals |
 | **Household** | members, contribution plan and progress, settle-up, household spending |
+| **Forecast** | cash over the coming months, upcoming payments, what-ifs and assumptions (§10.1) |
 | **Insights** | the analytics in §10 with selectable range and scope |
 | **Settings** | timezone, currency, cycle start day, rules, LLM on or off |
 | **Admin** | households, invitations, linking accounts (admins only) |
