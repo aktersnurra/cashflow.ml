@@ -185,6 +185,19 @@ let test_query_folds_triage () =
   Alcotest.(check string) "still uncategorised" "Uncategorized income" (text [ "category"; "name" ] salary);
   Alcotest.(check string) "waiting in the inbox" "open" (text [ "triage" ] salary)
 
+(* The row limit counts visible rows: triage's hidden transfers don't use it up. *)
+let test_fold_triage_limit () =
+  let service, alice, checking = setup () in
+  ignore (imported (Import.confirm (Import.context service alice) (request checking "Datum;Text;Belopp\n2026-10-03;COOP;-300,00\n")));
+  let coop = List.find (fun (v : Inbox.item_view) -> v.transfer.transfer.memo.description = "COOP") (Inbox.list service alice ~limit:50) in
+  ignore (ok (Inbox.categorize service alice ~transfer_id:coop.item.transfer_id ~category_id:(account_named service alice "Groceries") ()));
+  match
+    field [ "transactions" ]
+      (ok_import (Commands.execute service alice ~scopes:[ "ledger:read" ] Commands.query_transactions (`Assoc [ ("fold_triage", `Bool true); ("limit", `Int 1) ])))
+  with
+  | `List [ row ] -> Alcotest.(check string) "the purchase" "COOP" (match field [ "description" ] row with `String s -> s | _ -> "")
+  | other -> Alcotest.failf "expected the one purchase, got %s" (Yojson.Safe.to_string other)
+
 let test_rules_auto_apply () =
   let service, alice, checking = setup () in
   let subscriptions = account_named service alice "Subscriptions" in
@@ -467,6 +480,7 @@ let () =
           Alcotest.test_case "handelsbanken xlsx" `Quick test_handelsbanken_xlsx;
           Alcotest.test_case "categorise, learn and undo" `Quick test_categorize_learn_and_undo;
           Alcotest.test_case "query folds triage" `Quick test_query_folds_triage;
+          Alcotest.test_case "fold triage counts visible rows" `Quick test_fold_triage_limit;
           Alcotest.test_case "rules auto-apply" `Quick test_rules_auto_apply ] );
       ( "inbox",
         [ Alcotest.test_case "pair and share" `Quick test_pair_and_share; Alcotest.test_case "undo after share" `Quick test_undo_after_share;

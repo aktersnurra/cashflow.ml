@@ -270,11 +270,12 @@ let query_transactions =
       let* code = Result.bind (arg (A.string "code" fields)) code_of_string in
       let* limit = arg (A.int "limit" ~default:100 ~min:1 ~max:500 fields) in
       let* fold = arg (A.bool "fold_triage" ~default:false fields) in
-      let views = Service.query_transfers service access { from_date; to_date; account_id; text; tag; code; limit } in
+      let views = Service.query_transfers service access { from_date; to_date; account_id; text; tag; code; without_triage = fold; limit } in
       if not fold then Ok (`Assoc [ ("transactions", `List (List.map Json.transfer views)) ])
       else
         (* An imported row stays where the bank put it; triage moves its amount on with separate
-           transfers. Folded, the row carries where it sits now, and those transfers are left out. *)
+           transfers. Folded, the row carries where it sits now, and the query leaves those transfers
+           out before the limit counts. *)
         let row (v : Service.transfer_view) =
           match Import_store.find_item service.db v.transfer.id, Json.transfer v with
           | Some item, `Assoc fields ->
@@ -282,8 +283,7 @@ let query_transactions =
               `Assoc (fields @ [ ("category", Json.option Json.account_ref category); ("triage", `String item.status) ])
           | _, json -> json
         in
-        let rows = List.filter (fun (v : Service.transfer_view) -> Import_store.triaged_items service.db v.transfer.id = []) views in
-        Ok (`Assoc [ ("transactions", `List (List.map row rows)) ]))
+        Ok (`Assoc [ ("transactions", `List (List.map row views)) ]))
 
 let get_transaction =
   command "get_transaction" Read "One transaction, with what resolved or reversed it." ~required:[ "id" ] [ string_prop "id" "The transaction id." ]
