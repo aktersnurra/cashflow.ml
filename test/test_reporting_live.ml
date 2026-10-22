@@ -1,6 +1,8 @@
 module Db_guard = Cashflow_io.Db_guard
 module Id_generator = Cashflow_io.Id_generator
+module Import = Cashflow_io.Import
 module Import_store = Cashflow_io.Import_store
+module Inbox = Cashflow_io.Inbox
 module Planning_store = Cashflow_io.Planning_store
 module Reporting_live = Cashflow_io.Reporting_live
 module Service = Cashflow_io.Service
@@ -270,4 +272,62 @@ let forecast_contribution () =
    | Some (Forecast.Incoming [ m ]) -> Alcotest.(check int64) "alice's transfer, to the household" 1_000_000L m.per_cycle
    | _ -> Alcotest.fail "expected each member's transfer");
   Alcotest.(check bool) "family: inside the scope" true ((get (load_forecast service alice (forecast_request ~scope:Family alice))).contribution = None)
-let () = Alcotest.run "Reporting_live" ["live", List.map (fun (n,f) -> Alcotest.test_case n `Quick f) ["invalid_stored_currency",invalid_stored_currency;"report_reads_during_writer",report_reads_during_writer;"authority",authority;"detached",detached;"storage",storage;"reconciliation",reconciliation;"guarded snapshot",guarded_snapshot;"cancellation",cancellation;"captured visibility",captured_visibility;"unexpected loading exception",unexpected_loading_exception;"forecast facts",forecast_facts;"forecast contribution",forecast_contribution]]
+(* A household transfer that came in as imported rows, paired in the inbox: the forecast sees it
+   as the transfer it is, so the contribution plan replaces it instead of adding a second one. *)
+let forecast_paired_imports () =
+  let service = make_service () in
+  let alice = sign_in service ~admin:true "alice" in
+  let household = ok (Service.create_household service alice ~name:"Home" ~default_currency:"SEK") in
+  let alice = Service.access_for service (Access.user alice) in
+  let checking = open_checking service alice ~statement_backed:true "Checking" in
+  let shared = open_checking service alice ~owner:(Household household.id) ~statement_backed:true "Shared" in
+  let ctx = Import.context service alice in
+  let import account rows =
+    match Import.confirm ctx { account_id = account; file_name = Some "export.csv"; content = "Datum;Text;Belopp\n" ^ rows; decisions = [] } with
+    | Ok (`Imported _) -> ()
+    | _ -> Alcotest.fail "import"
+  in
+  import checking "2026-07-24;HUSHÅLL;-8000,00\n2026-08-25;HUSHÅLL;-8000,00\n2026-09-01;LÖN;30000,00\n2026-09-25;HUSHÅLL;-8000,00\n";
+  import shared "2026-07-24;FRÅN ALICE;8000,00\n2026-08-25;FRÅN ALICE;8000,00\n2026-09-25;FRÅN ALICE;8000,00\n";
+  let row text on =
+    (List.find (fun (v : Inbox.item_view) -> v.transfer.transfer.memo.description = text && Date.to_string v.transfer.transfer.value_date = on)
+       (Inbox.list service alice ~limit:50)).item.transfer_id
+  in
+  List.iter (fun on -> ignore (ok (Inbox.pair service alice ~out_id:(row "HUSHÅLL" on) ~in_id:(row "FRÅN ALICE" on)))) [ "2026-07-24"; "2026-08-25"; "2026-09-25" ];
+  Planning_store.save_goal service.db ~now (goal (Owner.Household household.id) "Shared costs" 800_000L);
+  let report =
+    get (Reporting_live.run ~service ~access:alice (fun () ->
+             Reporting.forecast ~access:alice ~scope:Me ~horizon:1 ~scenario:Forecast_request.no_scenario ()))
+  in
+  let out = List.filter (fun (i : Forecast.item) -> Int64.compare i.amount 0L < 0) report.forecast.items in
+  Alcotest.(check (list string)) "once a month, as the planned transfer"
+    [ "contribution 2026-10-25 -800000" ]
+    (List.map (fun (i : Forecast.item) -> Printf.sprintf "%s %s %Ld" (Forecast.kind_to_string i.kind) (Date.to_string i.date) i.amount) out)
+
+(* Categorised imported rows count as their category, so keeping to a budget replaces them. (A
+   zero budget is no budget, so this one is 1 kr.) *)
+let forecast_categorised_imports () =
+  let service = make_service () in
+  let alice = sign_in service "alice" in
+  let checking = open_checking service alice ~statement_backed:true "Checking" in
+  let ctx = Import.context service alice in
+  (match Import.confirm ctx { account_id = checking; file_name = Some "export.csv"; decisions = [];
+                              content = "Datum;Text;Belopp\n2026-07-03;ICA;-2000,00\n2026-07-29;ICA;-4000,00\n2026-09-14;ICA;-3000,00\n" } with
+   | Ok (`Imported _) -> ()
+   | _ -> Alcotest.fail "import");
+  let groceries = account_named service alice "Groceries" in
+  List.iter
+    (fun (v : Inbox.item_view) -> ignore (ok (Inbox.categorize service alice ~transfer_id:v.item.transfer_id ~category_id:groceries ())))
+    (Inbox.list service alice ~limit:50);
+  Planning_store.set_budget service.db ~now (Access.personal alice) ~category_id:groceries ~effective_from:"2026-10" ~monthly_amount:100L ~rollover:false;
+  let report =
+    get (Reporting_live.run ~service ~access:alice (fun () ->
+             Reporting.forecast ~access:alice ~scope:Me ~horizon:1 ~scenario:{ Forecast_request.no_scenario with follow_budgets = true } ()))
+  in
+  let last points = (List.nth points (List.length points - 1) : Forecast.point).cash in
+  let first = (List.hd report.forecast.baseline).cash in
+  Alcotest.(check bool) "groceries are usual spending" true (Int64.compare (last report.forecast.baseline) first < 0);
+  let spent = Int64.sub first (last (Option.get report.forecast.scenario)) in
+  Alcotest.(check bool) "a 1 kr grocery budget leaves about 1 kr a month" true (Int64.compare spent 0L > 0 && Int64.compare spent 200L <= 0)
+
+let () = Alcotest.run "Reporting_live" ["live", List.map (fun (n,f) -> Alcotest.test_case n `Quick f) ["invalid_stored_currency",invalid_stored_currency;"report_reads_during_writer",report_reads_during_writer;"authority",authority;"detached",detached;"storage",storage;"reconciliation",reconciliation;"guarded snapshot",guarded_snapshot;"cancellation",cancellation;"captured visibility",captured_visibility;"unexpected loading exception",unexpected_loading_exception;"forecast facts",forecast_facts;"forecast contribution",forecast_contribution;"forecast paired imports",forecast_paired_imports;"forecast categorised imports",forecast_categorised_imports]]

@@ -32,6 +32,37 @@ let load_cashflow db access request =
       let reconciled_through = Reconciliation.reconciled_through db ~accounts ~book in
       Ok { Cashflow_facts.accounts; transfers; reconciled_through }))
 
+(* Imported rows as the money actually moved. A row stays where the bank put it, against a
+   suspense account, while triage moves it on with separate transfers that never touch the bank
+   account. Each row here gets the counterpart it has now (its category, or for a paired row the
+   bank account at the other end), and triage's own transfers are left out, as
+   query_transactions' fold_triage does. A paired move is kept once, as the row the money left
+   from, unless that row isn't visible here. Bank accounts' movements are unchanged. *)
+let effective_transfers db transfers =
+  let visible id = List.exists (fun (t : Transfer.t) -> Transfer_id.equal t.id id) transfers in
+  let partner (item : Import_store.item) =
+    List.find_map
+      (fun pairing ->
+        List.find_map
+          (fun other -> if Transfer_id.equal other item.transfer_id then None else Option.map (fun o -> (other, o)) (Import_store.find_item db other))
+          (Import_store.triaged_items db pairing))
+      (Import_store.triage_transfers db item.transfer_id)
+  in
+  List.filter_map
+    (fun (t : Transfer.t) ->
+      if Import_store.triaged_items db t.id <> [] then None
+      else
+        match Import_store.find_item db t.id with
+        | None -> Some t
+        | Some item -> (
+            let came_in = Account_id.equal t.debit_account_id item.bank_account_id in
+            let with_counterpart counterpart = if came_in then { t with credit_account_id = counterpart } else { t with debit_account_id = counterpart } in
+            match item.status, partner item with
+            | "paired", Some (other, _) when came_in && visible other -> None
+            | "paired", Some (_, (o : Import_store.item)) -> Some (with_counterpart o.bank_account_id)
+            | _ -> Some (with_counterpart item.current_account_id)))
+    transfers
+
 (* The household contribution plan, as the forecast's planned transfers: mine to the household
    in my scope, every member's in the household's. A plan with nothing to collect is none. *)
 let contribution (service : Service.t) access context =
@@ -71,7 +102,7 @@ let load_forecast (service : Service.t) access request =
     let facts =
       Sql.read_snapshot db (fun () ->
         let accounts = List.concat_map (Account_store.for_owner db) (Access.owners access) in
-        let transfers = Transfer_query.between db access ~first:(Forecast_request.since request) ~last:today in
+        let transfers = effective_transfers db (Transfer_query.between db access ~first:(Forecast_request.since request) ~last:today) in
         let imported_through =
           List.filter_map (fun (info : Account_info.t) -> Option.map (fun d -> (info.account.id, d)) (Import_store.imported_through db info.account.id)) accounts
         in
