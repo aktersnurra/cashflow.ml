@@ -341,3 +341,61 @@ inbox.no_pairs = Ingen transaktion med samma belopp åt andra hållet inom tre d
 budgets.no_budget = Ingen budget
 goals.empty = Inga sparmål än.
 accounts.no_transactions = Inga transaktioner än. Importera ett kontoutdrag eller lägg till en.
+nav.forecast = Prognos
+forecast.subtitle = Dina pengar de kommande månaderna, utifrån återkommande betalningar och vanlig konsumtion.
+forecast.months =
+  .input {$count :integer}
+  .match $count
+  one {{1 månad}}
+  * {{{$count} månader}}
+forecast.loading = Räknar fram dina pengar
+forecast.no_accounts = Lägg till ett bankkonto för att se en prognos.
+forecast.today = Idag
+forecast.note = En framskrivning, inte ett intervall: den bygger på betalningarna nedan och din vanliga konsumtion.
+forecast.lowest = Lägsta punkt
+forecast.on = den {$date :date}
+forecast.before_salary = Före nästa lön
+forecast.no_salary = Ingen regelbunden lön hittad
+forecast.due_before_salary = Att betala före lönen
+forecast.due_next_month = Att betala nästa månad
+forecast.payments =
+  .input {$count :integer}
+  .match $count
+  one {{1 betalning}}
+  * {{{$count} betalningar}}
+forecast.end = Den {$date :date}
+forecast.overdraw = {$account} går under noll den {$date :date}
+forecast.overdraw_body = Lägst {$amount :currency} den {$date :date}, efter {$items}.
+forecast.upcoming = Kommande
+forecast.no_series = Inga återkommande betalningar hittade än. De dyker upp efter tre likadana.
+forecast.cadence.weekly = Varje vecka
+forecast.cadence.monthly = Varje månad
+forecast.cadence.quarterly = Varje kvartal
+forecast.cadence.yearly = Varje år
+forecast.basis = {$cadence} sedan {$since :date}, oftast {$typical :currency}, senast {$last :currency}.
+forecast.past_payments = Tidigare betalningar
+forecast.leave_out = Hoppa över
+forecast.include = Ta med
+forecast.household_transfer = Överföring till hushållet
+forecast.what_if = Tänk om
+forecast.add_one_off = Lägg till en engångssumma
+forecast.follow_budgets = Håll mig till budgeten
+forecast.reset = Återställ
+forecast.difference = Lägsta punkt {$lowest}, slutet {$end} jämfört med nu.
+forecast.set_aside = Avsatt till sparmål
+forecast.assumptions = Antaganden
+forecast.a.usual = Vanlig konsumtion {$amount :currency} i månaden: snittet {$from :date} till {$to :date}, utan betalningarna ovan.
+forecast.a.stale = Dina konton är importerade till och med {$date :date}, så senare betalningar räknas som ännu inte dragna.
+forecast.a.stopped = {$name} har inte synts sedan {$date :date}, så den är utelämnad.
+forecast.a.other_currency = Utelämnade för sin valuta: {$accounts}.
+forecast.a.short =
+  .input {$days :integer}
+  .match $days
+  one {{Vanlig konsumtion bygger bara på 1 dag.}}
+  * {{Vanlig konsumtion bygger bara på {$days} dagar.}}
+forecast.a.no_history = Ingen konsumtionshistorik än, så ingen räknas in.
+forecast.a.no_income = Ingen regelbunden inkomst hittad, så ingen räknas in.
+forecast.a.cards = Kortköp når dina pengar när kortfakturan betalas.
+forecast.money_out = Pengar ut
+forecast.money_in = Pengar in
+forecast.overdraw_spending = Lägst {$amount :currency} den {$date :date}, av vanlig konsumtion.

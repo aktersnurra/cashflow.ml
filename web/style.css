@@ -353,11 +353,50 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
 @keyframes pulse { 50% { opacity: .5; } }
 
 /* Phones: bottom navigation and one column. */
+/* Forecast: one large chart, key numbers over it, then the payments, the what-ifs and what it
+   assumes. Solid is what happened, dashed is projected, the accent line is a what-if. */
+.forecast-kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0 0 8px; }
+.kpi-sub { font-size: 13px; line-height: 16px; color: var(--text-3); margin-top: 2px; min-height: 16px; }
+.projection { display: block; width: 100%; height: auto; margin-top: 8px; font-family: var(--font); }
+.projection .grid { stroke: var(--line); stroke-width: 1; }
+.projection .zero { stroke: var(--line-strong); stroke-width: 1; }
+.projection .axis-label { font-size: 12px; fill: var(--text-3); font-variant-numeric: lining-nums tabular-nums; }
+.projection .payday { stroke: var(--text-3); stroke-width: 1; }
+.projection .band { fill: color-mix(in srgb, var(--c-savings) 22%, transparent); }
+.projection .today { stroke: var(--line-strong); stroke-width: 1; }
+.projection .today-label { font-size: 12px; fill: var(--text-2); }
+.projection .line { fill: none; stroke: var(--line-chart); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.projection .line.projected { stroke-dasharray: 5 4; }
+.projection .line.what-if { stroke: var(--c2); stroke-dasharray: 5 4; }
+.projection .what-if-label { font-size: 12px; fill: var(--c2); }
+.projection .danger { fill: var(--negative); stroke: var(--panel); stroke-width: 2; }
+.projection .hover-rule { stroke: var(--text-3); stroke-width: 1; }
+.projection .hover-dot { fill: var(--line-chart); stroke: var(--panel); stroke-width: 2; }
+.projection .hit { fill: transparent; cursor: crosshair; }
+.projection-readout { display: flex; gap: 12px; align-items: baseline; min-height: 21px; margin-top: 8px; font-size: 13px; }
+.projection-readout .readout-date { font-weight: 600; }
+.band-dot { background: color-mix(in srgb, var(--c-savings) 45%, transparent); border-radius: 2px; }
+.forecast-row, .row.forecast-row { display: grid; grid-template-columns: 64px minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) 104px; gap: 16px; align-items: center; }
+.table .row.forecast-row { padding-top: 8px; padding-bottom: 8px; }
+.forecast-row .button.ghost { height: 26px; justify-self: end; }
+.forecast-row .row-sub { white-space: normal; }
+.forecast-row.left-out .row-title, .forecast-row.left-out .amount { text-decoration: line-through; color: var(--text-3); }
+.what-if-form { display: grid; grid-template-columns: 160px minmax(0, 1fr) 140px; gap: 12px 16px; align-items: end; }
+.what-if-form .field { margin-bottom: 0; }
+.what-if-actions { grid-column: 1 / -1; display: flex; gap: 12px; align-items: center; }
+.what-if-actions .segmented { margin: 0; }
+.what-if .chips { margin-top: 16px; align-items: center; }
+.what-if .chip { font: inherit; }
+.what-if > .muted { margin-top: 12px; }
+.assumptions { margin: 0; padding: 16px 24px 16px 40px; color: var(--text-2); }
+.assumptions li + li { margin-top: 6px; }
+
 @media (max-width: 768px) {
   .shell { grid-template-columns: 1fr; }
   .sidebar { display: none; }
   .page { padding: 20px 16px calc(88px + env(safe-area-inset-bottom)); }
   .page-head { flex-wrap: wrap; }
+  .page-controls { flex-wrap: wrap; }
   .panel, .card { padding: 16px; }
   .card .list { margin: 12px -16px -16px; } .card .row { padding: 10px 16px; }
   .figures { grid-template-columns: 1fr; gap: 16px; }
@@ -392,4 +431,13 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
   .import-counts { grid-template-columns: 1fr; }
   .overlay { padding-top: 0; align-items: flex-end; }
   .palette, .sheet { width: 100vw; border-radius: 12px 12px 0 0; }
+  .forecast-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .forecast-row, .row.forecast-row { grid-template-columns: 52px minmax(0, 1fr) auto; gap: 12px; }
+  .forecast-row > .txn-account, .forecast-row > .button { display: none; }
+  .forecast-row.selected > .button { display: inline-flex; grid-column: 1 / -1; justify-self: start; }
+  .what-if-form { grid-template-columns: 1fr 1fr; }
+  .what-if-form > :nth-child(2) { grid-column: 1 / -1; order: -1; }
+  .what-if-actions { flex-wrap: wrap; }
+  .projection .axis-label, .projection .today-label, .projection .what-if-label { font-size: 20px; }
+  .assumptions { padding: 12px 16px 12px 32px; }
 }

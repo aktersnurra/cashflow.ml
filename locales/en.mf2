@@ -342,3 +342,61 @@ inbox.no_pairs = No transaction with the same amount the other way within three 
 budgets.no_budget = No budget
 goals.empty = No savings goals yet.
 accounts.no_transactions = No transactions yet. Import a statement or add one.
+nav.forecast = Forecast
+forecast.subtitle = Your cash over the coming months, from regular payments and usual spending.
+forecast.months =
+  .input {$count :integer}
+  .match $count
+  one {{1 month}}
+  * {{{$count} months}}
+forecast.loading = Projecting your cash
+forecast.no_accounts = Add a bank account to see a forecast.
+forecast.today = Today
+forecast.note = A projection, not a range: it assumes the payments below and your usual spending.
+forecast.lowest = Lowest point
+forecast.on = on {$date :date}
+forecast.before_salary = Before next salary
+forecast.no_salary = No regular salary found
+forecast.due_before_salary = Due before salary
+forecast.due_next_month = Due in the next month
+forecast.payments =
+  .input {$count :integer}
+  .match $count
+  one {{1 payment}}
+  * {{{$count} payments}}
+forecast.end = On {$date :date}
+forecast.overdraw = {$account} goes below zero on {$date :date}
+forecast.overdraw_body = Lowest {$amount :currency} on {$date :date}, after {$items}.
+forecast.upcoming = Upcoming
+forecast.no_series = No regular payments found yet. They show up after three of the same.
+forecast.cadence.weekly = Weekly
+forecast.cadence.monthly = Monthly
+forecast.cadence.quarterly = Quarterly
+forecast.cadence.yearly = Yearly
+forecast.basis = {$cadence} since {$since :date}, usually {$typical :currency}, last {$last :currency}.
+forecast.past_payments = Past payments
+forecast.leave_out = Leave out
+forecast.include = Include
+forecast.household_transfer = Household transfer
+forecast.what_if = What if
+forecast.add_one_off = Add a one-off
+forecast.follow_budgets = Keep to my budgets
+forecast.reset = Reset
+forecast.difference = Lowest point {$lowest}, end {$end} compared with now.
+forecast.set_aside = Set aside for goals
+forecast.assumptions = Assumptions
+forecast.a.usual = Usual spending {$amount :currency} a month: the average of {$from :date} to {$to :date}, without the payments above.
+forecast.a.stale = Your accounts are imported up to {$date :date}, so later payments count as still due.
+forecast.a.stopped = {$name} not seen since {$date :date}, so it's left out.
+forecast.a.other_currency = Left out for their currency: {$accounts}.
+forecast.a.short =
+  .input {$days :integer}
+  .match $days
+  one {{Usual spending is based on only 1 day.}}
+  * {{Usual spending is based on only {$days} days.}}
+forecast.a.no_history = No spending history yet, so none is assumed.
+forecast.a.no_income = No regular income found, so none is assumed.
+forecast.a.cards = Card purchases reach your cash when the card bill is paid.
+forecast.money_out = Money out
+forecast.money_in = Money in
+forecast.overdraw_spending = Lowest {$amount :currency} on {$date :date}, from usual spending.

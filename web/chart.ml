@@ -193,6 +193,14 @@ let donut ~centre (shares : (float * string) list) =
          seg)
     @ [ S.Node.text ~attrs:[ S.Attr.x 60.; S.Attr.y 66.; Vdom.Attr.create "text-anchor" "middle"; Vdom.Attr.create "class" "donut-centre" ] [ Vdom.Node.text centre ] ])
 
+(* A value axis over [lo, hi] in about four round steps (1, 2, 2.5 or 5 times a power of ten),
+   widened to whole steps. *)
+let scale lo hi =
+  let raw = Float.max 1e-9 ((hi -. lo) /. 4.) in
+  let magnitude = 10. **. Float.round_down (Float.log10 raw) in
+  let step = List.find_exn [ 1.; 2.; 2.5; 5.; 10. ] ~f:(fun m -> Float.(m *. magnitude >= raw)) *. magnitude in
+  (Float.round_down (lo /. step) *. step, Float.round_up (hi /. step) *. step, step)
+
 (* Grouped bars per period with a labelled value axis: gridlines at round steps, a firmer zero
    line when values go negative, period names underneath. [series] gives each bar's class, in
    the same order as each period's values. *)
@@ -202,13 +210,7 @@ let grouped_bars ~(series : string list) ~(tick : float -> string) (periods : (s
   | periods ->
       let width = 640. and height = 240. and left = 48. and bottom = 24. and top = 8. in
       let values = List.concat_map periods ~f:snd in
-      let lo = Float.min 0. (List.fold values ~init:0. ~f:Float.min) and hi = Float.max 1. (List.fold values ~init:0. ~f:Float.max) in
-      let step =
-        let raw = (hi -. lo) /. 4. in
-        let magnitude = 10. **. Float.round_down (Float.log10 raw) in
-        List.find_exn [ 1.; 2.; 2.5; 5.; 10. ] ~f:(fun m -> Float.(m *. magnitude >= raw)) *. magnitude
-      in
-      let lo = Float.round_down (lo /. step) *. step and hi = Float.round_up (hi /. step) *. step in
+      let lo, hi, step = scale (Float.min 0. (List.fold values ~init:0. ~f:Float.min)) (Float.max 1. (List.fold values ~init:0. ~f:Float.max)) in
       let plot_h = height -. top -. bottom and plot_w = width -. left in
       let y v = top +. ((hi -. v) /. (hi -. lo) *. plot_h) in
       let ticks = List.init (Float.iround_nearest_exn ((hi -. lo) /. step) + 1) ~f:(fun i -> lo +. (Float.of_int i *. step)) in
@@ -234,3 +236,66 @@ let grouped_bars ~(series : string list) ~(tick : float -> string) (periods : (s
                          [ S.Attr.x (start +. (Float.of_int j *. (bar_w +. 1.))); S.Attr.y y0; S.Attr.width bar_w; S.Attr.height (Float.max 1. (y1 -. y0)); S.Attr.rx 2.;
                            Vdom.Attr.create "class" ("col " ^ cls) ]
                        [ S.Node.title [ Vdom.Node.text (label ^ ": " ^ tick v) ] ])))
+
+(* The forecast: cash per day, oldest first, [today] the index of today. The line is solid up to
+   [solid] (as far as the imports reach) and dashed after it; [scenario] is a what-if line from
+   today on, beside it, and [earmarked] the band under the line that is set aside for goals. A
+   Today rule, red points where an account goes below zero, paydays as ticks on the axis and month
+   names underneath. Hovering or tapping a day calls [on_hover], and [hover] draws its rule. *)
+let projection ~(cash : float list) ~(earmarked : float list) ~(scenario : float list option) ~solid ~today ~(overdraws : int list)
+    ~(months : (int * string) list) ~(paydays : int list) ~(tick : float -> string) ~today_label ~what_if_label ~hover ~on_hover =
+  let n = List.length cash in
+  if n < 2 then Vdom.Node.none
+  else
+    let width = 640. and height = 260. and left = 52. and right = 12. and top = 22. and bottom = 26. in
+    let cash = Array.of_list cash and earmarked = Array.of_list earmarked in
+    let what_if = Option.map scenario ~f:Array.of_list in
+    let free i = cash.(i) -. (if i < Array.length earmarked then earmarked.(i) else 0.) in
+    let values =
+      Array.to_list cash @ List.init n ~f:free @ Option.value_map what_if ~default:[] ~f:Array.to_list
+    in
+    let lo, hi, step = scale (List.fold values ~init:Float.infinity ~f:Float.min) (List.fold values ~init:Float.neg_infinity ~f:Float.max) in
+    let hi = if Float.(hi <= lo) then lo +. step else hi in
+    let plot_w = width -. left -. right and plot_h = height -. top -. bottom in
+    let x i = left +. (Float.of_int i *. plot_w /. Float.of_int (n - 1)) in
+    let y v = top +. ((hi -. v) /. (hi -. lo) *. plot_h) in
+    let cls c = Vdom.Attr.create "class" c in
+    let text ~x ~y ~anchor ~c s = S.Node.text ~attrs:[ S.Attr.x x; S.Attr.y y; Vdom.Attr.create "text-anchor" anchor; cls c ] [ Vdom.Node.text s ] in
+    let polyline c indices values = S.Node.polyline ~attrs:[ S.Attr.points (List.map indices ~f:(fun i -> (x i, y (values i)))); cls c ] [] in
+    let range a b = List.range a (b + 1) in
+    let ticks = List.init (Float.iround_nearest_exn ((hi -. lo) /. step) + 1) ~f:(fun i -> lo +. (Float.of_int i *. step)) in
+    let banded = List.filter (range today (n - 1)) ~f:(fun i -> i < Array.length earmarked && Float.(earmarked.(i) > 0.)) in
+    let solid = Int.clamp_exn solid ~min:0 ~max:(n - 1) in
+    let column = plot_w /. Float.of_int (n - 1) in
+    S.Node.svg
+      ~attrs:
+        [ S.Attr.viewbox ~min_x:0. ~min_y:0. ~width ~height; cls "projection"; Vdom.Attr.create "role" "img";
+          Vdom.Attr.on_mouseleave (fun _ -> on_hover None) ]
+      (List.concat_map ticks ~f:(fun t ->
+           [ S.Node.line ~attrs:[ S.Attr.x1 left; S.Attr.x2 (width -. right); S.Attr.y1 (y t); S.Attr.y2 (y t); cls (if Float.(t = 0.) then "zero" else "grid") ] [];
+             text ~x:(left -. 8.) ~y:(y t +. 4.) ~anchor:"end" ~c:"axis-label" (tick t) ])
+      @ List.map months ~f:(fun (i, label) -> text ~x:(x i) ~y:(height -. 6.) ~anchor:"middle" ~c:"axis-label" label)
+      @ List.map paydays ~f:(fun i -> S.Node.line ~attrs:[ S.Attr.x1 (x i); S.Attr.x2 (x i); S.Attr.y1 (height -. bottom); S.Attr.y2 (height -. bottom +. 5.); cls "payday" ] [])
+      @ (match banded with
+        | [] -> []
+        | _ -> [ S.Node.polygon ~attrs:[ S.Attr.points (List.map banded ~f:(fun i -> (x i, y cash.(i))) @ List.rev_map banded ~f:(fun i -> (x i, y (free i)))); cls "band" ] [] ])
+      @ [ S.Node.line ~attrs:[ S.Attr.x1 (x today); S.Attr.x2 (x today); S.Attr.y1 (top -. 6.); S.Attr.y2 (height -. bottom); cls "today" ] [];
+          text ~x:(x today) ~y:(top -. 10.) ~anchor:"middle" ~c:"today-label" today_label;
+          polyline "line actual" (range 0 solid) (fun i -> cash.(i)); polyline "line projected" (range solid (n - 1)) (fun i -> cash.(i)) ]
+      @ (match what_if with
+        | Some w when Array.length w = n ->
+            [ polyline "line what-if" (range today (n - 1)) (fun i -> w.(i));
+              text ~x:(x (n - 1)) ~y:(y w.(n - 1) -. 8.) ~anchor:"end" ~c:"what-if-label" what_if_label ]
+        | _ -> [])
+      @ List.map overdraws ~f:(fun i -> S.Node.circle ~attrs:[ S.Attr.cx (x i); S.Attr.cy (y cash.(i)); S.Attr.r 4.; cls "danger" ] [])
+      @ (match hover with
+        | Some i when i >= 0 && i < n ->
+            [ S.Node.line ~attrs:[ S.Attr.x1 (x i); S.Attr.x2 (x i); S.Attr.y1 top; S.Attr.y2 (height -. bottom); cls "hover-rule" ] [];
+              S.Node.circle ~attrs:[ S.Attr.cx (x i); S.Attr.cy (y cash.(i)); S.Attr.r 3.5; cls "hover-dot" ] [] ]
+        | _ -> [])
+      @ List.init n ~f:(fun i ->
+            S.Node.rect
+              ~attrs:
+                [ S.Attr.x (x i -. (column /. 2.)); S.Attr.y top; S.Attr.width column; S.Attr.height plot_h; cls "hit";
+                  Vdom.Attr.on_mouseenter (fun _ -> on_hover (Some i)); Vdom.Attr.on_click (fun _ -> on_hover (Some i)) ]
+              []))

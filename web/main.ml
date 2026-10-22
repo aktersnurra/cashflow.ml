@@ -1,6 +1,6 @@
 (* The app shell: loads the session, then shows the sign-in page or the app. The app has a
    sidebar on wide screens and a tab bar on phones, a command palette (⌘K or /), single-key
-   navigation (g then h, c, t, i, a, b, o, n, s), and a light/dark switch. *)
+   navigation (g then h, c, t, i, a, b, f, o, n, s), and a light/dark switch. *)
 open! Core
 open! Async_kernel
 open! Bonsai_web.Cont
@@ -17,7 +17,7 @@ let navigate_to set_route route =
       set_route route ]
 
 (* The sidebar: what you look at, then where the money lives; Settings sits at the foot. *)
-let nav_groups = Route.[ [ Home; Cashflow; Transactions { offset = 0; category = None }; Budgets; Insights ]; [ Accounts; Household ] ]
+let nav_groups = Route.[ [ Home; Cashflow; Transactions { offset = 0; category = None }; Budgets; Forecast; Insights ]; [ Accounts; Household ] ]
 let tab_items = Route.[ Home; Transactions { offset = 0; category = None }; Add; Budgets; Settings ]
 
 let icon route =
@@ -29,6 +29,7 @@ let icon route =
     | Transactions _ -> List
     | Accounts | Account _ -> Credit_card
     | Budgets -> Pie_chart
+    | Forecast -> Activity
     | Household -> Users
     | Insights -> Trending_up
     | Settings -> Settings
@@ -42,6 +43,7 @@ let shortcut = function
   | "t" -> Some Route.(Transactions { offset = 0; category = None })
   | "a" -> Some Route.Accounts
   | "b" -> Some Route.Budgets
+  | "f" -> Some Route.Forecast
   | "o" -> Some Route.Household
   | "c" -> Some Route.Cashflow
   | "n" -> Some Route.Insights
@@ -77,6 +79,7 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
     | Accounts -> Accounts_page.list ~ctx graph
     | Account id -> Accounts_page.detail ~ctx ~account_id:id graph
     | Budgets -> Budgets_page.page ~ctx graph
+    | Forecast -> Forecast_page.page ~ctx graph
     | Household -> Household_page.page ~ctx graph
     | Insights -> Insights_page.page ~ctx graph
     | Settings -> Settings_page.page ~ctx graph

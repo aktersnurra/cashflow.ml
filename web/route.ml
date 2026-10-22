@@ -2,7 +2,7 @@ open! Core
 
 (* Transactions carries its filters, the pay cycle (0 the current one, -1 the one before) and
    optionally a category, so Back and links keep them. *)
-type t = Home | Cashflow | Transactions of { offset : int; category : string option } | Inbox | Accounts | Account of string | Budgets | Household | Insights | Settings | Add [@@deriving equal, sexp]
+type t = Home | Cashflow | Transactions of { offset : int; category : string option } | Inbox | Accounts | Account of string | Budgets | Forecast | Household | Insights | Settings | Add [@@deriving equal, sexp]
 
 let to_path = function
   | Home -> "/"
@@ -13,6 +13,7 @@ let to_path = function
   | Accounts -> "/accounts"
   | Account id -> "/accounts/" ^ id
   | Budgets -> "/budgets"
+  | Forecast -> "/forecast"
   | Household -> "/household"
   | Insights -> "/insights"
   | Settings -> "/settings"
@@ -28,6 +29,7 @@ let of_path path =
   | [ "accounts" ] -> Accounts
   | [ "accounts"; id ] -> Account id
   | [ "budgets" ] -> Budgets
+  | [ "forecast" ] -> Forecast
   | [ "household" ] -> Household
   | [ "insights" ] -> Insights
   | [ "settings" ] -> Settings
@@ -41,6 +43,7 @@ let title locale = function
   | Inbox -> Msg.nav_inbox locale
   | Accounts | Account _ -> Msg.nav_accounts locale
   | Budgets -> Msg.nav_budgets locale
+  | Forecast -> Msg.nav_forecast locale
   | Household -> Msg.nav_household locale
   | Insights -> Msg.nav_insights locale
   | Settings -> Msg.nav_settings locale
