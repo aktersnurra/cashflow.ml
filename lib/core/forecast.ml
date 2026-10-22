@@ -193,12 +193,15 @@ let usual_spending (input : input) cash scenario =
   let budgeted k = if scenario.follow_budgets then List.find_map (fun (c, b) -> if Account_id.equal c k then Some b else None) input.budgets else None in
   let total = List.fold_left (fun sum (_, _, _, _, v) -> sum +: v) 0L entries in
   let cycle_days = Cycle.day_count current in
+  (* Less than a cycle of history is spread over a whole cycle: a few days that happen to hold the
+     rent aren't the daily rate. *)
+  let spread = max days cycle_days in
   let history_parts =
     List.map
       (fun (info : Account_info.t) ->
         let a = info.account.id in
         let own = List.fold_left (fun sum (_, _, a', k, v) -> if Account_id.equal a a' && Option.is_none (budgeted k) then sum +: v else sum) 0L entries in
-        (a, own, days))
+        (a, own, spread))
       cash
   in
   let budget_parts =
@@ -213,7 +216,7 @@ let usual_spending (input : input) cash scenario =
         input.budgets
   in
   { parts = List.filter (fun (_, _, d) -> d > 0) (history_parts @ budget_parts);
-    per_cycle = (if days > 0 then Int64.div (Int64.mul total (Int64.of_int cycle_days)) (Int64.of_int days) else 0L);
+    per_cycle = (if days > 0 then Int64.div (Int64.mul total (Int64.of_int cycle_days)) (Int64.of_int spread) else 0L);
     first; last; days = max 0 days; short = days <= 0 || before c3.first first }
 
 (* Spending on the [n]th day after today, in whole minor units that add up exactly. *)

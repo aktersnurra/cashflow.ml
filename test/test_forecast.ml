@@ -135,6 +135,16 @@ let short_history () =
   let f = project (input [ checking; groceries ] ~transfers:[ transfer ~from:checking ~to_:groceries "2026-09-01" 240_000L "ICA" ]) in
   Alcotest.(check (option int)) "24 days, 1–24 Sep" (Some 24) (List.find_map (function Forecast.Short_history d -> Some d | _ -> None) f.assumptions)
 
+(* A few days of history aren't a month's spending squeezed into a few days: what they cost is
+   spread over at least a whole cycle. *)
+let shorter_than_a_cycle () =
+  let checking = checking ~balance:5_000_000L () in
+  let f = project (input [ checking; groceries ] ~transfers:[ transfer ~from:checking ~to_:groceries "2026-09-24" 900_000L "HYRA" ]) in
+  let cycle_days = Cycle.day_count (Cycle.cycle_of setting today) in
+  let days = Date.days_between ~first:today ~last:f.horizon_end in
+  check_cash "spread over a cycle" (Int64.sub 5_000_000L (Int64.div (Int64.mul 900_000L (Int64.of_int days)) (Int64.of_int cycle_days))) (last_cash f.baseline);
+  Alcotest.(check (option int)) "and says so" (Some 1) (List.find_map (function Forecast.Short_history d -> Some d | _ -> None) f.assumptions)
+
 let assumptions () =
   let checking = checking ~balance:100_000L () in
   let f = project (input [ checking; euros ] ~imported:[ (id checking, date "2026-10-01") ]) in
@@ -235,6 +245,7 @@ let () =
           Alcotest.test_case "the plan replaces the household transfer" `Quick plan_replaces_household_transfer;
           Alcotest.test_case "the first day below zero" `Quick overdraw; Alcotest.test_case "goals" `Quick goal_band;
           Alcotest.test_case "usual spending" `Quick usual_spending; Alcotest.test_case "short history" `Quick short_history;
+          Alcotest.test_case "shorter than a cycle" `Quick shorter_than_a_cycle;
           Alcotest.test_case "assumptions" `Quick assumptions; Alcotest.test_case "a one-off" `Quick one_off;
           Alcotest.test_case "keep to my budgets" `Quick follow_budgets; Alcotest.test_case "history" `Quick history ] );
       ("properties", [ Alcotest.test_case "deterministic, lowest, items add up, flat, leaving out" `Slow forecast_laws ]) ]
