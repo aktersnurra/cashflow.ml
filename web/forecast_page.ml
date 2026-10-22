@@ -68,8 +68,9 @@ let page ~(ctx : Ctx.t) graph =
     let cash_at i = D.value (List.nth_exn timeline i).cash in
     let last_point = List.last_exn f.baseline in
     let salary = List.find f.items ~f:(fun i -> String.equal i.kind "income") in
-    (* Key numbers: the lowest point, what is left the day before the salary, what is due before
-       it, and where the line ends. *)
+    (* Key numbers, under the chart they sum up: the lowest point, what is left the day before the
+       salary, what is due before it (or the chance of staying above zero), and where the line
+       ends. *)
     let kpi ?(tone = "") label value sub =
       Ui.div ~cls:("kpi " ^ tone) [ Ui.div ~cls:"kpi-label" [ Ui.text label ]; Ui.div ~cls:"kpi-value" [ Ui.text value ]; Ui.div ~cls:"kpi-sub" [ Ui.text sub ] ]
     in
@@ -103,7 +104,8 @@ let page ~(ctx : Ctx.t) graph =
                 (whole_float (Float.abs due_total)) (Msg.forecast_payments ~count:(List.length due) locale));
           kpi (Msg.forecast_end ~date:(date f.horizon_end) locale) (whole last_point.cash) "" ]
     in
-    (* The chart, and under it one line: what the hovered day holds, or what the line is. *)
+    (* The chart, then one line saying what the hovered day holds or what the line is, the legend,
+       and the key numbers. *)
     let solid =
       match f.imported_through with
       | None -> today_index
@@ -132,8 +134,7 @@ let page ~(ctx : Ctx.t) graph =
     in
     let chart =
       Ui.div ~cls:"panel"
-        [ kpis;
-          Chart.projection ~cash:(List.init n ~f:cash_at)
+        [ Chart.projection ~cash:(List.init n ~f:cash_at)
             ~earmarked:(List.map timeline ~f:(fun p -> D.value p.earmarked)) ~scenario
             ~range:(List.map f.range ~f:(fun (_, low, high) -> (D.value low, D.value high))) ~solid ~today:today_index ~overdraws ~months:months_axis ~paydays
             ~tick:Cashflow_page.short ~today_label:(Msg.forecast_today locale) ~what_if_label:(Msg.forecast_what_if locale) ~hover ~on_hover:set_hover;
@@ -144,7 +145,8 @@ let page ~(ctx : Ctx.t) graph =
             @
             if List.exists f.baseline ~f:(fun p -> Float.(D.value p.earmarked > 0.)) then
               [ Ui.span [ Ui.span ~cls:"dot band-dot" []; Ui.text (Msg.forecast_set_aside locale) ] ]
-            else []) ]
+            else []);
+          kpis ]
     in
     (* Accounts that go below zero, with the payments that take them there. *)
     let overdraw =

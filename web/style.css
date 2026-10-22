@@ -355,9 +355,9 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
 /* Phones: bottom navigation and one column. */
 /* Forecast: one large chart, key numbers over it, then the payments, the what-ifs and what it
    assumes. Solid is what happened, dashed is projected, the accent line is a what-if. */
-.forecast-kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0 0 8px; }
+.forecast-kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 20px 0 0; padding-top: 18px; border-top: 1px solid var(--line); }
 .kpi-sub { font-size: 13px; line-height: 16px; color: var(--text-3); margin-top: 2px; min-height: 16px; }
-.projection { display: block; width: 100%; height: auto; margin-top: 8px; font-family: var(--font); }
+.projection { display: block; width: 100%; height: auto; margin-top: 0; font-family: var(--font); }
 .projection .grid { stroke: var(--line); stroke-width: 1; }
 .projection .zero { stroke: var(--line-strong); stroke-width: 1; }
 .projection .axis-label { font-size: 12px; fill: var(--text-3); font-variant-numeric: lining-nums tabular-nums; }
