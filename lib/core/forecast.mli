@@ -1,6 +1,8 @@
 (** How much cash there will be, day by day: from today's balances, the recurring series, the
-    household contribution plan and usual spending. Deterministic: it says what it assumes and
-    never claims a range. Cash is the scope's asset accounts not tagged "investment". *)
+    household contribution plan and usual spending, adjusted for the season when there is a year
+    of history. The line is deterministic and says what it assumes; the range around it comes
+    from backtesting the same projection over the last year, never from an assumed spread. Cash
+    is the scope's asset accounts not tagged "investment". *)
 
 type one_off = { date : Date.t; amount : int64; description : string }  (** amount signed: negative is money out *)
 
@@ -59,6 +61,10 @@ type assumption =
   | Other_currency of Account_info.t list
   | Short_history of int  (** usual spending comes from this many days, fewer than three cycles *)
   | No_income_detected
+  | Range_from of { forecasts : int; since : Date.t }  (** the range rests on this many past forecasts *)
+  | No_range_yet  (** too little history to measure past forecasts *)
+  | Seasonal of { month : int; year : int; percent : int }
+      (** usual spending in calendar [month] is adjusted by [percent], from that month in [year] *)
 
 type t = {
   today : Date.t;
@@ -68,6 +74,10 @@ type t = {
   baseline : point list;  (** from today to [horizon_end] *)
   scenario : point list option;  (** [None] without a scenario *)
   lowest : Date.t * int64;
+  range : (Date.t * int64 * int64) list;
+      (** from today: the cash 8 in 10 past forecasts landed between (10th and 90th percentile of
+          their errors at that distance), as far ahead as there are at least 10 of them *)
+  chance_positive : int option;  (** percent of past forecasts whose errors would keep cash at or above zero *)
   accounts : outlook list;
   items : item list;  (** by date *)
   assumptions : assumption list;

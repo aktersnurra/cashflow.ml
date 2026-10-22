@@ -47,6 +47,9 @@ type assumption =
   | Other_currency of Account_info.t list
   | Short_history of int
   | No_income_detected
+  | Range_from of { forecasts : int; since : Date.t }
+  | No_range_yet
+  | Seasonal of { month : int; year : int; percent : int }
 
 type t = {
   today : Date.t;
@@ -56,6 +59,8 @@ type t = {
   baseline : point list;
   scenario : point list option;
   lowest : Date.t * int64;
+  range : (Date.t * int64 * int64) list;
+  chance_positive : int option;
   accounts : outlook list;
   items : item list;
   assumptions : assumption list;
@@ -67,8 +72,10 @@ let rec days_from first last = if before last first then [] else first :: days_f
 let cash_accounts (input : input) =
   List.filter_map
     (fun (info : Account_info.t) ->
+      (* The book says which accounts are in scope; the balances are the input's, which differ from
+         the book's when the backtest starts in the past. *)
       match input.book.inside info.account.id with
-      | Some info when info.account.kind = Asset && not (Analytics.is_investment info) -> Some info
+      | Some _ when info.account.kind = Asset && not (Analytics.is_investment info) -> Some info
       | _ -> None)
     input.accounts
 
@@ -158,11 +165,56 @@ let contribution_items (input : input) ~last ~account ~(usual : Series.t option)
         (fun m -> each ~item_id:("contribution:" ^ m.member_name) ~name:m.member_name ~sign:Fun.id ~due_now:m.due_now ~per_cycle:m.per_cycle)
         members
 
-(* Usual spending: what each cash account paid for in the last three complete cycles, less the
-   bills the series already cover, as (total, over days) parts that are spread evenly. *)
-type usual = { parts : (Account_id.t * int64 * int) list; per_cycle : int64; first : Date.t; last : Date.t; days : int; short : bool }
+(* What one transfer spent from a cash account, net of refunds, unless a bill series covers it:
+   (cash account, category, amount). *)
+let spending (input : input) ~is_cash ~bills (t : Transfer.t) =
+  let expense id = match input.book.inside id with Some info when info.account.kind = Expense -> Some info.account.id | _ -> None in
+  if List.mem ("bill:" ^ Analytics.merchant_key t) bills then None
+  else
+    match expense t.debit_account_id, expense t.credit_account_id with
+    | Some k, None when is_cash t.credit_account_id -> Some (t.credit_account_id, k, Analytics.amount t)
+    | None, Some k when is_cash t.debit_account_id -> Some (t.debit_account_id, k, Int64.neg (Analytics.amount t))
+    | _ -> None
 
-let usual_spending (input : input) cash scenario =
+(* Seasons: with more than a year of history, how each calendar month of the last twelve compared
+   with their average, as a factor in basis points, shrunk halfway towards normal (one past
+   December is one sample) and kept between half and double. *)
+let seasons (input : input) ~data_start ~spent_in =
+  match data_start with
+  | Some start when not (before (Date.add_days input.today (-395)) start) ->
+      let y, m, _ = Date.to_ymd input.today in
+      let months = List.init 12 (fun i -> Cycle.shift_month y m (i - 12)) in
+      let totals = List.map (fun ym -> (ym, spent_in ym)) months in
+      let average = Int64.div (List.fold_left (fun sum (_, v) -> sum +: v) 0L totals) 12L in
+      if Int64.compare average 0L <= 0 then []
+      else
+        List.map
+          (fun (ym, total) ->
+            let ratio = Int64.to_int (Int64.div (Int64.mul total 10_000L) average) in
+            (ym, max 5_000 (min 20_000 (10_000 + ((ratio - 10_000) / 2)))))
+          totals
+  | _ -> []
+
+let weight seasons date =
+  let _, month, _ = Date.to_ymd date in
+  Option.value (List.find_map (fun ((_, m), bp) -> if m = month then Some bp else None) seasons) ~default:10_000
+
+(* Usual spending: what each cash account paid for in the last three complete cycles, less the
+   bills the series already cover, spread over the days ahead. A part is (account, total, over,
+   seasonal): [total] over [over] basis-point days, spread by the season's weight when
+   [seasonal], else evenly. *)
+type usual = {
+  parts : (Account_id.t * int64 * int64 * bool) list;
+  cumulative : int64 array;  (** the season's weight of the first n days after today *)
+  seasons : ((int * int) * int) list;
+  per_cycle : int64;
+  first : Date.t;
+  last : Date.t;
+  days : int;
+  short : bool;
+}
+
+let usual_spending (input : input) cash scenario ~horizon_end =
   let is_cash id = List.exists (fun (info : Account_info.t) -> Account_id.equal info.account.id id) cash in
   let current = Cycle.cycle_of input.setting input.today in
   let c1 = Cycle.previous input.setting current in
@@ -180,33 +232,41 @@ let usual_spending (input : input) cash scenario =
   let last = c1.last in
   let days = Date.days_between ~first ~last + 1 in
   let bills = List.filter_map (fun (s : Series.t) -> if s.kind = Bill then Some s.id else None) input.series in
-  let expense id = match input.book.inside id with Some info when info.account.kind = Expense -> Some info.account.id | _ -> None in
+  let spending = spending input ~is_cash ~bills in
+  let spent_in (y, m) =
+    List.fold_left
+      (fun sum (t : Transfer.t) ->
+        let ty, tm, _ = Date.to_ymd t.value_date in
+        if ty = y && tm = m then match spending t with Some (_, _, v) -> sum +: v | None -> sum else sum)
+      0L posted
+  in
+  let seasons = seasons input ~data_start ~spent_in in
   let spent = Hashtbl.create 16 in
   let add a k v = Hashtbl.replace spent (a, k) (v +: Option.value (Hashtbl.find_opt spent (a, k)) ~default:0L) in
   if days > 0 then
     List.iter
       (fun (t : Transfer.t) ->
-        if (not (before t.value_date first)) && not (before last t.value_date) && not (List.mem ("bill:" ^ Analytics.merchant_key t) bills) then
-          match expense t.debit_account_id, expense t.credit_account_id with
-          | Some k, None when is_cash t.credit_account_id -> add t.credit_account_id k (Analytics.amount t)
-          | None, Some k when is_cash t.debit_account_id -> add t.debit_account_id k (Int64.neg (Analytics.amount t))
-          | _ -> ())
+        if (not (before t.value_date first)) && not (before last t.value_date) then
+          match spending t with Some (a, k, v) -> add a k v | None -> ())
       posted;
   let entries = List.sort compare (Hashtbl.fold (fun (a, k) v acc -> (Account_id.to_string a, Account_id.to_string k, a, k, v) :: acc) spent []) in
   let budgeted k = if scenario.follow_budgets then List.find_map (fun (c, b) -> if Account_id.equal c k then Some b else None) input.budgets else None in
   let total = List.fold_left (fun sum (_, _, _, _, v) -> sum +: v) 0L entries in
   let cycle_days = Cycle.day_count current in
-  (* Less than a cycle of history is spread over a whole cycle: a few days that happen to hold the
-     rent aren't the daily rate. *)
-  let spread = max days cycle_days in
+  (* The history's own season is taken out before the coming months' is put in. Less than a
+     cycle of history is spread over a whole cycle: a few days that happen to hold the rent aren't
+     the daily rate. *)
+  let window = if days > 0 then List.fold_left (fun sum d -> sum + weight seasons d) 0 (days_from first last) else 0 in
+  let over = Int64.of_int (max window (cycle_days * 10_000)) in
   let history_parts =
     List.map
       (fun (info : Account_info.t) ->
         let a = info.account.id in
         let own = List.fold_left (fun sum (_, _, a', k, v) -> if Account_id.equal a a' && Option.is_none (budgeted k) then sum +: v else sum) 0L entries in
-        (a, own, spread))
+        (a, own, over, true))
       cash
   in
+  let flat = Int64.of_int (cycle_days * 10_000) in
   let budget_parts =
     if not scenario.follow_budgets then []
     else
@@ -214,21 +274,27 @@ let usual_spending (input : input) cash scenario =
         (fun (k, budget) ->
           let shares = List.filter_map (fun (_, _, a, k', v) -> if Account_id.equal k k' then Some (a, v) else None) entries in
           let category_total = List.fold_left (fun sum (_, v) -> sum +: v) 0L shares in
-          if Int64.compare category_total 0L > 0 then List.map (fun (a, v) -> (a, Int64.div (Int64.mul budget v) category_total, cycle_days)) shares
-          else match main_account input cash with Some a -> [ (a, budget, cycle_days) ] | None -> [])
+          if Int64.compare category_total 0L > 0 then List.map (fun (a, v) -> (a, Int64.div (Int64.mul budget v) category_total, flat, false)) shares
+          else match main_account input cash with Some a -> [ (a, budget, flat, false) ] | None -> [])
         input.budgets
   in
-  { parts = List.filter (fun (_, _, d) -> d > 0) (history_parts @ budget_parts);
-    per_cycle = (if days > 0 then Int64.div (Int64.mul total (Int64.of_int cycle_days)) (Int64.of_int spread) else 0L);
+  let ahead = max 0 (Date.days_between ~first:input.today ~last:horizon_end) in
+  let cumulative = Array.make (ahead + 1) 0L in
+  for n = 1 to ahead do
+    cumulative.(n) <- cumulative.(n - 1) +: Int64.of_int (weight seasons (Date.add_days input.today n))
+  done;
+  { parts = (if days > 0 then history_parts else []) @ budget_parts; cumulative; seasons;
+    per_cycle = (if days > 0 then Int64.div (Int64.mul total flat) over else 0L);
     first; last; days = max 0 days; short = days <= 0 || before c3.first first }
 
 (* Spending on the [n]th day after today, in whole minor units that add up exactly. *)
 let spent_on usual account n =
   List.fold_left
-    (fun sum (a, total, days) ->
+    (fun sum (a, total, over, seasonal) ->
       if not (Account_id.equal a account) then sum
       else
-        let upto n = Int64.div (Int64.mul total (Int64.of_int n)) (Int64.of_int days) in
+        let weight n = if seasonal then usual.cumulative.(n) else Int64.of_int (n * 10_000) in
+        let upto n = Int64.div (Int64.mul total (weight n)) over in
         sum +: (upto n -: upto (n - 1)))
     0L usual.parts
 
@@ -293,7 +359,7 @@ let run (input : input) scenario =
         :: (match item.series with Some s when is_cash s.counter -> [ (s.counter, item.date, Int64.neg item.amount) ] | _ -> []))
       items
   in
-  let usual = usual_spending input cash scenario in
+  let usual = usual_spending input cash scenario ~horizon_end:last in
   let days = days_from input.today last in
   let lines =
     List.map
@@ -344,6 +410,104 @@ let history (input : input) ~first =
     (fun day -> (day, List.fold_left (fun cash (d, v) -> if before day d then cash -: v else cash) now changes))
     (days_from first (Date.add_days input.today (-1)))
 
+(* The range: the same projection made from a start every week over the last year, as it would
+   have been made that morning (the balances at the end of the day before, only what was known by
+   then, imports complete, no plan, goals or what-if), compared with the cash that followed. A
+   start needs 100 days of history before it. The range for a day ahead is the baseline plus the
+   10th and 90th percentile of the errors at that distance, as far as there are 10 of them; the
+   chance of staying above zero is the share of whole-horizon error paths that, added to the
+   baseline, never go below zero, given 8 of them. *)
+let backtest (input : input) ~(baseline : point list) =
+  let cash = cash_accounts input in
+  let is_cash id = List.exists (fun (info : Account_info.t) -> Account_id.equal info.account.id id) cash in
+  let posted = List.filter Analytics.posted input.transfers in
+  let changes =
+    List.filter_map
+      (fun (t : Transfer.t) ->
+        let v = Analytics.amount t in
+        match is_cash t.debit_account_id, is_cash t.credit_account_id with
+        | true, true -> None
+        | true, false -> Some (t.value_date, [ (t.debit_account_id, v) ])
+        | false, true -> Some (t.value_date, [ (t.credit_account_id, Int64.neg v) ])
+        | false, false -> None)
+      posted
+  in
+  (* Cash per account at the end of [day]: today's posted balance less what came after. *)
+  let balance_after (info : Account_info.t) day =
+    List.fold_left
+      (fun bal (d, moves) ->
+        if before day d then List.fold_left (fun bal (a, v) -> if Account_id.equal a info.account.id then bal -: v else bal) bal moves else bal)
+      (Account.posted_balance info.account) changes
+  in
+  let data_start = List.fold_left (fun earliest (d, _) -> Some (match earliest with Some e -> Date.min e d | None -> d)) None changes in
+  let starts =
+    match data_start with
+    | None -> []
+    | Some start ->
+        List.filter (fun s -> not (before s (Date.add_days start 100))) (List.init 52 (fun k -> Date.add_days input.today (-7 * (k + 1))))
+  in
+  let actual = Hashtbl.create 512 in
+  let total day = List.fold_left (fun sum info -> sum +: balance_after info day) 0L cash in
+  let actual_on day =
+    match Hashtbl.find_opt actual day with
+    | Some v -> v
+    | None -> let v = total day in Hashtbl.replace actual day v; v
+  in
+  let ahead = List.length baseline - 1 in
+  let paths =
+    List.map
+      (fun s ->
+        let the_day_before = Date.add_days s (-1) in
+        let accounts =
+          List.map
+            (fun (info : Account_info.t) ->
+              if not (is_cash info.account.id) then info
+              else
+                let b = balance_after info the_day_before in
+                let balances =
+                  if Int64.compare b 0L >= 0 then { Account.zero_balances with debits_posted = b } else { Account.zero_balances with credits_posted = Int64.neg b }
+                in
+                { info with account = { info.account with balances } })
+            input.accounts
+        in
+        let known = List.filter (fun (t : Transfer.t) -> before t.value_date s) input.transfers in
+        let recent = List.filter (fun (t : Transfer.t) -> not (before t.value_date (Date.add_days s (-400)))) known in
+        let past =
+          { input with today = s; accounts; transfers = known; series = Series.detect input.book ~cash:is_cash ~setting:input.setting recent;
+            imported_through = List.map (fun (info : Account_info.t) -> (info.account.id, the_day_before)) cash; contribution = None; goals = [];
+            budgets = [] }
+        in
+        let run = run past no_scenario in
+        List.filteri (fun d _ -> d <= ahead) run.points
+        |> List.filter_map (fun (p : point) -> if before p.date input.today then Some (actual_on p.date -: p.cash) else None))
+      starts
+  in
+  let errors_at d = List.filter_map (fun path -> List.nth_opt path d) paths in
+  let quantile sorted q = sorted.(int_of_float (Float.round (q *. float_of_int (Array.length sorted - 1)))) in
+  let rec range d = function
+    | [] -> []
+    | (p : point) :: rest -> (
+        match errors_at d with
+        | errors when List.length errors >= 10 ->
+            let sorted = Array.of_list (List.sort Int64.compare errors) in
+            (p.date, p.cash +: quantile sorted 0.1, p.cash +: quantile sorted 0.9) :: range (d + 1) rest
+        | _ -> [])
+  in
+  let range = range 0 baseline in
+  let whole = List.filter (fun path -> List.length path > ahead) paths in
+  let chance_positive =
+    if List.length whole < 8 then None
+    else
+      let stays path = List.for_all2 (fun (p : point) e -> Int64.compare (p.cash +: e) 0L >= 0) baseline (List.filteri (fun d _ -> d <= ahead) path) in
+      Some (int_of_float (Float.round (100. *. float_of_int (List.length (List.filter stays whole)) /. float_of_int (List.length whole))))
+  in
+  let assumption =
+    match range, List.rev starts with
+    | [], _ | _, [] -> No_range_yet
+    | _, earliest :: _ -> Range_from { forecasts = List.length starts; since = earliest }
+  in
+  (range, chance_positive, assumption)
+
 let project (input : input) scenario =
   let baseline = run input no_scenario in
   let cash = cash_accounts input in
@@ -374,10 +538,24 @@ let project (input : input) scenario =
         (if other_currency = [] then [] else [ Other_currency other_currency ]);
         List.map (fun s -> Stopped s) baseline.stopped ]
   in
+  let horizon_end = Analytics.add_months input.today input.horizon in
+  let months_ahead =
+    List.sort_uniq compare (List.map (fun d -> let _, m, _ = Date.to_ymd d in m) (days_from (Date.add_days input.today 1) horizon_end))
+  in
+  let seasonal =
+    List.filter_map
+      (fun month ->
+        List.find_map
+          (fun ((year, m), bp) -> if m = month && abs (bp - 10_000) >= 1_000 then Some (Seasonal { month; year; percent = (bp - 10_000) / 100 }) else None)
+          usual.seasons)
+      months_ahead
+  in
+  let range, chance_positive, range_assumption = backtest input ~baseline:baseline.points in
+  let assumptions = assumptions @ seasonal @ [ range_assumption ] in
   let current = Cycle.cycle_of input.setting input.today in
   let rec back cycle n = if n <= 0 then cycle else back (Cycle.previous input.setting cycle) (n - 1) in
   let lowest = List.fold_left (fun (ld, lv) p -> if Int64.compare p.cash lv < 0 then (p.date, p.cash) else (ld, lv)) ((List.hd baseline.points).date, (List.hd baseline.points).cash) baseline.points in
-  { today = input.today; imported_through; horizon_end = Analytics.add_months input.today input.horizon;
+  { today = input.today; imported_through; horizon_end;
     history = history input ~first:(back current (min input.horizon 3)).first; baseline = baseline.points;
-    scenario = (if scenario = no_scenario then None else Some (run input scenario).points); lowest; accounts = baseline.outlooks;
+    scenario = (if scenario = no_scenario then None else Some (run input scenario).points); lowest; range; chance_positive; accounts = baseline.outlooks;
     items = baseline.run_items; assumptions }

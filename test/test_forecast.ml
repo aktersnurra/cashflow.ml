@@ -225,6 +225,79 @@ let card_and_forecast () =
   let ok, flagged, f = agree ~today { i with transfers = i.transfers @ pay } in
   Alcotest.(check bool) "salary first: the card warns, the forecast doesn't need to" true (ok && flagged <> [] && Option.is_none (List.hd f.accounts).overdraw)
 
+(* The range: backtests of the same projection over the last year. An account whose balance is
+   what its own history adds up to, so the actual line the backtest compares with is right. *)
+let opening = account 10 Equity "Opening"
+let settled n name transfers =
+  let a = account n Asset name in
+  let balance =
+    List.fold_left
+      (fun sum (t : Transfer.t) ->
+        if Account_id.equal t.debit_account_id (id a) then Int64.add sum (Analytics.amount t)
+        else if Account_id.equal t.credit_account_id (id a) then Int64.sub sum (Analytics.amount t)
+        else sum)
+      0L transfers
+  in
+  account n Asset name ~balance
+
+let months_from (y, m) count = List.init count (fun i -> let y, m = Cycle.shift_month y m i in (y, m))
+let on (y, m) d = Printf.sprintf "%04d-%02d-%02d" y m d
+let before_today = List.filter (fun (t : Transfer.t) -> Date.compare t.value_date today < 0)
+
+(* Salary on payday, rent on the 1st, Spotify on the 15th and nothing else: every past forecast
+   was exactly right, so the range has no width. *)
+let exact_history () =
+  let months = months_from (2026, 1) 10 in
+  let probe = account 1 Asset "Checking" in
+  let history =
+    before_today
+      (transfer ~from:opening ~to_:probe "2026-01-01" 5_000_000L "Opening"
+      :: List.concat_map
+           (fun ym ->
+             [ transfer ~code:Income ~counterparty:"ACME" ~from:salary ~to_:probe (Date.to_string (Cycle.cycle_of setting (date (on ym 25))).first) 3_000_000L "LÖN";
+               transfer ~from:probe ~to_:rent (on ym 1) 900_000L "HYRA"; transfer ~from:probe ~to_:groceries (on ym 15) 12_900L "SPOTIFY" ])
+           months)
+  in
+  let checking = settled 1 "Checking" history in
+  let i = input [ checking; salary; rent; groceries; opening ] ~transfers:history in
+  let f = Forecast.project { i with series = Series.detect i.book ~cash:(Account_id.equal (id checking)) ~setting i.transfers } Forecast.no_scenario in
+  Alcotest.(check bool) "a range" true (f.range <> []);
+  List.iter2
+    (fun (p : Forecast.point) (d, low, high) ->
+      Alcotest.(check string) "aligned" (Date.to_string p.date) (Date.to_string d);
+      Alcotest.(check (pair int64 int64)) ("no width on " ^ Date.to_string d) (p.cash, p.cash) (low, high))
+    (List.filteri (fun k _ -> k < List.length f.range) f.baseline) f.range;
+  Alcotest.(check (option int)) "always above zero" (Some 100) f.chance_positive;
+  Alcotest.(check bool) "says what it rests on" true (List.exists (function Forecast.Range_from { forecasts; _ } -> forecasts >= 10 | _ -> false) f.assumptions);
+  Alcotest.(check bool) "no season under a year" true (not (List.exists (function Forecast.Seasonal _ -> true | _ -> false) f.assumptions))
+
+(* Groceries every third day, twice as often last December: December is expected to cost more,
+   by half the difference, and the range has width. *)
+let seasons () =
+  let probe = account 1 Asset "Checking" in
+  let days first last = let rec go d = if Date.compare d last > 0 then [] else d :: go (Date.add_days d 3) in go first in
+  let shop d = transfer ~from:probe ~to_:groceries (Date.to_string d) 20_000L "ICA" in
+  let december = days (date "2025-12-02") (date "2025-12-31") in
+  let history =
+    transfer ~from:opening ~to_:probe "2025-07-01" 50_000_000L "Opening"
+    :: List.map shop (days (date "2025-07-01") (Date.add_days today (-1)))
+    @ List.map (fun d -> shop (Date.add_days d 1)) december
+  in
+  let checking = settled 1 "Checking" history in
+  let f = project (input [ checking; groceries; opening ] ~horizon:3 ~transfers:history) in
+  let percent = List.find_map (function Forecast.Seasonal { month = 12; year = 2025; percent } -> Some percent | _ -> None) f.assumptions in
+  Alcotest.(check bool) "December, from last December" true (match percent with Some p -> p >= 30 && p <= 50 | None -> false);
+  let spent first last = Int64.sub (cash_on f first) (cash_on f last) in
+  Alcotest.(check bool) "a December week costs more than a November week" true (Int64.compare (spent "2026-12-01" "2026-12-08") (spent "2026-11-10" "2026-11-17") > 0);
+  Alcotest.(check bool) "a range" true (f.range <> []);
+  Alcotest.(check bool) "low at most high" true (List.for_all (fun (_, low, high) -> Int64.compare low high <= 0) f.range)
+
+let no_range_yet () =
+  let checking = checking ~balance:100_000L () in
+  let f = project (input [ checking; groceries ] ~transfers:[ transfer ~from:checking ~to_:groceries "2026-09-01" 10_000L "ICA" ]) in
+  Alcotest.(check bool) "no range" true (f.range = [] && f.chance_positive = None);
+  Alcotest.(check bool) "and says so" true (List.mem Forecast.No_range_yet f.assumptions)
+
 (* Properties over random accounts, series and spending. *)
 open Hegel
 
@@ -305,6 +378,9 @@ let () =
           Alcotest.test_case "assumptions" `Quick assumptions; Alcotest.test_case "a one-off" `Quick one_off;
           Alcotest.test_case "keep to my budgets" `Quick follow_budgets; Alcotest.test_case "history" `Quick history ] );
       ("agreement", [ Alcotest.test_case "the Overview card and the forecast" `Quick card_and_forecast ]);
+      ( "range",
+        [ Alcotest.test_case "exact history, no width" `Quick exact_history; Alcotest.test_case "seasons" `Quick seasons;
+          Alcotest.test_case "no range yet" `Quick no_range_yet ] );
       ( "properties",
         [ Alcotest.test_case "deterministic, lowest, items add up, flat, leaving out" `Slow forecast_laws;
           Alcotest.test_case "the card never warns alone" `Slow card_and_forecast_agree ] ) ]
