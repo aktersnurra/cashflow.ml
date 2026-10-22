@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>cashflow · Advisor concept</title>
+<style>
+:root{--bg:#fafafa;--sidebar:#f4f5f6;--panel:#fff;--line:#e6e8ec;--text:#0d121c;--muted:#637181;--accent:#1c3355;--green:#237456;--font:"Linux Libertine O","Linux Libertine",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.55 var(--font);font-variant-numeric:tabular-nums}button,input,textarea{font:inherit;color:inherit}button{cursor:pointer;border:1px solid var(--line);border-radius:6px;background:white;padding:7px 12px}button:hover:not(:disabled){background:#eef1f5}button:disabled{opacity:.5;cursor:default}button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid #5c8bc9;outline-offset:3px}.primary{background:var(--accent);color:white;border-color:var(--accent)}.primary:hover:not(:disabled){background:#2a4670}.quiet{border-color:transparent;background:transparent;color:var(--muted)}.muted{color:var(--muted)}.small{font-size:12px}h1,h2,h3,p{margin:0}h1{font-size:26px;font-weight:600;letter-spacing:-.025em}h2{font-size:17px;font-weight:600;line-height:1.4}h3{font-size:14px;font-weight:600}p+p{margin-top:10px}svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.65;stroke-linecap:round;stroke-linejoin:round;flex:none}.demo{min-height:42px;background:#e9edf3;color:#43536a;border-bottom:1px solid #d9e0e9;padding:7px 20px;display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:12px}.demo-actions{display:flex;gap:7px;flex-wrap:wrap;justify-content:end}.demo button{font-size:12px;padding:3px 9px;background:transparent;border-color:#cad3df}.app{display:grid;grid-template-columns:216px minmax(0,1fr);min-height:calc(100dvh - 42px)}.sidebar{background:var(--sidebar);border-right:1px solid var(--line);padding:23px 12px 16px;display:flex;flex-direction:column;gap:4px}.brand{font-size:17px;font-weight:600;padding:0 10px 27px;letter-spacing:-.02em}.brand span{color:var(--muted);font-weight:400}.nav{display:flex;align-items:center;gap:10px;width:100%;border:0;background:transparent;text-align:left;padding:7px 10px;color:var(--muted);font-weight:500}.nav.active{background:#e5e8ed;color:var(--accent);font-weight:600}.nav.static{cursor:default;opacity:.6}.divider{height:1px;background:var(--line);margin:16px 10px}.sidebar-bottom{margin-top:auto;padding:30px 10px 0;font-size:12px;color:var(--muted)}.avatar{background:#e1e6ec;border-radius:50%;width:26px;height:26px;display:inline-grid;place-items:center;font-size:11px;color:var(--accent);margin-right:7px}.workspace{min-width:0}.topbar{height:67px;border-bottom:1px solid var(--line);padding:0 32px;display:flex;align-items:center;justify-content:space-between;gap:12px}.topbar-right{display:flex;align-items:center;gap:20px}.scope{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px}.scope svg{width:13px;height:13px}.flow{max-width:800px;margin:0 auto;padding:42px 40px 60px}.flow-head{margin-bottom:26px}.flow-head p{color:var(--muted);font-size:12px;margin-top:5px}.brief{background:white;border:1px solid var(--line);border-radius:10px;padding:24px 26px}.brief h2{margin-bottom:10px}.brief>p{max-width:62ch;color:#465365}.brief .source{color:var(--muted);font-size:12px;margin-top:14px}.brief .note{color:var(--green);font-size:13px;margin-top:14px}.conversation{min-width:0}.message{margin:24px 0;max-width:66ch}.message.user{margin-left:auto;background:#edf0f4;padding:12px 16px;border-radius:9px;max-width:85%;color:#253449}.proposal{border:1px solid #d8dfe8;background:white;border-radius:10px;padding:22px;margin:24px 0}.proposal-top{display:flex;justify-content:space-between;align-items:start;gap:12px;margin-bottom:7px}.proposal-top h2{font-size:20px;outline:none}.status{font-size:11px;color:var(--muted);background:#f0f2f5;border-radius:4px;padding:3px 7px;white-space:nowrap}.route{color:var(--muted);font-size:13px;margin-bottom:18px}.comparison{width:100%;border-collapse:collapse;font-size:13px}.comparison th{text-align:right;color:var(--muted);font-size:11px;font-weight:400;padding-bottom:8px}.comparison th:first-child,.comparison td:first-child{text-align:left}.comparison td{text-align:right;border-top:1px solid var(--line);padding:10px 0}.comparison td:last-child{font-weight:600}.comparison td:not(:first-child){white-space:nowrap;padding-left:12px}.assumption{font-size:12px;color:var(--muted);margin-top:16px;max-width:65ch}.actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:18px}.consequence{font-size:12px;color:#43536a;margin-top:17px}.notice{background:#f1f4f7;color:#445469;border-radius:6px;padding:12px 14px;font-size:12px;margin-top:16px}.amount-edit{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:17px}.amount-edit input{border:1px solid #ccd4df;border-radius:5px;padding:6px 9px;width:110px;appearance:textfield}.amount-edit input::-webkit-inner-spin-button{appearance:none}.receipt{border-left:2px solid var(--green);padding:3px 0 3px 17px;margin:25px 0}.receipt h2{margin-bottom:6px}.receipt p{font-size:13px;color:var(--muted)}.composer{border:1px solid #d8dee6;border-radius:10px;background:white;padding:14px 16px;margin-top:24px}.composer textarea{border:0;resize:none;display:block;width:100%;min-height:52px;background:transparent;outline:none}.composer-bottom{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:11px;color:var(--muted)}.composer-bottom button{width:30px;height:30px;padding:3px}.suggestions{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}.suggestions button{font-size:13px;text-align:left}.mock-reply{font-size:13px;color:var(--muted);margin-top:12px}.modal{width:min(540px,calc(100vw - 36px));border:1px solid var(--line);border-radius:12px;padding:28px;color:var(--text);background:white;box-shadow:0 16px 48px #0d121c25}.modal::backdrop{background:#0d121c35}.modal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}.memory-item{padding:18px 0;border-bottom:1px solid var(--line)}.memory-item p{font-size:12px;color:var(--muted);margin-top:5px}.memory-item button{margin-top:8px;font-size:12px}[hidden]{display:none!important}
+@media(max-width:1000px){.app{grid-template-columns:185px minmax(0,1fr)}.flow{padding:34px 26px 50px}.topbar{padding:0 24px}}
+@media(max-width:600px){.demo{padding:8px 12px;align-items:start;min-height:78px}.demo-actions{max-width:175px}.app{grid-template-columns:1fr;grid-template-rows:auto 1fr}.sidebar{padding:10px 12px;border-right:0;border-bottom:1px solid var(--line);flex-direction:row;align-items:center}.brand{padding:0 10px 0 0;font-size:15px}.sidebar .nav{width:auto}.sidebar .static,.sidebar .divider,.sidebar-bottom{display:none}.topbar{height:55px;padding:0 20px}.topbar-right{gap:8px}.topbar-right .quiet{font-size:12px;padding:4px}.scope span{display:none}.flow{padding:26px 20px 40px}.brief{padding:20px}.proposal{padding:17px}.proposal-top{flex-wrap:wrap}.comparison{font-size:12px}.comparison td:not(:first-child){padding-left:6px}.message.user{max-width:92%}h1{font-size:24px}}
+@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
+</style>
+</head>
+<body>
+<div class="demo"><span><strong>Advisor concept</strong> · Sample data</span><div class="demo-actions"><button id="demo-stale" hidden>Simulate new data</button><button id="demo-confirm" hidden>Simulate statement</button><button id="demo-reset">Reset demo</button></div></div>
+<div class="app">
+<aside class="sidebar" aria-label="Main navigation"><div class="brand">cashflow<span>.ml</span></div>
+<button class="nav active" id="nav-home" aria-current="page"><svg viewBox="0 0 24 24"><path d="m3 10 9-7 9 7v10H3Z"/><path d="M9 20v-7h6v7"/></svg>Home</button>
+<button class="nav" id="nav-advisor"><svg viewBox="0 0 24 24"><path d="M5 4h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9l-5 3v-3H3V6a2 2 0 0 1 2-2Z"/><path d="M8 9h8M8 13h5"/></svg>Advisor</button>
+<div class="divider"></div>
+<div class="nav static"><svg viewBox="0 0 24 24"><path d="M4 4h16v16H4Z M4 14h5l1 3h4l1-3h5"/></svg>Inbox</div>
+<div class="nav static"><svg viewBox="0 0 24 24"><path d="M4 7h16v13H4Z M7 7V4h10v3M15 13h5"/></svg>Accounts</div>
+<div class="nav static"><svg viewBox="0 0 24 24"><path d="M5 6h14M15 3l4 3-4 3M19 17H5M9 14l-4 3 4 3"/></svg>Cash flow</div>
+<div class="nav static"><svg viewBox="0 0 24 24"><path d="M4 20V10h4v10m4 0V4h4v16m4 0V8"/></svg>Insights</div>
+<div class="nav static"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 9h16M9 9v11"/></svg>Budgets</div>
+<div class="nav static"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/></svg>Goals</div>
+<div class="sidebar-bottom"><span class="avatar">Y</span>Personal</div>
+</aside>
+<div class="workspace"><header class="topbar"><span class="muted small">22 October</span><div class="topbar-right"><span class="scope"><svg viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>Personal <span>· Only you</span></span><button class="quiet" id="memory-open">What I remember</button></div></header>
+<main class="flow" id="flow"><header class="flow-head"><h1>Before payday</h1><p>Next payday: 25 October</p></header>
+<article class="brief" id="brief"><h2>Bills account: 1,600 kr below buffer</h2><p>Insurance and annual membership total 6,800 kr before payday. That leaves 1,400 kr against your 3,000 kr buffer.</p><p class="source">Statement: 22 October. Bill dates and amounts are estimates.</p></article>
+<div class="conversation" id="conversation"></div>
+<div class="suggestions" id="suggestions"><button id="cover-buffer">Can we cover it without touching holiday savings?</button></div>
+<form class="composer" id="composer"><textarea id="message" aria-label="Message advisor" placeholder="Ask about your money…" maxlength="1000"></textarea><div class="composer-bottom"><span>Scripted demo · try the suggested question</span><button class="primary" id="send" type="submit" aria-label="Send message" disabled>↑</button></div></form>
+<p class="mock-reply" id="mock-reply" role="status" hidden></p>
+</main></div></div>
+<dialog class="modal" id="memory-dialog" aria-labelledby="memory-title"><div class="modal-head"><h2 id="memory-title">What I remember</h2><button class="quiet" id="memory-close" aria-label="Close memories">✕</button></div><p class="small muted">Personal · Only you</p><div class="memory-item" id="holiday-memory"><h3>Prefer options that protect holiday contributions.</h3><p>You asked me to remember this · 8 October</p><button class="quiet" id="memory-forget">Forget this preference</button></div><div class="memory-item"><h3>Use conservative spending estimates.</h3><p>Confirmed by you · 2 October</p></div><div class="memory-item"><h3>Bills account buffer: 3,000 kr</h3><p>Account setting</p></div></dialog>
+<script>
+const $=selector=>document.querySelector(selector);
+const state={stage:'brief',amount:2000,stale:false,editing:false,holiday:true};
+const money=amount=>new Intl.NumberFormat('sv-SE').format(amount)+' kr';
+const initialBrief=$('#brief').cloneNode(true);
+const initialMemory=$('#holiday-memory').cloneNode(true);
+function element(tag,attributes={},...children){
+  const node=document.createElement(tag);
+  for(const [key,value] of Object.entries(attributes)){
+    if(key.startsWith('on'))node.addEventListener(key.slice(2).toLowerCase(),value);
+    else if(key==='class')node.className=value;
+    else node.setAttribute(key,String(value));
+  }
+  for(const child of children.flat())if(child!==null&&child!==undefined)node.append(child instanceof Node?child:document.createTextNode(String(child)));
+  return node;
+}
+function button(label,action,attributes={}){return element('button',{type:'button',onClick:action,...attributes},label)}
+function selectNavigation(destination){
+  for(const name of ['home','advisor']){
+    const node=$('#nav-'+name),active=name===destination;
+    node.classList.toggle('active',active);
+    if(active)node.setAttribute('aria-current','page');else node.removeAttribute('aria-current');
+  }
+}
+function syncDemo(){
+  $('#demo-stale').hidden=state.stage!=='proposal'||state.stale;
+  $('#demo-confirm').hidden=state.stage!=='planned';
+}
+function updateBrief(){
+  if(state.stage==='confirmed'){
+    $('#brief').replaceChildren(element('h2',{},'Bills buffer covered'),element('p',{},'Transfer confirmed. Your projected balance after bills is '+money(1400+state.amount)+', above your 3,000 kr buffer.'),element('p',{class:'source'},'Sample statement · 22 October'));
+  }else $('#brief').replaceChildren(...Array.from(initialBrief.childNodes,node=>node.cloneNode(true)));
+}
+function startConversation(question='Can we cover it without touching holiday savings?'){
+  selectNavigation('advisor');
+  if(state.stage!=='brief')return;
+  state.stage='proposal';
+  $('#suggestions').hidden=true;
+  $('#conversation').append(element('div',{class:'message user'},element('p',{},question)),element('div',{id:'proposal-slot'}));
+  $('#message').value='';$('#send').disabled=true;
+  renderProposal();
+  $('#proposal-title').focus({preventScroll:true});
+}
+function comparison(){
+  const rows=[['Bills after expected payments','1,400 kr',money(1400+state.amount)],['Everyday spending headroom','2,100 kr',money(2100-state.amount)],['Holiday contribution','1,500 kr','Unchanged']];
+  return element('table',{class:'comparison'},element('thead',{},element('tr',{},...['Before payday','Current','With plan'].map(text=>element('th',{scope:'col'},text)))),element('tbody',{},...rows.map(row=>element('tr',{},...row.map(text=>element('td',{},text))))));
+}
+function renderProposal(){
+  const slot=$('#proposal-slot');if(!slot)return;
+  slot.replaceChildren();syncDemo();
+  if(state.stage==='planned'||state.stage==='confirmed'){
+    const confirmed=state.stage==='confirmed';
+    slot.append(element('div',{class:'receipt',role:'status'},element('h2',{},confirmed?'Transfer confirmed':'Planned transfer recorded'),element('p',{},money(state.amount)+' · Everyday → Bills'),element('p',{},confirmed?'Your bills buffer is covered.':'No money has moved. Transfer at your bank; confirmation follows your next import.')));
+    if(!confirmed)slot.append(button('Cancel plan',()=>{state.stage='cancelled';renderProposal()},{class:'quiet'}));
+    return;
+  }
+  if(state.stage==='rejected'||state.stage==='cancelled'){
+    const cancelled=state.stage==='cancelled';
+    slot.append(element('div',{class:'receipt',role:'status'},element('h2',{},cancelled?'Plan cancelled':'Proposal dismissed'),element('p',{},cancelled?'No bank transfer was cancelled. The buffer shortfall remains.':'Nothing was recorded. The buffer shortfall remains.')),button('Try another amount',()=>{state.stage='proposal';state.editing=true;renderProposal();$('#amount').focus({preventScroll:true})}));
+    return;
+  }
+  const panel=element('section',{class:'proposal','aria-label':'Transfer proposal'},
+    element('div',{class:'proposal-top'},element('h2',{id:'proposal-title',tabindex:'-1'},'Move '+money(state.amount)+' to Bills'),element('span',{class:'status'},state.stale?'Needs recalculation':'Awaiting approval')),
+    element('p',{class:'route'},'Everyday account → Bills account'),
+    comparison(),
+    element('p',{class:'assumption'},'Allows for expected spending until payday, not extra purchases. Emergency savings stay untouched.'));
+  if(state.stale)panel.append(element('div',{class:'notice',role:'status'},'Account data changed. Nothing was saved. Recalculate before approving.'));
+  if(state.editing){
+    const input=element('input',{id:'amount',type:'number',min:'1600',max:'2100',step:'100',required:'',value:state.amount});
+    panel.append(element('form',{class:'amount-edit',onSubmit:event=>{
+      event.preventDefault();const amount=Number(input.value);
+      if(!Number.isFinite(amount)||amount<1600||amount>2100)return;
+      state.amount=amount;state.editing=false;renderProposal();$('#approve').focus({preventScroll:true});
+    }},element('label',{for:'amount'},'Amount (kr)'),input,element('button',{type:'submit'},'Update preview'),element('span',{class:'small muted'},'Available range: 1,600–2,100 kr')));
+  }
+  const approve=button('Record planned transfer',()=>{
+    if(state.stage!=='proposal'||state.stale||state.editing)return;
+    state.stage='planned';renderProposal();
+  },{id:'approve',class:'primary'});
+  approve.disabled=state.stale||state.editing;
+  const adjust=state.stale?button('Recalculate',()=>{state.stale=false;renderProposal()}):button('Adjust',()=>{state.editing=true;renderProposal();$('#amount').focus({preventScroll:true})},{class:'quiet'});
+  panel.append(element('p',{class:'consequence'},'Records a plan. Does not move money.'),element('div',{class:'actions'},approve,adjust,button('Reject',()=>{state.stage='rejected';state.editing=false;renderProposal()},{class:'quiet'})));
+  slot.append(panel);
+}
+function sendMessage(event){
+  event.preventDefault();const text=$('#message').value.trim();if(!text)return;
+  selectNavigation('advisor');
+  if(state.stage==='brief'&&/cover|holiday|buffer|bills|savings/i.test(text)){
+    $('#mock-reply').hidden=true;startConversation(text);
+  }else{
+    $('#mock-reply').textContent='This mockup only demonstrates covering the bills buffer. No live AI is connected.';
+    $('#mock-reply').hidden=false;
+  }
+}
+function forgetHoliday(){state.holiday=false;$('#holiday-memory').replaceChildren(element('p',{},'Preference forgotten in this preview.'))}
+function resetDemo(){
+  Object.assign(state,{stage:'brief',amount:2000,stale:false,editing:false,holiday:true});
+  selectNavigation('home');updateBrief();$('#conversation').replaceChildren();$('#suggestions').hidden=false;
+  $('#message').value='';$('#send').disabled=true;$('#mock-reply').hidden=true;
+  $('#holiday-memory').replaceChildren(...Array.from(initialMemory.childNodes,node=>node.cloneNode(true)));
+  $('#memory-forget').addEventListener('click',forgetHoliday);syncDemo();
+}
+$('#nav-home').addEventListener('click',()=>selectNavigation('home'));
+$('#nav-advisor').addEventListener('click',()=>{selectNavigation('advisor');$('#message').focus({preventScroll:true})});
+$('#cover-buffer').addEventListener('click',()=>startConversation());
+$('#composer').addEventListener('submit',sendMessage);
+$('#message').addEventListener('input',()=>{$('#send').disabled=!$('#message').value.trim()});
+$('#memory-open').addEventListener('click',()=>$('#memory-dialog').showModal());
+$('#memory-close').addEventListener('click',()=>$('#memory-dialog').close());
+$('#memory-forget').addEventListener('click',forgetHoliday);
+$('#demo-reset').addEventListener('click',resetDemo);
+$('#demo-stale').addEventListener('click',()=>{if(state.stage!=='proposal')return;state.stale=true;state.editing=false;renderProposal()});
+$('#demo-confirm').addEventListener('click',()=>{if(state.stage!=='planned')return;state.stage='confirmed';updateBrief();renderProposal()});
+</script>
+</body>
+</html>
