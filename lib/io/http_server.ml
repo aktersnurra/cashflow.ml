@@ -230,16 +230,17 @@ let api_logo deps request id =
           | None -> [] | Some h -> [Owner.Household h.id]) in
         List.find_map (fun owner -> Merchant_logos.blob deps.service access ~owner ~id) owners
     | _ -> None in
-  match blob with
+  let response = match blob with
   | None -> plain 404 "Not Found"
   | Some (blob : Merchant_logo_store.blob) ->
       (match Logo_fetch.dimensions blob.bytes with
        | Some (content_type, width, height) when content_type = blob.content_type && width >= 32 && height >= 32
            && String.length blob.bytes <= 256 * 1024 ->
-           respond ~headers:["cache-control", "private, max-age=31536000, immutable";
-             "content-length", string_of_int (String.length blob.bytes)] 200 content_type
+           respond ~headers:["content-length", string_of_int (String.length blob.bytes)] 200 content_type
              (if request.meth = HEAD then "" else blob.bytes)
-       | _ -> plain 404 "Not Found")
+       | _ -> plain 404 "Not Found") in
+  (* Every image request must check current session and ownership, including after logout. *)
+  {response with headers=("cache-control", "private, no-store") :: response.headers}
 
 let handle deps (request : request) =
   let uri = Uri.of_string request.target in

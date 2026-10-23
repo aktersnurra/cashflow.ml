@@ -283,10 +283,34 @@ const fs = require('node:fs');
     await screenshot('logo-phone-light-without');
     await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
     await screenshot('logo-phone-dark-without');
+    // A fresh context with no routing keeps Chromium's HTTP cache enabled.
+    // This last case logs out the test session after every other command is done.
+    const { logo: protectedLogo } = await command('set_merchant_logo', {...choice, link:'https://logo-fixture.com/icon.png'});
+    const logoutContext = await browser.newContext();
+    try {
+      await logoutContext.addCookies([{name:'cashflow_session', value:process.env.TOKEN, domain:'127.0.0.1', path:'/'}]);
+      const logoutPage = await logoutContext.newPage();
+      logoutPage.on('request', request => { if (!request.url().startsWith(base + '/')) external.push(request.url()); });
+      await logoutPage.goto(base + '/health');
+      const readLogo = () => logoutPage.evaluate(async url => {
+        const response = await fetch(url, {cache:'default', credentials:'same-origin'});
+        return {status:response.status, bytes:(await response.arrayBuffer()).byteLength};
+      }, protectedLogo);
+      const warm = await readLogo();
+      assert.equal(warm.status, 200);
+      assert.ok(warm.bytes > 0, 'signed-in browser reads image bytes');
+      assert.deepEqual(await readLogo(), warm, 'same browser reads the image twice before logout');
+      const loggedOut = await logoutPage.evaluate(async () => (await fetch('/auth/logout', {method:'POST'})).status);
+      assert.equal(loggedOut, 200);
+      assert.equal((await logoutContext.request.get(base + protectedLogo)).status(), 404, 'server denies the logged-out session');
+      const afterLogout = await readLogo();
+      assert.equal(afterLogout.status, 404, 'browser must not reuse cached protected bytes after logout');
+      assert.notEqual(afterLogout.bytes, warm.bytes, 'logged-out browser receives no cached image');
+    } finally { await logoutContext.close(); }
     assert.deepEqual(external, [], 'browser never contacts a merchant');
     const logged = fs.readFileSync(`${process.env.OUT}/logo-server.log`, 'utf8');
     assert.ok(!logged.includes('logo-fixture.com'), 'fixture outbound network never reaches a live merchant');
     await context.close();
-    console.log('merchant logos: inline arrow/Enter submit, compact popup, logo-revealed removal, conditional retry, persistence, broken image, focus, eight screenshots, no external browser requests');
+    console.log('merchant logos: inline arrow/Enter submit, compact popup, logo-revealed removal, conditional retry, persistence, broken image, focus, logout cache revocation, eight screenshots, no external browser requests');
   } finally { await browser.close(); }
 })().catch(error => { console.error('FAILED', error); process.exit(1); });

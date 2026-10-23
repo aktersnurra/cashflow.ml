@@ -262,7 +262,9 @@ let test_private_logos () =
   let target = "/api/logos/" ^ string_of_int id in
   let fetch ?(meth=Http_server.GET) ?(token="alice-token") () =
     Http_server.handle deps (request ~meth ~headers:["authorization", "Bearer " ^ token] target) in
-  Alcotest.(check int) "unsigned" 404 (Http_server.handle deps (request target)).status;
+  let unsigned = Http_server.handle deps (request target) in
+  Alcotest.(check int) "unsigned" 404 unsigned.status;
+  Alcotest.(check (option string)) "unsigned logo cannot be cached" (Some "private, no-store") (header unsigned "cache-control");
   Alcotest.(check int) "other user" 404 (fetch ~token:"bob-token" ()).status;
   let bob_owner = Access.personal bob in
   Merchant_logo_store.put deps.service.db bob_owner "shop"
@@ -273,11 +275,12 @@ let test_private_logos () =
   Alcotest.(check int) "allowed" 200 allowed.status;
   Alcotest.(check string) "bytes" png allowed.body;
   Alcotest.(check (option string)) "detected type" (Some "image/png") (header allowed "content-type");
-  Alcotest.(check bool) "private cache" true (String.starts_with ~prefix:"private" (Option.get (header allowed "cache-control")));
+  Alcotest.(check (option string)) "protected image cannot be cached" (Some "private, no-store") (header allowed "cache-control");
   Alcotest.(check bool) "CSP self" true (Str_compat.contains ~sub:"img-src 'self' data:" (Option.get (header allowed "content-security-policy")));
   let head = fetch ~meth:Http_server.HEAD () in
   Alcotest.(check int) "HEAD" 200 head.status;
   Alcotest.(check string) "HEAD empty" "" head.body;
+  Alcotest.(check (option string)) "HEAD cannot be cached" (Some "private, no-store") (header head "cache-control");
   Merchant_logo_store.delete deps.service.db owner "shop";
   Alcotest.(check int) "removed association" 404 (fetch ()).status;
   let admin = sign_in deps.service ~admin:true "household-admin" in
