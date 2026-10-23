@@ -18,7 +18,12 @@ type token = { epoch : int; generation : int }
 (* Rejected is an uncertain/protocol response; only Not_accepted proves a write was refused. *)
 type failure = Session_lost | Access_lost | Transport | Rejected | Not_accepted of W.error_code
 type household_status = { household_id : string; enabled : bool; can_manage : bool }
-type status = { available : bool; consent : bool; household : household_status option }
+type status = {
+  available : bool;
+  consent : bool;
+  household : household_status option;
+  household_known : bool; (* Absent legacy metadata is unknown, not confirmed membership loss. *)
+}
 type metadata = { conversation_id : string; version : string; updated_at : string }
 type connection = Disconnected | Connecting | Connected | Reconnecting
 type pending = Submit of W.submit | Retry of W.retry
@@ -42,6 +47,7 @@ type action =
   | Activate
   | Deactivate
   | Auth_lost
+  | Consume_first_acceptance of string
   | Leave_surface
   | Open_conversation of string
   | Open_latest
@@ -107,7 +113,7 @@ type t = {
   delete_target : string option;
   status_request : token option;
   consent_request : token option;
-  consent_enabling : bool;
+  consent_change : (bool * string option) option;
   history_request : token option;
   suspended : token option;
   stream : (token * W.identities) option;
@@ -116,7 +122,7 @@ type t = {
   latest : bool;
   selected : string option;
   context : (string option * W.scope * W.currency * string) option;
-  drafts : (string * string) list;
+  drafts : (string * (W.scope * string)) list;
 }
 
 let blank =
@@ -154,7 +160,7 @@ let empty =
     delete_target = None;
     status_request = None;
     consent_request = None;
-    consent_enabling = false;
+    consent_change = None;
     history_request = None;
     suspended = None;
     stream = None;
@@ -196,12 +202,13 @@ let fetch t id =
     },
     [ Unsubscribe; Cancel_flush; Fetch_snapshot (tok, id) ] )
 
-(* Selection may invalidate conversation callbacks, but must not lose delayed readiness. *)
-let selection_status (t, commands) =
-  if t.v.status <> None && t.status_request = None then (t, commands)
-  else
-    let t, tok = fresh t in
-    ({ t with status_request = Some tok }, commands @ [ Get_status tok ])
+let request_status (t, commands) =
+  let t, tok = fresh t in
+  ({ t with status_request = Some tok }, commands @ [ Get_status tok ])
+
+(* Selection may reuse known readiness; an explicit refresh must not. *)
+let selection_status ((t, _) as input) =
+  if t.v.status <> None && t.status_request = None then input else request_status input
 
 let resync t = match t.selected with None -> (t, []) | Some id -> fetch t id
 
@@ -257,12 +264,34 @@ let apply_event t (e : W.event) =
 let flush t = List.fold_left apply_event { t with buffer = []; bytes = 0 } t.buffer
 let notice t message = ({ t with v = { t.v with notice = message } }, [ Announce_status message ])
 
+let selected_scope t =
+  match t.v.snapshot, t.context, t.selected with
+  | Some s, _, _ -> Some s.scope
+  | _, Some (_, scope, _, _), _ -> Some scope
+  | _, _, Some id -> Option.map fst (List.assoc_opt id t.drafts)
+  | _ -> None
+
+let without_scope scope drafts = List.filter (fun (_, (cached, _)) -> cached <> scope) drafts
+let restored_draft id drafts = Option.value (Option.map snd (List.assoc_opt id drafts)) ~default:""
+
+let scope_readiness (status : status) scope =
+  if not status.consent then Some false else match scope, status.household with
+  | W.Personal, _ -> Some true
+  | Household _, _ when not status.household_known -> None
+  | Household id, Some h -> Some (h.enabled && h.household_id = id)
+  | Household _, None -> Some false
+
 let failure t = function
   | Session_lost -> ({ (clear t) with active = false }, clear_commands)
   | Access_lost ->
       let denied_conversation = Option.map (fun (s : W.snapshot) -> s.conversation_id) t.v.snapshot in
+      let drafts = match selected_scope t, t.v.status with
+        | Some (W.Household id as scope), Some status when status.consent && status.household_known
+          && (match status.household with None -> true | Some h -> h.household_id <> id || not h.enabled) ->
+            without_scope scope t.drafts
+        | _ -> [] in
       let t = clear t in
-      ({t with v = {t.v with access_denied = true; denied_conversation}}, clear_commands)
+      ({t with drafts; v = {t.v with access_denied = true; denied_conversation}}, clear_commands)
   | Transport -> notice t Interrupted
   | Rejected | Not_accepted _ -> notice t Request_failed
 
@@ -275,9 +304,9 @@ let request_pending t =
       (t, [ (match p with Submit p -> Post_turn (tok, p) | Retry p -> Retry_turn (tok, p)) ])
 
 let remember_draft t =
-  match t.selected with
-  | None -> t
-  | Some id -> { t with drafts = (id, t.v.draft) :: List.remove_assoc id t.drafts }
+  match t.selected, selected_scope t with
+  | Some id, Some scope -> { t with drafts = (id, (scope, t.v.draft)) :: List.remove_assoc id t.drafts }
+  | _ -> t
 
 let reduce t action =
   match action with
@@ -287,6 +316,8 @@ let reduce t action =
         let t, tok = fresh { t with active = true } in
         ({ t with status_request = Some tok }, [ Get_status tok ])
   | Deactivate | Auth_lost -> ({ (clear t) with active = false }, clear_commands)
+  | Consume_first_acceptance id when t.selected = Some id && t.v.first_acceptance = Some id ->
+      ({t with v={t.v with first_acceptance=None}}, [])
   | Leave_surface -> (t, [])
   | Follow following ->
       ({ t with v = { t.v with following; new_output = (if following then false else t.v.new_output) } }, [])
@@ -295,7 +326,7 @@ let reduce t action =
       if t.selected = Some id && (t.snapshot_request <> None || t.v.snapshot <> None) then (t, [])
       else
         let t = remember_draft t in
-        let draft = Option.value (List.assoc_opt id t.drafts) ~default:"" in
+        let draft = restored_draft id t.drafts in
         let t =
           {
             t with
@@ -305,6 +336,7 @@ let reduce t action =
             suspended = None;
             status_request = None;
             consent_request = None;
+            consent_change = None;
             selected = Some id;
             write_request = None;
             stop_request = None;
@@ -329,7 +361,7 @@ let reduce t action =
   | Open_latest when t.active ->
       let t, tok = fresh t in
       ({ t with latest = true; history_request = Some tok }, [ List_conversations (tok, 1, 0) ])
-  | Refresh_status when t.active -> selection_status (t, [])
+  | Refresh_status when t.active -> request_status (t, [])
   | Load_history offset when t.active && offset >= 0 ->
       let t, tok = fresh t in
       ({ t with latest = false; history_request = Some tok }, [ List_conversations (tok, 20, offset) ])
@@ -518,32 +550,48 @@ let reduce t action =
       | Ok () -> if t.selected = target || t.v.denied_conversation = target then (clear t, clear_commands) else (t, []))
   | Consent (enabled, household) when t.active ->
       let t, tok = fresh t in
-      ({ t with consent_request = Some tok; consent_enabling = enabled }, [ Set_consent (tok, enabled, household) ])
+      ({ t with consent_request = Some tok; consent_change = Some (enabled, household) }, [ Set_consent (tok, enabled, household) ])
   | Consent_result (tok, result) when current t t.consent_request tok -> (
-      match result with
-      | Error e -> failure { t with consent_request = None } e
-      | Ok () ->
-          let status = t.v.status in
-          let context = if t.consent_enabling then t.context else None in
-          let access_denied = not t.consent_enabling in
-          let denied_conversation = if access_denied then Option.map (fun (s : W.snapshot) -> s.conversation_id) t.v.snapshot else None in
-          let t = clear t in
-          let t, tok = fresh t in
-          ({ t with context; status_request = Some tok; v = {t.v with status; access_denied; denied_conversation} }, clear_commands @ [ Get_status tok ]))
+      let change = t.consent_change in
+      let t = {t with consent_request=None; consent_change=None} in
+      match result, change with
+      | Error Access_lost, Some (_, Some _) -> request_status (notice t Request_failed)
+      | Error e, _ -> failure t e
+      | Ok (), Some (enabled, household) ->
+          let affected = not enabled && (match household with
+            | None -> true
+            | Some id -> selected_scope t = Some (W.Household id)) in
+          let drafts = match enabled, household with
+            | true, _ -> t.drafts
+            | false, None -> []
+            | false, Some id -> without_scope (W.Household id) t.drafts in
+          if not affected then
+            request_status ({t with drafts; v={t.v with denied_conversation=None}}, [])
+          else
+            let status = t.v.status in
+            let denied_conversation = Option.map (fun (s : W.snapshot) -> s.conversation_id) t.v.snapshot in
+            let t = clear t in
+            request_status ({t with drafts; v={t.v with status; access_denied=true; denied_conversation}}, clear_commands)
+      | Ok (), None -> (t, []))
   | Status (tok, result) when current t t.status_request tok -> (
       match result with
       | Error e -> failure { t with status_request = None } e
       | Ok status ->
-          let t = { t with status_request = None; v = { t.v with status = Some status } } in
-          (* Readiness never grants transcript authority. A revoked gate triggers the
-             existing authorized snapshot path, which clears contents on denial. *)
-          let recheck = match t.v.snapshot with
-            | None -> false
-            | Some s -> not status.consent || (match s.scope, status.household with
-                | W.Personal, _ -> false
-                | Household id, Some h -> not h.enabled || h.household_id <> id
-                | Household _, None -> true) in
-          if recheck then resync t else (t, []))
+          let context_lost = t.v.snapshot = None && (match selected_scope t, t.v.status with
+            | Some scope, Some previous -> scope_readiness previous scope = Some true && scope_readiness status scope = Some false
+            | _ -> false) in
+          let drafts = List.filter (fun (_, (scope, _)) -> scope_readiness status scope <> Some false) t.drafts in
+          let t = { t with drafts; status_request = None; v = { t.v with status = Some status } } in
+          (* Known revocation also drops unaccepted private context/pending text. It
+             cannot grant transcript authority: persisted snapshots recheck below. *)
+          if context_lost then
+            let t = clear t in
+            ({t with drafts; v={t.v with status=Some status; access_denied=true}}, clear_commands)
+          else
+            let recheck = match t.v.snapshot with
+              | None -> false
+              | Some s -> scope_readiness status s.scope <> Some true in
+            if recheck then resync t else (t, []))
   | History (tok, result) when current t t.history_request tok -> (
       match result with
       | Error e -> failure { t with history_request = None } e
@@ -553,7 +601,7 @@ let reduce t action =
           match (latest, history) with
           | true, h :: _ ->
               let t = remember_draft t in
-              let draft = Option.value (List.assoc_opt h.conversation_id t.drafts) ~default:"" in
+              let draft = restored_draft h.conversation_id t.drafts in
               selection_status
                 (fetch
                    {
@@ -563,6 +611,7 @@ let reduce t action =
                      delete_request = None;
                      status_request = None;
                      consent_request = None;
+                     consent_change = None;
                      selected = Some h.conversation_id;
                      recovery_required = false;
                      context = None;

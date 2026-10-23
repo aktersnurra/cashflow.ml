@@ -18,7 +18,12 @@ type token = { epoch : int; generation : int }
 (* Rejected is an uncertain/protocol response; only Not_accepted proves a write was refused. *)
 type failure = Session_lost | Access_lost | Transport | Rejected | Not_accepted of W.error_code
 type household_status = { household_id : string; enabled : bool; can_manage : bool }
-type status = { available : bool; consent : bool; household : household_status option }
+type status = {
+  available : bool;
+  consent : bool;
+  household : household_status option;
+  household_known : bool; (* Absent legacy metadata is unknown, not confirmed membership loss. *)
+}
 type metadata = { conversation_id : string; version : string; updated_at : string }
 type connection = Disconnected | Connecting | Connected | Reconnecting
 type pending = Submit of W.submit | Retry of W.retry
@@ -42,6 +47,7 @@ type action =
   | Activate
   | Deactivate
   | Auth_lost
+  | Consume_first_acceptance of string
   | Leave_surface
   | Open_conversation of string
   | Open_latest
@@ -76,7 +82,7 @@ type action =
 
 type view = {
   selected_conversation : string option;
-  first_acceptance : string option; (** New-conversation acceptance only, never history selection. *)
+  first_acceptance : string option; (** Pending new-conversation acceptance, consumed only for the still-selected ID. *)
   context_scope : W.scope option;
   authenticated : bool;
   access_denied : bool;

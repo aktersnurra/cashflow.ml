@@ -174,7 +174,7 @@ let concurrent_and_consent () =
   let status = token_of (function C.Get_status t -> Some t | _ -> None) cs in
   let s, cs = C.reduce s (C.Load_history 0) in
   let history = token_of (function C.List_conversations (t, _, _) -> Some t | _ -> None) cs in
-  let s = apply s (C.Status (status, Ok { available = true; consent = true; household = None })) in
+  let s = apply s (C.Status (status, Ok { available = true; consent = true; household = None; household_known = true })) in
   let s = apply s (C.History (history, Ok [])) in
   Alcotest.(check bool) "concurrent request lanes coexist" true ((C.view s).status <> None);
   let s, cs = C.reduce s (C.Consent (true, Some "explicit-household")) in
@@ -308,7 +308,7 @@ let session_and_owned_deletion () =
   Alcotest.(check string) "401 blocks draft" "" (C.view lost).draft;
   let fresh, cs = C.reduce lost C.Activate in
   let status = token_of (function C.Get_status t -> Some t | _ -> None) cs in
-  let fresh = apply fresh (C.Status (status, Ok { available = true; consent = true; household = None })) in
+  let fresh = apply fresh (C.Status (status, Ok { available = true; consent = true; household = None; household_known = true })) in
   let fresh = apply fresh (C.Deleted (token, Error C.Session_lost)) in
   Alcotest.(check bool) "stale401 cannot deactivate new epoch" true ((C.view fresh).status <> None);
   let s, _ = opened () in
@@ -359,7 +359,7 @@ let delayed_readiness () =
           Alcotest.(check bool) "old-session readiness cannot return" true ((C.view s).status = None);
           let s = apply s (C.Status (current, Ok status)) in
           Alcotest.(check bool) "new-session readiness still applies" true ((C.view s).status = Some status))
-        [ { available = false; consent = true; household = None }; { available = true; consent = false; household = None } ])
+        [ { available = false; consent = true; household = None; household_known = true }; { available = true; consent = false; household = None; household_known = true } ])
     [
       (C.Open_empty (W.Personal, snapshot.currency, "en"), false);
       (C.Open_finding ("finding", W.Personal, snapshot.currency, "en"), false);
@@ -552,7 +552,7 @@ let first_acceptance_and_revocation () =
   let s, _ = opened () in
   let s, commands = C.reduce s C.Refresh_status in
   let token = token_of (function C.Get_status token -> Some token | _ -> None) commands in
-  let _, commands = C.reduce s (C.Status (token, Ok {C.available=true; consent=false; household=None})) in
+  let _, commands = C.reduce s (C.Status (token, Ok {C.available=true; consent=false; household=None; household_known=true})) in
   Alcotest.(check bool) "revoked readiness rechecks actual snapshot authority" true
     (List.exists (function C.Fetch_snapshot (_, "c") -> true | _ -> false) commands
      && not (List.exists (function C.Post_turn _ | C.Retry_turn _ -> true | _ -> false) commands));
@@ -562,6 +562,144 @@ let first_acceptance_and_revocation () =
   Alcotest.(check bool) "explicit opt-out clears private view and preserves only delete handoff" true
     ((C.view s).snapshot = None && (C.view s).access_denied && (C.view s).denied_conversation = Some "c")
 
+let cached_ready_snapshot snap =
+  let s, commands = C.reduce C.empty C.Activate in
+  let token = token_of (function C.Get_status token -> Some token | _ -> None) commands in
+  let readiness = {C.available=true; consent=true; household_known=true;
+    household=Some {C.household_id="h"; enabled=true; can_manage=true}} in
+  let s = apply s (C.Status (token, Ok readiness)) in
+  let s, commands = C.reduce s (C.Open_conversation snap.W.conversation_id) in
+  let s, commands = C.reduce s (C.Snapshot (snapshot_token commands, Ok snap)) in
+  s, commands, readiness
+
+let cached_readiness_revocation () =
+  let completed = {snapshot with scope=W.Household "h"; active_run=None;
+    turns=[{(List.hd snapshot.turns) with attempts=[{attempt with state=W.Completed}]}]} in
+  List.iter (fun membership_lost ->
+    let s, _, readiness = cached_ready_snapshot completed in
+    let s = apply s (C.Draft_changed "private household draft") in
+    let s, commands = C.reduce s C.Refresh_status in
+    Alcotest.(check bool) "explicit refresh fetches despite cached successful readiness" true
+      (List.exists (function C.Get_status _ -> true | _ -> false) commands);
+    let old = token_of (function C.Get_status token -> Some token | _ -> None) commands in
+    let s, commands = C.reduce s C.Refresh_status in
+    let current = token_of (function C.Get_status token -> Some token | _ -> None) commands in
+    let revoked = if membership_lost then {readiness with household=None}
+      else {readiness with household=Some {C.household_id="h"; enabled=false; can_manage=true}} in
+    let stale = apply s (C.Status (old, Error C.Session_lost)) in
+    Alcotest.(check bool) "stale refresh401 cannot deactivate current session" true ((C.view stale).authenticated && (C.view stale).snapshot=Some completed);
+    let stale = apply stale (C.Status (old, Ok revoked)) in
+    Alcotest.(check bool) "stale refresh cannot clear current snapshot" true ((C.view stale).snapshot=Some completed);
+    let s, commands = C.reduce s (C.Status (current, Ok revoked)) in
+    Alcotest.(check bool) "readiness rechecks snapshot rather than authorizing content" true
+      (List.exists (function C.Fetch_snapshot (_, "c") -> true | _ -> false) commands
+       && not (List.exists (function C.Post_turn _ | C.Retry_turn _ -> true | _ -> false) commands));
+    let s = apply s (C.Snapshot (snapshot_token commands, Error C.Access_lost)) in
+    Alcotest.(check bool) "completed household denial clears private content and draft" true
+      ((C.view s).access_denied && (C.view s).snapshot=None && (C.view s).draft="")) [false; true]
+
+let scoped_consent_continuity () =
+  let s, commands, _ = cached_ready_snapshot snapshot in
+  let stream = token_of (function C.Subscribe (token, _, _) -> Some token | _ -> None) commands in
+  let s = apply s (C.Draft_changed "personal draft") in
+  let s, commands = C.reduce s (C.Consent (true, Some "h")) in
+  let consent = token_of (function C.Set_consent (token, _, _) -> Some token | _ -> None) commands in
+  let s, commands = C.reduce s (C.Consent_result (consent, Ok ())) in
+  Alcotest.(check bool) "household enable preserves selected personal snapshot and draft" true
+    ((C.view s).selected_conversation=Some "c" && (C.view s).snapshot=Some snapshot && (C.view s).draft="personal draft");
+  Alcotest.(check bool) "household enable preserves same active subscription" true
+    (C.command_is_current s (C.Subscribe (stream, ids, "0")) && not (List.mem C.Unsubscribe commands));
+  let s = apply s (C.Event (stream, event 1 delta)) |> fun s -> apply s (C.Flush stream) in
+  Alcotest.(check string) "same run still delivers" "héllo <img onerror=evil()>" (text s);
+  let done_snapshot = {snapshot with active_run=None; turns=[]} in
+  let s, _, _ = cached_ready_snapshot done_snapshot in
+  let s = apply s (C.Draft_changed "immutable pending") in
+  let s, _ = C.reduce s (C.Submit_draft "pending") in
+  let pending = (C.view s).pending in
+  Alcotest.(check bool) "personal submission is actually pending" true (Option.is_some pending);
+  let s, commands = C.reduce s (C.Consent (true, Some "h")) in
+  let consent = token_of (function C.Set_consent (token, _, _) -> Some token | _ -> None) commands in
+  let s = apply s (C.Consent_result (consent, Ok ())) in
+  Alcotest.(check bool) "unrelated consent preserves immutable pending write" true ((C.view s).pending=pending)
+
+let scoped_cached_draft_revocation () =
+  let personal = {snapshot with active_run=None; turns=[]} in
+  let household = {personal with conversation_id="household"; scope=W.Household "h"} in
+  let open_snapshot s snap =
+    let s, commands = C.reduce s (C.Open_conversation snap.W.conversation_id) in
+    let s, commands = if List.exists (function C.Fetch_snapshot _ -> true | _ -> false) commands
+      then s, commands else C.reduce s C.Reconnect in
+    apply s (C.Snapshot (snapshot_token commands, Ok snap)) in
+  let s, _, readiness = cached_ready_snapshot personal in
+  let s = apply s (C.Draft_changed "preserved personal") in
+  let s = open_snapshot s household |> fun s -> apply s (C.Draft_changed "revoked household") in
+  let s = open_snapshot s personal in
+  List.iter (fun explicit ->
+    let s = if explicit then
+      let s, commands = C.reduce s (C.Consent (false, Some "h")) in
+      let token = token_of (function C.Set_consent (token, _, _) -> Some token | _ -> None) commands in
+      apply s (C.Consent_result (token, Ok ()))
+    else
+      let s, commands = C.reduce s C.Refresh_status in
+      let token = token_of (function C.Get_status token -> Some token | _ -> None) commands in
+      apply s (C.Status (token, Ok {readiness with household=None})) in
+    Alcotest.(check bool) "household loss retains unrelated personal view/draft" true
+      ((C.view s).snapshot=Some personal && (C.view s).draft="preserved personal");
+    let s = apply s (C.Open_conversation "household") in
+    Alcotest.(check string) "revoked household cache cannot restore draft" "" (C.view s).draft)
+    [false; true];
+  let unknown, commands = C.reduce s C.Refresh_status in
+  let token = token_of (function C.Get_status token -> Some token | _ -> None) commands in
+  let unknown = apply unknown (C.Status (token, Ok {readiness with household=None; household_known=false})) in
+  let unknown = apply unknown (C.Open_conversation "household") in
+  Alcotest.(check string) "absent legacy metadata is not revocation" "revoked household" (C.view unknown).draft;
+  let s = open_snapshot s household in
+  let s, commands = C.reduce s (C.Consent (false, Some "h")) in
+  let token = token_of (function C.Set_consent (token, _, _) -> Some token | _ -> None) commands in
+  let s = apply s (C.Consent_result (token, Ok ())) in
+  Alcotest.(check bool) "affected household view cleared" true ((C.view s).snapshot=None && (C.view s).draft="" && (C.view s).access_denied);
+  let s = apply s (C.Open_conversation "c") in
+  Alcotest.(check string) "affected household disable preserves personal cached draft" "preserved personal" (C.view s).draft;
+  let s = open_snapshot s personal in
+  let s, commands = C.reduce s (C.Consent (false, None)) in
+  let token = token_of (function C.Set_consent (token, _, _) -> Some token | _ -> None) commands in
+  let s = apply s (C.Consent_result (token, Ok ())) |> fun s -> apply s (C.Open_conversation "c") in
+  Alcotest.(check string) "individual opt-out clears all cached drafts" "" (C.view s).draft
+
+let pending_acceptance_consumption () =
+  let s = apply C.empty C.Activate |> fun s -> apply s (C.Open_empty (W.Personal, snapshot.currency, "en"))
+    |> fun s -> apply s (C.Draft_changed "pending URL") in
+  let s, commands = C.reduce s (C.Submit_draft "pending URL") in
+  let token = token_of (function C.Post_turn (token, _) -> Some token | _ -> None) commands in
+  let s = apply s (C.Accepted (token, Ok {W.ids; accepted_version="1"; idempotent_repeat=false})) in
+  let s = apply s C.Leave_surface |> fun s -> apply s (C.Consume_first_acceptance "other") in
+  Alcotest.(check bool) "off-surface acceptance remains pending for selected ID" true ((C.view s).first_acceptance=Some "c");
+  let consumed = apply s (C.Consume_first_acceptance "c") in
+  Alcotest.(check bool) "matching selected acceptance consumed once" true ((C.view consumed).first_acceptance=None);
+  let history = apply s (C.Open_conversation "other") in
+  Alcotest.(check bool) "explicit history invalidates deferred URL" true ((C.view history).first_acceptance=None);
+  let fresh = apply s (C.Open_empty (W.Personal, snapshot.currency, "en")) in
+  Alcotest.(check bool) "explicit new context invalidates deferred URL" true ((C.view fresh).first_acceptance=None);
+  let lost = apply s C.Auth_lost in
+  Alcotest.(check bool) "session transition invalidates deferred URL" true ((C.view lost).first_acceptance=None)
+
+let revoked_pending_household_context () =
+  let s, _, readiness = cached_ready_snapshot {snapshot with active_run=None; turns=[]} in
+  let s = apply s (C.Draft_changed "authorized personal cache") in
+  let s = apply s (C.Open_empty (W.Household "h", snapshot.currency, "en"))
+    |> fun s -> apply s (C.Draft_changed "private household pending") in
+  let s, commands = C.reduce s (C.Submit_draft "household pending") in
+  let write = token_of (function C.Post_turn (token, _) -> Some token | _ -> None) commands in
+  let s, commands = C.reduce s C.Refresh_status in
+  let status = token_of (function C.Get_status token -> Some token | _ -> None) commands in
+  let s = apply s (C.Status (status, Ok {readiness with household=None})) in
+  Alcotest.(check bool) "known household loss drops affected unaccepted text/pending operation" true
+    ((C.view s).pending=None && (C.view s).draft="" && (C.view s).context_scope=None && (C.view s).access_denied);
+  let s = apply s (C.Accepted (write, Ok {W.ids; accepted_version="1"; idempotent_repeat=false})) in
+  Alcotest.(check bool) "late acceptance cannot revive revoked context" true ((C.view s).first_acceptance=None && (C.view s).snapshot=None);
+  let s = apply s (C.Open_conversation "c") in
+  Alcotest.(check string) "unrelated authorized personal cache retained" "authorized personal cache" (C.view s).draft
+
 let () =
   Alcotest.run "advisor client state"
     [
@@ -569,6 +707,11 @@ let () =
         List.map
           (fun (name, f) -> Alcotest.test_case name `Quick f)
           [
+            ("revoked pending household context", revoked_pending_household_context);
+            ("scoped cached draft revocation", scoped_cached_draft_revocation);
+            ("pending acceptance consumption", pending_acceptance_consumption);
+            ("cached readiness revocation", cached_readiness_revocation);
+            ("scoped consent continuity", scoped_consent_continuity);
             ("first acceptance and revocation", first_acceptance_and_revocation);
             ("denied ownership handoff", denied_ownership_handoff);
             ("per conversation memory-only drafts", conversation_drafts);

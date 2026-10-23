@@ -138,7 +138,7 @@ const sleep = ms => new Promise(r => setTimeout(r,ms));
   await page.waitForFunction(()=>document.querySelector('.advisor-tools select')?.options.length===1);
   await button('Newer conversations').click();
   await page.locator('.advisor-tools select option[value="'+second.split('/').pop()+'"]').waitFor({state:'attached'});
-  await page.locator('.advisor-tools select').selectOption(second.split('/').pop());
+  await page.getByRole('combobox',{name:'Conversation history',exact:true}).selectOption(second.split('/').pop());
   await page.waitForFunction(()=>document.querySelector('textarea')?.value==='second conversation draft');assert.equal(await composer().inputValue(),'second conversation draft');
   // Real deletion endpoint; dialog holds only the currently selected opaque ID.
   page.once('dialog',dialog=>dialog.accept());await button('Delete conversation').click();
@@ -156,6 +156,7 @@ const sleep = ms => new Promise(r => setTimeout(r,ms));
   await page.locator('select:visible').first().selectOption('sv');await button('Save').click();
   await page.getByRole('heading',{name:'Inställningar',exact:true}).waitFor();
   await page.goto(base+conversation);await page.getByRole('textbox',{name:'Meddelande till rådgivaren',exact:true}).waitFor();
+  await openHistory();await page.getByRole('combobox',{name:'Samtalshistorik',exact:true}).waitFor();await page.locator('.advisor-tools summary').click();
   assert.equal(await page.locator('.tabbar .label').count(),5,'existing mobile destinations preserved');
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
   await page.screenshot({path:evidence+'/mobile-swedish.png',fullPage:true});

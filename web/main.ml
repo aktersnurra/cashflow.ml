@@ -113,6 +113,8 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
   let selected_scope, set_selected_scope = Bonsai.state W.Personal graph in
   let declined, set_declined = Bonsai.state false graph in
   let history_offset, set_history_offset = Bonsai.state 0 graph in
+  let confirmed_membership, set_confirmed_membership = Bonsai.state None graph in
+  let membership_reload, set_membership_reload = Bonsai.state None graph in
   let authenticated = let%arr advisor in advisor.view.authenticated in
   let route_key = Bonsai.both route ctx.version in
   let route_changed = let%arr advisor and locale and session and set_selected_finding and set_declined in
@@ -141,15 +143,17 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
                | None -> advisor.open_empty ~scope:selected_scope ~currency ~locale); focus_advisor])
       | _ -> Effect.Ignore in
   Bonsai.Edge.on_change' ~equal:Poly.equal consent_key ~callback:consent_changed graph;
-  let accepted_key = let%arr advisor in advisor.view.first_acceptance in
-  let accepted_changed = let%arr set_route and route in
-    fun id -> match id, route with
-    | Some id, (Route.Home | Advisor _) ->
+  let accepted_key = let%arr advisor and route in advisor.view.first_acceptance, advisor.view.selected_conversation, route in
+  let accepted_changed = let%arr advisor and set_route in
+    fun (accepted, selected, route) -> match accepted, selected, route with
+    | Some id, Some selected, (Route.Home | Advisor None) when String.equal id selected ->
         let next = Route.Advisor (Some id) in
         Effect.Many [Effect.of_thunk (fun () -> Dom_html.window##.history##replaceState Js.null (Js.string "") (Js.some (Js.string (Route.to_path next))));
-          set_route next]
+          set_route next; advisor.dispatch (C.Consume_first_acceptance id)]
+    | Some id, Some selected, Advisor (Some destination)
+      when String.equal id selected && String.equal id destination -> advisor.dispatch (C.Consume_first_acceptance id)
     | _ -> Effect.Ignore in
-  Bonsai.Edge.on_change ~equal:(Option.equal String.equal) accepted_key ~callback:accepted_changed graph;
+  Bonsai.Edge.on_change ~equal:Poly.equal accepted_key ~callback:accepted_changed graph;
   let on_ask = let%arr advisor and locale and session and notify and set_selected_scope and set_selected_finding and set_declined in
     fun ~finding_key ~scope -> match advisor_currency session scope with
     | None -> notify (Msg.advisor_currency_unavailable locale)
@@ -171,9 +175,9 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
               (Effect.Many [set_history_offset (max 0 (history_offset - 20)); advisor.dispatch (C.Load_history (max 0 (history_offset - 20)))]);
             Ui.button (Msg.advisor_older locale)
               (Effect.Many [set_history_offset (history_offset + 20); advisor.dispatch (C.Load_history (history_offset + 20))])];
-         Ui.select ~value:(Option.value view.selected_conversation ~default:"")
+         Ui.field (Msg.advisor_history locale) (Ui.select ~value:(Option.value view.selected_conversation ~default:"")
            ~options:(("", Msg.advisor_choose_history locale) :: List.map view.history ~f:(fun h -> h.conversation_id, h.updated_at))
-           ~on_change:(fun id -> if String.is_empty id then Effect.Ignore else Effect.Many [set_selected_finding None; navigate (Route.Advisor (Some id))]);
+           ~on_change:(fun id -> if String.is_empty id then Effect.Ignore else Effect.Many [set_selected_finding None; navigate (Route.Advisor (Some id))]));
          Ui.button (Msg.advisor_new_personal locale) (new_conversation W.Personal);
          (match view.status with Some {household=Some h; _} when h.enabled ->
             Ui.button (Msg.advisor_new_household locale) (new_conversation (W.Household h.household_id))
@@ -199,7 +203,8 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
        | Some s when s.consent && s.available -> [Ui.muted (Msg.advisor_household_off locale); Ui.button (Msg.nav_household locale) (navigate Route.Household)]
        | _ -> [Advisor_view.consent ~locale ~view ~dispatch:advisor.dispatch ~decline:(set_declined true)]) in
   let access_denied = let%arr advisor in advisor.view.access_denied in
-  let home_access = Bonsai.both authenticated access_denied in
+  let home_visible = let%arr authenticated and membership_reload in authenticated && Option.is_none membership_reload in
+  let home_access = Bonsai.both home_visible access_denied in
   let home, reset_home = Bonsai.with_model_resetter ~f:(fun graph ->
     match%sub home_access with
     | false, _ -> Bonsai.return Vdom.Node.none
@@ -209,9 +214,38 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
   let clear_home = let%arr reset_home and set_selected_finding and set_selected_scope in fun denied ->
     if denied then Effect.Many [set_selected_finding None; set_selected_scope W.Personal; reset_home] else Effect.Ignore in
   Bonsai.Edge.on_change ~equal:Bool.equal access_denied ~callback:clear_home graph;
-  let invalidate_shell = let%arr advisor and reset_home and set_selected_finding and set_selected_scope and set_history_offset and set_toast in
+  (* A current explicit membership loss/change is an authorization boundary, unlike
+     household Advisor opt-out. Hide/deactivate Home before resetting and reloading it. *)
+  let membership = let%arr advisor in match advisor.view.status with
+    | Some status when status.household_known -> Some (Option.map status.household ~f:(fun h -> h.household_id))
+    | _ -> None in
+  let membership_changed = let%arr confirmed_membership and membership_reload and set_confirmed_membership and set_membership_reload in
+    fun membership -> match membership with
+    | None -> Effect.Ignore
+    | Some current -> Effect.Many [
+        (match membership_reload, confirmed_membership with
+         | Some pending, _ when not (Option.equal String.equal pending current) -> set_membership_reload (Some current)
+         | _, Some (Some previous) when not (Option.equal String.equal (Some previous) current) -> set_membership_reload (Some current)
+         | _ -> Effect.Ignore);
+        set_confirmed_membership (Some current)] in
+  Bonsai.Edge.on_change ~equal:Poly.equal membership ~callback:membership_changed graph;
+  let reload_home_membership = let%arr reset_home and set_selected_finding and reload_session in
+    fun target -> match target with
+    | None -> Effect.Ignore
+    | Some _ -> Effect.Many [set_selected_finding None; reset_home; reload_session] in
+  Bonsai.Edge.on_change ~equal:Poly.equal membership_reload ~callback:reload_home_membership graph;
+  let session_membership = let%arr session in
+    if Ctx.has_household session then Some (J.str (J.path ["household"; "id"] session)) else None in
+  let membership_loaded = let%arr advisor and set_membership_reload in fun (target, current) ->
+    match target with
+    | Some expected when Option.equal String.equal expected current -> set_membership_reload None
+    | Some _ -> advisor.dispatch C.Refresh_status
+    | None -> Effect.Ignore in
+  Bonsai.Edge.on_change ~equal:Poly.equal (Bonsai.both membership_reload session_membership) ~callback:membership_loaded graph;
+  let invalidate_shell = let%arr advisor and reset_home and set_selected_finding and set_selected_scope and set_history_offset and set_toast and set_confirmed_membership and set_membership_reload in
     Effect.Many [advisor.invalidate; set_selected_finding None; set_selected_scope W.Personal;
-      set_history_offset 0; set_toast None; reset_home; Effect.of_thunk (fun () -> scrolls := String.Map.empty)] in
+      set_history_offset 0; set_toast None; set_confirmed_membership None; set_membership_reload None;
+      reset_home; Effect.of_thunk (fun () -> scrolls := String.Map.empty)] in
   let authentication_changed = let%arr invalidate_shell and auth_lost in fun old current ->
     if Option.value old ~default:false && not current then Effect.Many [invalidate_shell; auth_lost] else Effect.Ignore in
   Bonsai.Edge.on_change' ~equal:Bool.equal authenticated ~callback:authentication_changed graph;

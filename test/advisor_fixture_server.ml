@@ -75,6 +75,16 @@ let () =
               post "bills income" salary bills 3000000 "2026-07-01";
               List.iteri (fun n on -> post ("RENT " ^ string_of_int n) bills rent 800000 on)
                 ["2026-07-20"; "2026-08-20"; "2026-09-20"];
+              if Array.exists (( = ) "--household-finding") Sys.argv then (
+                let household = Option.get (Cashflow_core.Access.household access) in
+                let owner = Cashflow_core.Owner.Household household.id in
+                let shared = S.open_checking service access ~owner "Shared bills" in
+                let category name = (List.find (fun (a : Cashflow_core.Account_info.t) ->
+                  Cashflow_core.Owner.equal a.account.owner owner && a.account.name = name)
+                  (Service.accounts service access)).account.id in
+                post "shared income" (category "Other income") shared 3000000 "2026-07-01";
+                List.iteri (fun n on -> post ("SHARED RENT " ^ string_of_int n) shared (category "Subscriptions") 800000 on)
+                  ["2026-07-20"; "2026-08-20"; "2026-09-20"]);
               let statement = S.open_checking service access ~statement_backed:true "Import account" in
               ignore (S.ok_import (Import.confirm (Import.context service access)
                 { account_id = statement; file_name = None;

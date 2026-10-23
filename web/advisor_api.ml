@@ -88,7 +88,7 @@ let status () =
                         && List.for_all (String.split household_id ~on:'-') ~f:(String.for_all ~f:Char.is_hex_digit) -> Some (Some { C.household_id; enabled; can_manage })
                     | _ -> None)
                | _ -> None in
-             Option.map household ~f:(fun household -> { C.available; consent; household })
+             Option.map household ~f:(fun household -> { C.available; consent; household; household_known = Option.is_some (field "household" j) })
          | _ -> None))
 
 let history ~limit ~offset =
