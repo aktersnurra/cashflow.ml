@@ -242,6 +242,66 @@ CREATE TABLE merchant_logos (
 );
 CREATE INDEX merchant_logos_logo_idx ON merchant_logos(logo_id);
 |}
+    );
+    ( 7,
+      {|
+CREATE TABLE advisor_conversations (
+ id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id), projection TEXT NOT NULL,
+ version INTEGER NOT NULL CHECK(version >= 0), updated_at TEXT NOT NULL
+);
+CREATE INDEX advisor_conversations_owner ON advisor_conversations(owner_id, updated_at, id);
+CREATE TABLE advisor_turns (
+ id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES advisor_conversations(id) ON DELETE CASCADE,
+ ordinal INTEGER NOT NULL CHECK(ordinal > 0), user_message_id TEXT NOT NULL UNIQUE, user_text TEXT NOT NULL,
+ UNIQUE(conversation_id, ordinal)
+);
+CREATE TABLE advisor_attempts (
+ id TEXT PRIMARY KEY, turn_id TEXT NOT NULL REFERENCES advisor_turns(id) ON DELETE CASCADE,
+ attempt_ordinal INTEGER NOT NULL CHECK(attempt_ordinal > 0), assistant_message_id TEXT NOT NULL UNIQUE,
+ UNIQUE(turn_id, attempt_ordinal)
+);
+CREATE TABLE advisor_runs (
+ id TEXT PRIMARY KEY, attempt_id TEXT NOT NULL UNIQUE REFERENCES advisor_attempts(id) ON DELETE CASCADE,
+ conversation_id TEXT NOT NULL REFERENCES advisor_conversations(id) ON DELETE CASCADE,
+ owner_id TEXT NOT NULL REFERENCES users(id), originating_session TEXT NOT NULL, model TEXT NOT NULL,
+ protocol_version INTEGER NOT NULL DEFAULT 1, prompt_version INTEGER NOT NULL DEFAULT 1,
+ started_at TEXT NOT NULL, updated_at TEXT NOT NULL, terminal_at TEXT,
+ state TEXT NOT NULL CHECK(state IN ('queued','awaiting','streaming','tools','cancelling','completed','cancelled','failed')),
+ failure TEXT, output_bytes INTEGER NOT NULL DEFAULT 0 CHECK(output_bytes >= 0), model_rounds INTEGER NOT NULL DEFAULT 0 CHECK(model_rounds >= 0),
+ tool_calls INTEGER NOT NULL DEFAULT 0 CHECK(tool_calls >= 0), evidence_bytes INTEGER NOT NULL DEFAULT 0 CHECK(evidence_bytes >= 0),
+ journal_bytes INTEGER NOT NULL DEFAULT 0 CHECK(journal_bytes >= 0), last_sequence INTEGER NOT NULL DEFAULT 0 CHECK(last_sequence >= 0),
+ replay_floor INTEGER NOT NULL DEFAULT 0 CHECK(replay_floor >= 0),
+ CHECK((terminal_at IS NOT NULL) = (state IN ('completed','cancelled','failed'))),
+ CHECK((failure IS NOT NULL) = (state = 'failed'))
+);
+CREATE UNIQUE INDEX advisor_runs_active_owner ON advisor_runs(owner_id) WHERE terminal_at IS NULL;
+CREATE UNIQUE INDEX advisor_runs_active_conversation ON advisor_runs(conversation_id) WHERE terminal_at IS NULL;
+CREATE TABLE advisor_segments (
+ run_id TEXT NOT NULL REFERENCES advisor_runs(id) ON DELETE CASCADE, id TEXT NOT NULL,
+ ordinal INTEGER NOT NULL, projection TEXT NOT NULL, PRIMARY KEY(run_id,id), UNIQUE(run_id,ordinal)
+);
+CREATE TABLE advisor_evidence (
+ run_id TEXT NOT NULL REFERENCES advisor_runs(id) ON DELETE CASCADE, id TEXT NOT NULL,
+ ordinal INTEGER NOT NULL, projection TEXT NOT NULL, PRIMARY KEY(run_id,id), UNIQUE(run_id,ordinal)
+);
+CREATE TABLE advisor_events (
+ run_id TEXT NOT NULL REFERENCES advisor_runs(id) ON DELETE CASCADE, sequence INTEGER NOT NULL CHECK(sequence > 0),
+ projection TEXT NOT NULL, PRIMARY KEY(run_id, sequence)
+);
+-- No transcript foreign keys: deletion retains only fingerprints and accepted IDs for 24 hours.
+CREATE TABLE advisor_requests (
+ owner_id TEXT NOT NULL REFERENCES users(id), key TEXT NOT NULL, operation TEXT NOT NULL,
+ fingerprint TEXT NOT NULL, conversation_id TEXT NOT NULL, accepted TEXT NOT NULL, deleted_at TEXT,
+ PRIMARY KEY(owner_id,key)
+);
+CREATE TABLE advisor_user_consent (user_id TEXT PRIMARY KEY REFERENCES users(id), enabled INTEGER NOT NULL CHECK(enabled IN (0,1)));
+CREATE TABLE advisor_household_consent (household_id TEXT PRIMARY KEY REFERENCES households(id), enabled INTEGER NOT NULL CHECK(enabled IN (0,1)));
+CREATE TABLE advisor_account_aliases (
+ conversation_id TEXT NOT NULL REFERENCES advisor_conversations(id) ON DELETE CASCADE,
+ account_id TEXT NOT NULL REFERENCES accounts(id), alias TEXT NOT NULL,
+ PRIMARY KEY(conversation_id,account_id), UNIQUE(conversation_id,alias)
+);
+|}
     ) ]
 
 let latest_version = List.fold_left (fun latest (version, _) -> max latest version) 0 migrations

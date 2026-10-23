@@ -1,0 +1,61 @@
+module A = Cashflow_core.Advisor
+
+type t
+type replay = Events of A.event list | Resync_required of int64
+type consent_scope = User of Cashflow_core.User_id.t | Household of Cashflow_core.Household_id.t
+
+type metadata = {
+  conversation_id : A.Conversation_id.t;
+  scope : A.scope;
+  currency : Cashflow_core.Currency.t;
+  locale : string;
+  version : int64;
+  updated_at : Ptime.t;
+  active_run : A.Run_id.t option;
+}
+
+val create : ?clock:(unit -> Ptime.t) -> Sql.db -> t
+(** Inject the runtime's clock. Explicit [now] arguments override it; append and transition sample it once. Terminal
+    timestamps are immutable. *)
+
+val accept :
+  t ->
+  owner:Cashflow_core.User_id.t ->
+  session:A.Session_ref.t ->
+  now:Ptime.t ->
+  model:string ->
+  source_finding:A.finding option ->
+  A.submit ->
+  (A.accepted, A.error) result
+
+val retry :
+  t ->
+  owner:Cashflow_core.User_id.t ->
+  session:A.Session_ref.t ->
+  now:Ptime.t ->
+  model:string ->
+  A.retry ->
+  (A.accepted, A.error) result
+
+val append : t -> run:A.Run_id.t -> expected_sequence:int64 -> A.event_payload list -> (A.event list, A.error) result
+val snapshot : t -> owner:Cashflow_core.User_id.t -> A.Conversation_id.t -> (A.snapshot, A.error) result
+val replay : t -> run:A.Run_id.t -> after:int64 -> limit:int -> (replay, A.error) result
+val transition : t -> run:A.Run_id.t -> A.transition -> (A.run_state, A.error) result
+
+val delete :
+  t -> owner:Cashflow_core.User_id.t -> now:Ptime.t -> A.Conversation_id.t -> (A.Run_id.t list, A.error) result
+
+val recover : t -> now:Ptime.t -> unit
+val prune : t -> now:Ptime.t -> unit
+val consent : t -> consent_scope -> (bool, A.error) result
+
+val set_consent : t -> consent_scope -> enabled:bool -> (unit, A.error) result
+(** Low-level scoped storage, disabled when absent. Authorization is the caller's responsibility. *)
+
+val list : t -> owner:Cashflow_core.User_id.t -> ?limit:int -> ?offset:int -> unit -> (metadata list, A.error) result
+val metadata : t -> owner:Cashflow_core.User_id.t -> A.Conversation_id.t -> (metadata, A.error) result
+val active_runs : t -> (A.run list, A.error) result
+val active_runs_for_owner : t -> owner:Cashflow_core.User_id.t -> (A.run list, A.error) result
+
+val account_alias : t -> conversation:A.Conversation_id.t -> Cashflow_core.Account_id.t -> (string, A.error) result
+(** The account must already be authorized by the caller. Aliases never enter metadata. *)

@@ -200,3 +200,9 @@
  (modules test_advisor_protocol)
  (libraries alcotest cashflow_core cashflow_io cashflow_advisor_protocol hegel yojson)
  (preprocess (pps ppx_hegel_test)))
+
+(test
+ (name test_advisor_store)
+ (enabled_if (= %{context_name} default))
+ (modules test_advisor_store advisor_test_support test_service_support)
+ (libraries alcotest cashflow_core cashflow_io cashflow_advisor_protocol eio eio_main))
