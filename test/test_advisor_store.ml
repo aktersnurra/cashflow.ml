@@ -458,6 +458,84 @@ let bounded_journal_and_counters () =
   Alcotest.(check int) "four model rounds" 4 current.counters.model_rounds;
   Alcotest.(check int) "eight read tools" 8 current.counters.tool_calls
 
+let terminal_journal_reserve_boundary () =
+  with_fixture @@ fun db store owner clock ->
+  let a = accept store owner (submit "journal-exact-boundary") in
+  let run = a.ids.run_id in
+  let encoded_bytes sequence payload =
+    String.length
+      (Cashflow_advisor_protocol.Wire.encode_event (Advisor_codec.event { A.ids = a.ids; sequence; payload }))
+  in
+  let stored_bytes () =
+    Sql.(
+      run db
+        (stmt "SELECT coalesce(sum(length(CAST(projection AS BLOB))),0) FROM advisor_events WHERE run_id=?"
+           (text @-> nil)
+           (one (row (int @-> nil) Fun.id))))
+      (A.Run_id.to_string run)
+  in
+  let checkpoint () = List.hd (ok (Advisor_store.active_runs_for_owner store ~owner)) in
+  ignore (ok (Advisor_store.transition store ~run A.Start));
+  let large = A.Tool_finished { label = String.make 240000 'x'; outcome = Succeeded } in
+  ignore (ok (Advisor_store.append store ~run ~expected_sequence:1L [ large; large; large; large ]));
+  let before = checkpoint () in
+  let prefix_bytes = stored_bytes () in
+  Alcotest.(check int) "prefix counter matches stored UTF-8 bytes" prefix_bytes before.counters.journal_bytes;
+  let text = A.Text_appended { segment_id = segment 1; text = "Synthetic € checkpoint" } in
+  let tool label = A.Tool_finished { label; outcome = Succeeded } in
+  let boundary = 1044480 in
+  let tool_bytes = boundary - prefix_bytes - encoded_bytes 6L text in
+  let label_length = tool_bytes - encoded_bytes 7L (tool "x") + 1 in
+  Alcotest.(check bool)
+    "boundary filler fits one frame" true
+    (label_length > 0 && tool_bytes + 1 <= A.limits.frame_bytes);
+  let exact = tool (String.make label_length 'x') in
+  let excess = tool (String.make (label_length + 1) 'x') in
+  Alcotest.(check int)
+    "encoded batch reaches exact nonterminal boundary" boundary
+    (prefix_bytes + encoded_bytes 6L text + encoded_bytes 7L exact);
+  Alcotest.(check int)
+    "encoded oversized batch exceeds boundary by one byte" (boundary + 1)
+    (prefix_bytes + encoded_bytes 6L text + encoded_bytes 7L excess);
+  advance clock 1;
+  (match Advisor_store.append store ~run ~expected_sequence:5L [ text; excess ] with
+  | Error { code = Run_limit_reached; context = Limit Journal_bytes } -> ()
+  | _ -> Alcotest.fail "expected journal limit rejection at 1044481 encoded bytes");
+  Alcotest.(check int) "rejected batch leaves stored bytes unchanged" prefix_bytes (stored_bytes ());
+  Alcotest.(check int) "rejected batch leaves no event prefix" 5 (List.length (replay_events store run 0L));
+  Alcotest.(check bool) "rejected batch preserves counters, sequence, state and timestamp" true (checkpoint () = before);
+  let snapshot = ok (Advisor_store.snapshot store ~owner a.ids.conversation_id) in
+  Alcotest.(check bool)
+    "rejected batch leaves no materialized text" true
+    ((List.hd (List.hd snapshot.turns).attempts).segments = []);
+  ignore (ok (Advisor_store.append store ~run ~expected_sequence:5L [ text; exact ]));
+  Alcotest.(check int) "exact boundary persisted" boundary (stored_bytes ());
+  Alcotest.(check int) "exact boundary checkpoint counter" boundary (checkpoint ()).counters.journal_bytes;
+  let terminal_bytes = encoded_bytes 8L A.Run_completed in
+  ignore (ok (Advisor_store.transition store ~run A.Finish));
+  let events = replay_events store run 0L in
+  Alcotest.(check int)
+    "exactly one terminal event" 1
+    (List.length (List.filter (fun (event : A.event) -> event.payload = A.Run_completed) events));
+  Alcotest.(check int) "terminal sequence committed once" 8 (List.length events);
+  Alcotest.(check int) "terminal adds actual encoded bytes" (boundary + terminal_bytes) (stored_bytes ());
+  Alcotest.(check bool) "terminal publication stays inside 1 MiB" true (stored_bytes () <= 1048576);
+  let final_bytes, final_sequence =
+    Sql.(
+      run db
+        (stmt "SELECT journal_bytes,last_sequence FROM advisor_runs WHERE id=?" (text @-> nil)
+           (one (row (int @-> int64 @-> nil) (fun bytes sequence -> (bytes, sequence))))))
+      (A.Run_id.to_string run)
+  in
+  Alcotest.(check int) "terminal counter matches stored bytes" (stored_bytes ()) final_bytes;
+  Alcotest.(check int64) "terminal checkpoint sequence" 8L final_sequence;
+  let snapshot = ok (Advisor_store.snapshot store ~owner a.ids.conversation_id) in
+  Alcotest.(check bool)
+    "terminal state committed with event" true
+    ((List.hd (List.hd snapshot.turns).attempts).state = A.Completed);
+  error_code A.Invalid_transition (Advisor_store.transition store ~run A.Finish);
+  Alcotest.(check int) "repeated terminal rejection leaves journal unchanged" final_bytes (stored_bytes ())
+
 let () =
   Alcotest.run "advisor_store"
     [
@@ -478,5 +556,6 @@ let () =
             ("durable_visibility", durable_visibility);
             ("fractional_retention", fractional_retention);
             ("bounded_journal_and_counters", bounded_journal_and_counters);
+            ("terminal_journal_reserve_boundary", terminal_journal_reserve_boundary);
           ] );
     ]

@@ -622,7 +622,7 @@ let write_counters t (run : A.run) counters now =
 let limit_exceeded kind = raise (Reject { A.code = Run_limit_reached; context = Limit kind })
 
 (* Reserve space for the bounded identity/error-only terminal event, even at journal capacity. *)
-let terminal_event_reserve_bytes = 1024
+let terminal_event_reserve_bytes = 4096
 
 let append t ~run ~expected_sequence payloads =
   let now = t.clock () in
