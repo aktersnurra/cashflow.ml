@@ -4,7 +4,7 @@
  (name main)
  (enabled_if (= %{context_name} web))
  (modes js)
- (libraries bonsai.web bonsai.feather_icon async_js virtual_dom virtual_dom.svg js_of_ocaml yojson cashflow_msg mf2_runtime)
+ (libraries bonsai.web bonsai.feather_icon async_js virtual_dom virtual_dom.svg js_of_ocaml yojson cashflow_msg mf2_runtime cashflow_advisor_protocol cashflow_advisor_stream)
  (preprocess (pps ppx_jane bonsai.ppx_bonsai js_of_ocaml-ppx)))
 
 (rule

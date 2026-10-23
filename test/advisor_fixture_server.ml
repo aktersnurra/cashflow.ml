@@ -13,6 +13,7 @@ let () =
     ~finally:(fun () -> Sql.close db)
     (fun () ->
       Eio.Switch.run (fun sw ->
+          let browser_text = Array.exists (( = ) "--browser-text") Sys.argv in
           let small_buffers = Array.exists (( = ) "--small-socket-buffers") Sys.argv in
           let pending_writes = Hashtbl.create 4 and next_connection = ref 0 in
           let drain_timeouts = ref 0 in
@@ -64,12 +65,18 @@ let () =
                          ])
                   ^ "\n\n"
                 in
-                on_chunk (text (if small_buffers then "first" ^ String.make ((60 * 1024) - 5) 'x' else "first"));
+                on_chunk
+                  (text
+                     (if small_buffers then "first" ^ String.make ((60 * 1024) - 5) 'x'
+                      else if browser_text then
+                        "first héj <img src=x onerror=window.fixtureXss=true> [evidence:not-authorized]\n"
+                        ^ String.concat "\n" (List.init 50 (fun n -> "synthetic line " ^ string_of_int n))
+                      else "first"));
                 Eio.Promise.await gate;
                 assert (not (guard.held ()));
                 on_chunk
-                  (text " second"
-                 ^ "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n");
+                  (text (if browser_text then "\nsecond <script>window.fixtureXss=true</script>" else " second")
+                  ^ "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n");
                 Ok ())
           in
           let provider =

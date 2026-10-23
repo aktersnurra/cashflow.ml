@@ -70,3 +70,6 @@ let sign_out () =
 let fresh_key prefix =
   let random = Random.State.make_self_init () in
   prefix ^ ":" ^ String.init 20 ~f:(fun _ -> "abcdefghijklmnopqrstuvwxyz0123456789".[Random.State.int random 36])
+
+(* Advisor shares session CSRF, not the legacy generic command dispatcher. *)
+let advisor_csrf_token () = !csrf_token
