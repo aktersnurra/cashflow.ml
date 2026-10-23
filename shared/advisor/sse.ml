@@ -1,11 +1,11 @@
 type frame = { id : string option; event : string option; data : string }
 type error = Frame_too_large | Incomplete_frame
 type t = { max : int; line : Buffer.t; mutable bytes : int;
-  mutable cr : bool; mutable id : string option; mutable event : string option;
+  mutable cr : bool; mutable ended : bool; mutable id : string option; mutable event : string option;
   mutable data : string list; mutable failed : bool }
 let create ~max_frame_bytes =
   if max_frame_bytes <= 0 then invalid_arg "max_frame_bytes";
-  { max = max_frame_bytes; line = Buffer.create 128; bytes = 0; cr = false;
+  { max = max_frame_bytes; line = Buffer.create 128; bytes = 0; cr = false; ended = false;
     id = None; event = None; data = []; failed = false }
 let feed t chunk =
   let frames = ref [] in
@@ -15,7 +15,7 @@ let feed t chunk =
     if String.length s = 0 then (
       (match t.data with [] -> () | data ->
         frames := { id = t.id; event = t.event; data = String.concat "\n" (List.rev data) } :: !frames);
-      t.bytes <- 0; t.id <- None; t.event <- None; t.data <- [])
+      t.ended <- true; t.id <- None; t.event <- None; t.data <- [])
     else if s.[0] <> ':' then (
       let key, value = match String.index_opt s ':' with
         | None -> s, ""
@@ -29,19 +29,21 @@ let feed t chunk =
   in
   String.iter (fun c ->
     if not t.failed then (
-      if t.cr && c = '\n' then (
-        t.cr <- false;
-        if t.bytes > 0 then (t.bytes <- t.bytes + 1; if t.bytes > t.max then t.failed <- true))
+      let crlf = t.cr && c = '\n' in
+      (* A terminal CR may still own an LF in the next feed. Retain its raw
+         byte count until the next frame actually starts. *)
+      if t.ended && not crlf then (t.bytes <- 0; t.ended <- false);
+      t.bytes <- t.bytes + 1;
+      if t.bytes > t.max then t.failed <- true
+      else if crlf then t.cr <- false
       else (
-        t.cr <- false; t.bytes <- t.bytes + 1;
-        if t.bytes > t.max then t.failed <- true
-        else if c = '\r' then (line (); t.cr <- true)
-        else if c = '\n' then line ()
+        t.cr <- c = '\r';
+        if c = '\r' || c = '\n' then line ()
         else Buffer.add_char t.line c))) chunk;
   if t.failed then Error Frame_too_large else Ok (List.rev !frames)
 let finish t =
   if t.failed then Error Frame_too_large
-  else if t.bytes <> 0 then Error Incomplete_frame else Ok ()
+  else if t.bytes <> 0 && not t.ended then Error Incomplete_frame else Ok ()
 let encode (f : frame) =
   let meta key = function None -> "" | Some s ->
     if String.contains s '\r' || String.contains s '\n' || String.contains s '\000' then invalid_arg "SSE metadata";

@@ -129,7 +129,34 @@ let stream_post ?tls env : stream_post =
                   | Cohttp.Transfer.Unknown ->
                     let reader = Lenient_response.make_body_reader response input in
                     (fun () -> Lenient_response.read_body_chunk reader)
-                  | _ ->
+                  | Cohttp.Transfer.Chunked ->
+                    (* Cohttp returns Done on an invalid size line. Validate
+                       that line with its own parser before the transfer reader
+                       can confuse malformed framing with a zero-size chunk.
+                       Per reader call, only a line preceding data is a size;
+                       later lines are the chunk delimiter or trailers. *)
+                    let size_line = ref true in
+                    let module Chunk_io = struct
+                      include Strict_io
+                      let read input len =
+                        size_line := false;
+                        read input len
+                      let read_line input =
+                        let line = read_line input in
+                        if !size_line then (
+                          size_line := false;
+                          match line with
+                          | Some line ->
+                            (match Http.Private.Parser.parse_chunk_length (line ^ "\r\n") with
+                             | Ok _ -> ()
+                             | Error _ -> failwith "invalid HTTP chunk size")
+                          | None -> raise End_of_file);
+                        line
+                    end in
+                    let module Chunk_response = Cohttp.Response.Private.Make (Chunk_io) in
+                    let reader = Chunk_response.make_body_reader response input in
+                    (fun () -> size_line := true; Chunk_response.read_body_chunk reader)
+                  | Cohttp.Transfer.Fixed _ ->
                     let reader = Stream_response.make_body_reader response input in
                     (fun () -> Stream_response.read_body_chunk reader) in
                 let rec read () = match next () with

@@ -14,6 +14,57 @@ let bounds () =
   let p = Sse.create ~max_frame_bytes:262144 in
   match Sse.feed p (String.make 262145 'x') with
   | Error _ -> () | Ok _ -> Alcotest.fail "oversized incomplete frame accepted"
+let raw_frame_bounds () =
+  List.iter (fun newline ->
+    let sample = "data:x" ^ newline ^ newline in
+    let wire_bytes = String.length sample in
+    for split = 0 to wire_bytes do
+      let feed_split cap =
+        let parser = Sse.create ~max_frame_bytes:cap in
+        let first = Sse.feed parser (String.sub sample 0 split) in
+        let second = Sse.feed parser (String.sub sample split (wire_bytes - split)) in
+        parser, first, second in
+      let parser, first, second = feed_split wire_bytes in
+      let frames = ok first @ ok second in
+      Alcotest.(check int) "exact raw cap emits one frame" 1 (List.length frames);
+      ok (Sse.finish parser);
+      let parser, first, second = feed_split (wire_bytes - 1) in
+      (match first, second with
+       | Error Sse.Frame_too_large, _ | _, Error Sse.Frame_too_large -> ()
+       | _ -> Alcotest.fail "limit-plus-one raw frame accepted");
+      (match Sse.finish parser with
+       | Error Sse.Frame_too_large -> ()
+       | _ -> Alcotest.fail "oversized raw frame finished successfully")
+    done) ["\n"; "\r\n"]
+
+let production_raw_frame_bounds () =
+  let cap = 262144 in
+  List.iter (fun newline ->
+    let delimiter = newline ^ newline in
+    List.iter (fun extra ->
+      let data = String.make (cap - 5 - String.length delimiter + extra) 'x' in
+      let prefix = "data:" ^ data in
+      for split = 0 to String.length delimiter do
+        let parser = Sse.create ~max_frame_bytes:cap in
+        let first = ok (Sse.feed parser prefix) in
+        let middle = Sse.feed parser (String.sub delimiter 0 split) in
+        let last = Sse.feed parser (String.sub delimiter split (String.length delimiter - split)) in
+        if extra = 0 then (
+          Alcotest.(check int) "256 KiB exact raw frame" 1
+            (List.length (first @ ok middle @ ok last));
+          ok (Sse.finish parser);
+          let next = ok (Sse.feed parser ("data:next" ^ delimiter)) in
+          Alcotest.(check int) "following frame has independent cap" 1 (List.length next);
+          ok (Sse.finish parser))
+        else (
+          (match middle, last with
+           | Error Sse.Frame_too_large, _ | _, Error Sse.Frame_too_large -> ()
+           | _ -> Alcotest.fail "256 KiB plus one raw frame accepted");
+          match Sse.finish parser with
+          | Error Sse.Frame_too_large -> ()
+          | _ -> Alcotest.fail "oversized frame finish accepted")
+      done) [0; 1]) ["\n"; "\r\n"]
+
 let framing () =
   let p = Sse.create ~max_frame_bytes:262144 in
   let frames = ok (Sse.feed p ": heartbeat\r\ndata: first\rdata: second\r\r") in
@@ -64,7 +115,7 @@ let tls_transport () =
     let authenticator = X509.Authenticator.chain_of_trust ~time:(fun () -> Ptime.of_float_s (Unix.gettimeofday ())) [certificate] in
     let trusted = ok (Tls.Config.client ~authenticator ()) in
     Eio_main.run @@ fun env ->
-    let run ?tls ?(large=false) ?(fixed=false) ?(truncated=false) ~status ~cancel () =
+    let run ?tls ?(large=false) ?(fixed=false) ?(truncated=false) ?(malformed=false) ?(chunk_extensions=false) ~status ~cancel () =
       Eio.Time.with_timeout_exn env#clock 5.0 @@ fun () ->
       Eio.Switch.run @@ fun sw ->
       let listener = Eio.Net.listen ~sw ~reuse_addr:true ~backlog:1 env#net (List.hd (Eio.Net.getaddrinfo_stream ~service:"0" env#net "localhost")) in
@@ -89,13 +140,13 @@ let tls_transport () =
               if large then (
                 Eio.Flow.copy_string (if fixed then text else Printf.sprintf "%x\r\n%s\r\n0\r\n\r\n" (String.length text) text) flow)
               else (
-              Eio.Flow.copy_string (if fixed then "first" else "5\r\nfirst\r\n") flow;
+              Eio.Flow.copy_string (if fixed then "first" else if chunk_extensions then "5;probe=yes\r\nfirst\r\n" else "5\r\nfirst\r\n") flow;
               if status = 200 then (
                 if cancel then (
                   let b = Cstruct.create 16 in
                   (try while true do ignore (Eio.Flow.single_read flow b) done with End_of_file -> ()))
                 else (Eio.Promise.await gate;
-                  if not truncated then Eio.Flow.copy_string (if fixed then " second" else "7\r\n second\r\n0\r\n\r\n") flow)))
+                  if not truncated then Eio.Flow.copy_string (if malformed then "bogus\r\n" else if fixed then " second" else if chunk_extensions then "7;probe=yes\r\n second\r\n0;done=yes\r\nX-Trailer: synthetic\r\n\r\n" else "7\r\n second\r\n0\r\n\r\n") flow)))
             with Tls_eio.Tls_failure _ | Tls_eio.Tls_alert _ | End_of_file -> ()))) in
       let chunks = Buffer.create 32 in
       let result =
@@ -127,6 +178,13 @@ let tls_transport () =
     let result, text = run ~status:200 ~cancel:false () in
     (match result with `Result (Error _) -> () | _ -> Alcotest.fail "untrusted TLS accepted");
     Alcotest.(check string) "no untrusted bytes" "" text;
+    let result, text = run ~tls:trusted ~malformed:true ~status:200 ~cancel:false () in
+    (match result with `Result (Error (Cashflow_io.Https.Transport _)) -> ()
+     | _ -> Alcotest.fail "malformed chunk size accepted as completion");
+    Alcotest.(check string) "valid partial text before malformed size" "first" text;
+    let result, text = run ~tls:trusted ~chunk_extensions:true ~status:200 ~cancel:false () in
+    (match result with `Result (Ok ()) -> () | _ -> Alcotest.fail "valid chunk extensions/trailers rejected");
+    Alcotest.(check string) "valid extended chunks complete" "first second" text;
     List.iter (fun fixed ->
       let result, text = run ~tls:trusted ~large:true ~fixed ~status:200 ~cancel:false () in
       (match result with `Result (Ok ()) -> () | _ -> Alcotest.fail "large body failed");
@@ -164,6 +222,8 @@ let tls_transport_no_logs () =
 let () = Alcotest.run "advisor stream" ["sse", [
   Alcotest.test_case "every split incl UTF-8" `Quick split_frame;
   Alcotest.test_case "256 KiB cap" `Quick bounds;
+  Alcotest.test_case "raw LF/CRLF cap at every split" `Quick raw_frame_bounds;
+  Alcotest.test_case "256 KiB raw cap at every delimiter split" `Quick production_raw_frame_bounds;
   Alcotest.test_case "line endings, comments, truncation" `Quick framing;
   Alcotest.test_case "encode multiline UTF-8" `Quick encode_roundtrip];
   "https", [Alcotest.test_case "fake reader" `Quick fake_reader;
