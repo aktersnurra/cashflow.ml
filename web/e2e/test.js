@@ -1,5 +1,6 @@
 const { chromium } = require('playwright');
 const fs = require('fs');
+const assert = require('node:assert/strict');
 const base = process.env.BASE_URL || 'http://127.0.0.1:18090';
 const out = process.env.OUT || __dirname;
 const csv = `Bokföringsdag;Transaktionsdatum;Text;Belopp;Saldo
@@ -31,10 +32,13 @@ fs.writeFileSync(out + '/export.csv', csv);
     await page.click('text=Open account');
     await page.fill('.sheet input >> nth=0', 'Lönekonto');
     await page.click('.sheet .button.primary');
-    await page.waitForSelector('.dropzone', { timeout: 10000 });
+    // Home remains mounted while the account detail is active; target its visible upload.
+    const upload = page.locator('.page:visible .dropzone:visible');
+    await upload.waitFor({ timeout: 10000 });
+    assert.equal(await upload.count(), 1, 'exactly one active account upload target');
     await page.screenshot({ path: out + '/02-account.png' });
     // Import the CSV through the file input.
-    await page.setInputFiles('.dropzone input[type=file]', out + '/export.csv');
+    await upload.locator('input[type=file]').setInputFiles(out + '/export.csv');
     await page.waitForSelector('.import-preview', { timeout: 10000 });
     await page.screenshot({ path: out + '/03-preview.png' });
     await page.click('.import-preview .button.primary');

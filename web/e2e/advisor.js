@@ -1,5 +1,8 @@
 // Production shell + authenticated loopback --product native fixture. No API interception
 // in the native cases. Fixture controls are synthetic mutations, never production routes.
+if (process.env.ADVISOR_PRIVACY_CASE) {
+ require('./advisor_privacy');
+} else {
 const {chromium} = require('playwright');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -172,3 +175,4 @@ const sleep = ms => new Promise(r => setTimeout(r,ms));
   console.log(JSON.stringify({result:'passed',case:'continuous_finding_conversation',native:true,firstTextBeforeGate:true,sourceRefreshAndDisappearance:true,stableIdentity:true,maxSubscriptions:1,drafts:true,history:true,delete:true,adminSwitch:true,unsupportedWriteDigest:true,desktop:true,mobile:true,locales:['en','sv'],scrollObservation:scroll,providerStarts:calls}));
  } finally {await browser.close();}
 })().catch(e=>{console.error(e);process.exit(1);});
+}

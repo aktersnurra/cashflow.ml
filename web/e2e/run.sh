@@ -9,7 +9,7 @@ WORK=$(mktemp -d)
 PORT=${CASHFLOW_E2E_PORT:-18090}
 export BASE_URL="http://127.0.0.1:$PORT"
 cd "$ROOT"
-eval $(opam env --switch=cashflow 2>/dev/null)
+eval $(opam env --switch="${CASHFLOW_TEST_SWITCH:-5.5.1}" 2>/dev/null)
 rm -f $WORK/db.sqlite3*
 cat > $WORK/cashflow.sexp <<CONFIG
 ((database $WORK/db.sqlite3) (listen 127.0.0.1:$PORT) (public_url $BASE_URL)

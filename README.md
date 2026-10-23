@@ -67,6 +67,8 @@ dune build --workspace dune-workspace.web --profile release @web/default
 
 The UI is static files (`_build/web/web/`), so it can be built anywhere and copied to the server. `web/e2e/run.sh` drives the real server and UI in Chromium (with Node and Playwright).
 
+`CASHFLOW_TEST_SWITCH=5.5.1 bash web/e2e/run_advisor.sh` builds and runs the synthetic Advisor native/browser matrix using the existing Playwright installation (`NODE_PATH` may override its location). It retains external evidence and cleans its temporary fixture data/processes. Both runners default to native switch `5.5.1`. See [Advisor deployment gates](design/advisor-deployment.md): real provider capability/privacy, deployed proxy streaming and FreeBSD/TLS checks remain release blockers; local synthetic passes do not enable production.
+
 Property tests use [Hegel](https://ocaml.org/p/hegel/latest/README.html), which needs a native `libhegel` (Linux, or macOS on Apple Silicon). They run on a development machine or in CI; nothing in production depends on Hegel. Three state machines drive random use and check invariants after every step:
 - **Ledger:** debits equal credits, limits hold, chains are all or nothing, and `verify` passes.
 - **Import:** overlapping, cut-off exports in either order, with re-uploads and undo, hold every row exactly once.
