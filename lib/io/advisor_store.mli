@@ -54,6 +54,8 @@ val set_consent : t -> consent_scope -> enabled:bool -> (unit, A.error) result
 
 val list : t -> owner:Cashflow_core.User_id.t -> ?limit:int -> ?offset:int -> unit -> (metadata list, A.error) result
 val metadata : t -> owner:Cashflow_core.User_id.t -> A.Conversation_id.t -> (metadata, A.error) result
+val find_run : t -> owner:Cashflow_core.User_id.t -> A.Run_id.t -> (A.run, A.error) result
+(** Unknown and other-owner IDs both return [Not_found], including terminal runs. *)
 val active_runs : t -> (A.run list, A.error) result
 val active_runs_for_owner : t -> owner:Cashflow_core.User_id.t -> (A.run list, A.error) result
 

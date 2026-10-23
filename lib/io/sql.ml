@@ -193,3 +193,8 @@ let transaction_result db f =
   match transaction db (fun () -> match f () with Ok _ as ok -> ok | Error _ as error -> result := Some error; raise Rollback_result) with
   | ok -> ok
   | exception Rollback_result -> Option.get !result
+
+let transaction_outer_result db f =
+  exclusive db (fun () ->
+      if db.depth <> 0 then raise (Sql_error "operation requires an outer transaction");
+      transaction_result db f)

@@ -348,6 +348,12 @@ let get_run t id =
   | Some r -> r
   | None -> reject A.Not_found
 
+let find_run t ~owner id =
+  read t (fun () ->
+      let run = get_run t id in
+      if not (User_id.equal run.owner_id owner) then reject A.Not_found;
+      run)
+
 let active_runs t =
   read t (fun () -> Sql.(run t.db (stmt (run_query ^ "WHERE r.terminal_at IS NULL ORDER BY r.id") nil (many run_row))))
 

@@ -137,6 +137,24 @@ let session (service : Service.t) ~now token =
       | None -> None)
   | _ -> None
 
+module A = Cashflow_core.Advisor
+
+type session_identity = {
+  user_id : User_id.t;
+  csrf_token : string;
+  expires_at : Ptime.t;
+  reference : A.Session_ref.t;
+}
+
+let session_ref token = Option.get (A.Session_ref.of_hash (hash token))
+
+(* Inspection deliberately does not use [session], which extends the lifetime. *)
+let inspect_session (service : Service.t) ~now reference =
+  match run service.db session_by_hash (A.Session_ref.to_hash reference) with
+  | Some (user_id, csrf_token, expires_at) when Ptime.compare now expires_at < 0 ->
+      Some { user_id; csrf_token; expires_at; reference }
+  | _ -> None
+
 let sign_out db token = run db delete_session (hash token)
 
 let cookie ?(max_age = session_lifetime_s) name value =
