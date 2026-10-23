@@ -65,6 +65,82 @@ let post env : post =
             | status -> Error ("HTTP " ^ Cohttp.Code.string_of_status status)
         with exn -> Error (Printexc.to_string exn)
 
+(* A separate incremental boundary: buffered callers above are unchanged. *)
+type stream_error = Tls_configuration | Invalid_scheme | Http_status of int | Transport of string
+type stream_post = uri:string -> headers:(string * string) list -> body:string -> on_chunk:(string -> unit) -> (unit, stream_error) result
+
+(* cohttp-eio 6.3.0's Body.Reader_flow re-copies offset zero on repeated
+   partial reads. Use its bounded HTTP parser directly, not that flow adapter.
+   Strict EOF also prevents the stock transfer reader accepting truncated bodies. *)
+module Stream_io = struct
+  include Cohttp_eio.Private.IO
+  (* The stock adapter logs plaintext headers and bodies at Debug. Keep the
+     same Eio primitives without payload logging, including on failed reads. *)
+  let read input len =
+    match Eio.Buf_read.ensure input 1 with
+    | exception End_of_file -> ""
+    | () -> Eio.Buf_read.take (min len (Eio.Buf_read.buffered_bytes input)) input
+  let read_line input =
+    try Some (Eio.Buf_read.line input) with End_of_file -> None
+  let write output text = Eio.Buf_write.string output text
+end
+module Strict_io = struct
+  include Stream_io
+  let read input len =
+    let chunk = read input len in
+    if len > 0 && String.length chunk = 0 then raise End_of_file;
+    chunk
+  let read_line input =
+    match read_line input with None -> raise End_of_file | line -> line
+end
+module Stream_response = Cohttp.Response.Private.Make (Strict_io)
+module Stream_request = Cohttp.Request.Private.Make (Stream_io)
+module Lenient_response = Cohttp.Response.Private.Make (Stream_io)
+
+let stream_post ?tls env : stream_post =
+  match (match tls with Some config -> Ok config | None -> tls_config ()) with
+  | Error () -> fun ~uri:_ ~headers:_ ~body:_ ~on_chunk:_ -> Error Tls_configuration
+  | Ok tls ->
+      Mirage_crypto_rng_unix.use_default ();
+      fun ~uri ~headers ~body ~on_chunk ->
+        try
+          let uri = Uri.of_string uri in
+          if Uri.scheme uri <> Some "https" then Error Invalid_scheme
+          else Eio.Switch.run @@ fun sw ->
+            let host = Uri.host_with_default ~default:"" uri in
+            let service = string_of_int (Option.value ~default:443 (Uri.port uri)) in
+            let address = match Eio.Net.getaddrinfo_stream ~service env#net host with
+              | address :: _ -> address | [] -> failwith "unresolved HTTPS host" in
+            let flow = connector tls uri (Eio.Net.connect ~sw env#net address) in
+            let request = Cohttp.Request.make_for_client
+              ~headers:(Cohttp.Header.of_list headers) ~chunked:false
+              ~body_length:(Int64.of_int (String.length body)) `POST uri in
+            Eio.Buf_write.with_flow flow (fun output ->
+              Stream_request.write ~flush:true
+                (fun writer -> Stream_request.write_body writer body) request output);
+            let input = Eio.Buf_read.of_flow ~max_size:65536 flow in
+            match Stream_response.read input with
+            | `Eof -> Error (Transport "missing response")
+            | `Invalid _ -> Error (Transport "invalid response")
+            | `Ok response ->
+              match Cohttp.Response.status response with
+              | #Cohttp.Code.success_status ->
+                let next = match Cohttp.Response.encoding response with
+                  | Cohttp.Transfer.Unknown ->
+                    let reader = Lenient_response.make_body_reader response input in
+                    (fun () -> Lenient_response.read_body_chunk reader)
+                  | _ ->
+                    let reader = Stream_response.make_body_reader response input in
+                    (fun () -> Stream_response.read_body_chunk reader) in
+                let rec read () = match next () with
+                  | Cohttp.Transfer.Done -> Ok ()
+                  | Chunk chunk -> on_chunk chunk; read ()
+                  | Final_chunk chunk -> on_chunk chunk; Ok () in
+                if Cohttp.Response.has_body response = `No then Ok () else read ()
+              | status -> Error (Http_status (Cohttp.Code.code_of_status status))
+        with
+        | Eio.Cancel.Cancelled _ as exn -> raise exn
+        | exn -> Error (Transport (Printexc.to_string exn))
 (* The checked address is the only address passed to connect; the URI still supplies Host and SNI. *)
 let logo_network env : Logo_fetch.network =
   let with_request : type a. (unit -> (a, Logo_fetch.error) result) -> (a, Logo_fetch.error) result = fun f ->

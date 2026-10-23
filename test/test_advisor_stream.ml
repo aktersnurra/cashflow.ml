@@ -85,7 +85,7 @@ let tls_transport () =
               Alcotest.(check bool) "authority with port" true (headers false);
               let text = if large then payload else "first second" in
               let head = if fixed then Printf.sprintf "Content-Length: %d" (String.length text) else "Transfer-Encoding: chunked" in
-              Eio.Flow.copy_string (Printf.sprintf "HTTP/1.1 %d Test\r\n%s\r\nConnection: close\r\n\r\n" status head) flow;
+              Eio.Flow.copy_string (Printf.sprintf "HTTP/1.1 %d Test\r\n%s\r\nConnection: close\r\nX-Private-Probe: advisor-financial-unique\r\n\r\n" status head) flow;
               if large then (
                 Eio.Flow.copy_string (if fixed then text else Printf.sprintf "%x\r\n%s\r\n0\r\n\r\n" (String.length text) text) flow)
               else (
@@ -100,7 +100,7 @@ let tls_transport () =
       let chunks = Buffer.create 32 in
       let result =
         try
-          let outcome = Cashflow_io.Https.stream_post ?tls env ~uri:(Printf.sprintf "https://localhost:%d/stream?probe=1" port) ~headers:[] ~body:""
+          let outcome = Cashflow_io.Https.stream_post ?tls env ~uri:(Printf.sprintf "https://localhost:%d/stream?probe=1" port) ~headers:["authorization", "Bearer advisor-auth-unique"; "x-probe", "advisor-header-unique"] ~body:"advisor-request-unique"
             ~on_chunk:(fun chunk ->
               Alcotest.(check bool) "bounded HTTP fragment" true (String.length chunk <= 32768);
               Buffer.add_string chunks chunk;
@@ -137,10 +137,34 @@ let tls_transport () =
       let result, _ = run ~tls:trusted ~fixed ~status:200 ~cancel:true () in
       match result with `Cancelled -> () | _ -> Alcotest.fail "mid-body cancellation swallowed") [false; true])
 
+let tls_transport_no_logs () =
+  let previous = Logs.reporter () in
+  let levels = List.map (fun src -> src, Logs.Src.level src) (Logs.Src.list ()) in
+  let captured = Buffer.create 1024 in
+  let report _ _ ~over k msgf =
+    msgf (fun ?header:_ ?tags:_ format ->
+      Format.kasprintf (fun message -> Buffer.add_string captured message; over (); k ()) format) in
+  Fun.protect ~finally:(fun () ->
+    Logs.set_reporter previous;
+    List.iter (fun (src, level) -> Logs.Src.set_level src level) levels)
+    (fun () ->
+      Logs.set_reporter {Logs.report};
+      Logs.set_level ~all:true (Some Logs.Debug);
+      tls_transport ();
+      let logs = Buffer.contents captured in
+      let contains needle =
+        let rec search offset =
+          offset + String.length needle <= String.length logs &&
+          (String.equal needle (String.sub logs offset (String.length needle)) || search (offset + 1)) in
+        search 0 in
+      List.iter (fun marker -> Alcotest.(check bool) ("not logged: " ^ marker) false (contains marker))
+        ["advisor-auth-unique"; "advisor-header-unique"; "advisor-request-unique";
+         "advisor-financial-unique"; "<<< first"; String.sub payload 0 100])
+
 let () = Alcotest.run "advisor stream" ["sse", [
   Alcotest.test_case "every split incl UTF-8" `Quick split_frame;
   Alcotest.test_case "256 KiB cap" `Quick bounds;
   Alcotest.test_case "line endings, comments, truncation" `Quick framing;
   Alcotest.test_case "encode multiline UTF-8" `Quick encode_roundtrip];
   "https", [Alcotest.test_case "fake reader" `Quick fake_reader;
-    Alcotest.test_case "gated trusted TLS, status, cancellation, untrusted TLS" `Quick tls_transport]]
+    Alcotest.test_case "gated trusted TLS, status, cancellation, untrusted TLS" `Quick tls_transport_no_logs]]
