@@ -3,6 +3,7 @@
 (copy_files ../../web/advisor.ml)
 (copy_files ../../web/advisor_api.ml)
 (copy_files ../../web/advisor_view.ml)
+(copy_files ../../web/advisor_evidence_text.ml)
 (copy_files ../../web/api.ml)
 (copy_files ../../web/ctx.ml)
 (copy_files ../../web/j.ml)

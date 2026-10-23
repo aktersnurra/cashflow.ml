@@ -62,6 +62,33 @@ let app graph =
       surface;
     ]
 
+let test_advisor_evidence_text () =
+  let module E = Advisor_evidence_text in
+  let equal actual expected = if not (String.equal actual expected) then failwith ("evidence presentation: " ^ actual) in
+  List.iter
+    [ "cycle_summary"; "category_spending"; "category_trend"; "relevant_transactions";
+      "recurring"; "budget_status"; "goals"; "forecast" ]
+    ~f:(fun tool -> assert (not (String.equal tool (E.title "sv" tool))));
+  equal (E.assumption "sv" "stopped_series_excluded") "Avslutade betalningsserier ingår inte.";
+  equal (E.assumption "sv" "other_currency_accounts_excluded") "Konton i andra valutor ingår inte.";
+  equal (E.assumption "sv" "no_income_detected") "Inga inkomster upptäcktes.";
+  equal (E.assumption "sv" "no_range_yet") "Inget prognosintervall finns ännu.";
+  equal (E.assumption "sv" "stale_import: 2026-10-22") "Inaktuell import: 2026-10-22";
+  equal (E.assumption "sv" "short_history: 12") "Kort historik: 12 dagar";
+  equal (E.assumption "sv" "range_from: 3 forecasts since 2026-10-22") "Intervall från 3 prognoser sedan 2026-10-22";
+  equal (E.assumption "sv" "seasonal: 2026-02 -12 percent") "Säsongsjustering: 2026-02, -12 procent";
+  equal (E.assumption "sv" "usual_spending: 9007199254740993 minor units; 2026-10-01 to 2026-10-22; 21 days")
+    "Vanliga utgifter: 9007199254740993 i minsta valutaenhet; 2026-10-01 till 2026-10-22; 21 dagar";
+  equal (E.assumption "en" "short_history: 12") "Short history: 12 days";
+  List.iter ["<img src=x onerror=alert(1)>"; "stale_import: <script>"; "unknown_tool"; "seasonal: user content"]
+    ~f:(fun unknown -> equal (E.title "sv" unknown) unknown; equal (E.label "sv" unknown) unknown;
+      equal (E.assumption "sv" unknown) unknown);
+  equal (E.value "sv" { W.label = "Truncated"; value = W.Text "false" }) "Nej";
+  equal (E.value "sv" { W.label = "Merchant"; value = W.Text "false" }) "false";
+  equal (E.value "sv" { W.label = "Largest returned category";
+    value = W.Money { decimal = "90071992547409.93"; currency = {code="SEK"; scale=2} } }) "90071992547409.93 SEK"
+
 let () =
+  test_advisor_evidence_text ();
   Async_js.init ();
   Bonsai_web.Start.start (if String.equal (Js_of_ocaml.Js.to_string Js_of_ocaml.Dom_html.window##.location##.search) "?remote" then Remote_fixture.app else app)

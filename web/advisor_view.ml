@@ -78,14 +78,14 @@ let render_body ~show_source ~locale ~(view : C.view) ~dispatch =
           List.map e.facts ~f:(fun (f : W.fact) ->
               Vdom.Node.div
                 [
-                  text f.label;
+                  text (Advisor_evidence_text.label locale f.label);
                   text ": ";
-                  text (match f.value with W.Text x | Date x -> x | Money m -> m.decimal ^ " " ^ m.currency.code);
+                  text (Advisor_evidence_text.value locale f);
                 ])
         in
         Vdom.Node.div ~key:e.id
           ~attrs:[ Vdom.Attr.id ("advisor-evidence-" ^ e.id) ]
-          ((text e.title :: text e.sampled_at :: facts)
+          ((text (Advisor_evidence_text.title locale e.title) :: text e.sampled_at :: facts)
           @ [
               text
                 (match e.import_status with
@@ -95,7 +95,7 @@ let render_body ~show_source ~locale ~(view : C.view) ~dispatch =
                 | Unknown -> Msg.advisor_unknown locale);
             ]
           @ (if e.reconciled then [] else [ text (Msg.advisor_unreconciled locale) ])
-          @ List.map e.assumptions ~f:text)
+          @ List.map e.assumptions ~f:(fun a -> text (Advisor_evidence_text.assumption locale a)))
   in
   let attempt (a : W.attempt) =
     let foreground = match view.snapshot with Some s -> Option.equal String.equal s.active_run (Some a.ids.run_id) | None -> false in
@@ -121,6 +121,7 @@ let render_body ~show_source ~locale ~(view : C.view) ~dispatch =
         | None -> false)
     | None -> false
   in
+  let generation_ready = match view.status with Some s -> s.available && s.consent | None -> false in
   let active = match view.snapshot with Some s -> Option.is_some s.active_run | None -> false in
   Vdom.Node.div
     ~attrs:
@@ -153,7 +154,7 @@ let render_body ~show_source ~locale ~(view : C.view) ~dispatch =
           (if String.equal f.kind "shortfall" then Ui.muted (Msg.advisor_bills_estimate locale) else Vdom.Node.none) ]
       | _ -> [])
     @ turns
-    @ [
+    @ (if generation_ready then [
         Vdom.Node.textarea
           ~attrs:
             [
@@ -163,16 +164,16 @@ let render_body ~show_source ~locale ~(view : C.view) ~dispatch =
             ]
           [];
         button ~kind:"primary" (Msg.advisor_send locale) (C.Submit_draft (Api.fresh_key "advisor"));
-      ]
+      ] else [])
     @ (if
          view.can_reconnect
          && (active || List.mem [ C.Interrupted; C.Request_failed; C.Invalid_state ] view.notice ~equal:Poly.equal)
        then [ button (Msg.advisor_reconnect locale) C.Reconnect ]
        else [])
     @ (if active then [ button (Msg.advisor_stop locale) C.Stop ]
-       else if retryable then [ button (Msg.advisor_retry locale) (C.Retry_latest (Api.fresh_key "advisor-retry")) ]
+       else if generation_ready && retryable then [ button (Msg.advisor_retry locale) (C.Retry_latest (Api.fresh_key "advisor-retry")) ]
        else [])
-    @ (if Option.is_some view.pending then [ button (Msg.advisor_repeat locale) C.Repeat_pending ] else [])
+    @ (if generation_ready && Option.is_some view.pending then [ button (Msg.advisor_repeat locale) C.Repeat_pending ] else [])
     @ (if view.new_output then [ button (Msg.advisor_follow locale) (C.Follow true) ] else [])
     @ if Option.is_some view.snapshot then
       [Vdom.Node.button ~attrs:[Vdom.Attr.class_ "button secondary"; Vdom.Attr.type_ "button"; Vdom.Attr.on_click (fun _ ->
@@ -185,10 +186,11 @@ let render_inline ~locale ~view ~dispatch = render_body ~show_source:false ~loca
 let consent ~locale ~(view : C.view) ~dispatch ~decline =
   match view.status with
   | None -> Ui.muted (Msg.advisor_choose_context locale)
-  | Some status when not status.available -> Ui.muted (Msg.advisor_unavailable locale)
+  | Some status when not status.available && not status.consent -> Ui.muted (Msg.advisor_unavailable locale)
   | Some status ->
       Ui.div ~cls:"advisor-consent"
-        [Ui.p (Msg.advisor_disclosure locale);
+        [(if status.available then Vdom.Node.none else Ui.muted (Msg.advisor_unavailable locale));
+         Ui.p (Msg.advisor_disclosure locale);
          Ui.div ~cls:"actions"
            (if status.consent then [Ui.button (Msg.advisor_disable locale) (dispatch (C.Consent (false, None)))]
             else [Ui.button ~kind:"primary" (Msg.advisor_enable locale) (dispatch (C.Consent (true, None)));

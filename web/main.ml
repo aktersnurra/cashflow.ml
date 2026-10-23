@@ -178,9 +178,10 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
          Ui.field (Msg.advisor_history locale) (Ui.select ~value:(Option.value view.selected_conversation ~default:"")
            ~options:(("", Msg.advisor_choose_history locale) :: List.map view.history ~f:(fun h -> h.conversation_id, h.updated_at))
            ~on_change:(fun id -> if String.is_empty id then Effect.Ignore else Effect.Many [set_selected_finding None; navigate (Route.Advisor (Some id))]));
-         Ui.button (Msg.advisor_new_personal locale) (new_conversation W.Personal);
-         (match view.status with Some {household=Some h; _} when h.enabled ->
+         (match view.status with Some s when s.available && s.consent -> Ui.button (Msg.advisor_new_personal locale) (new_conversation W.Personal) | _ -> Vdom.Node.none);
+         (match view.status with Some {household=Some h; available=true; consent=true; _} when h.enabled ->
             Ui.button (Msg.advisor_new_household locale) (new_conversation (W.Household h.household_id))
+          | Some {household=Some h; _} when h.enabled -> Vdom.Node.none
           | _ -> if Ctx.has_household session then Ui.muted (Msg.advisor_household_off locale) else Vdom.Node.none)]] in
     Vdom.Node.div ~attrs:[Vdom.Attr.class_ "advisor-outlet"; Vdom.Attr.create "data-advisor-controller" ""]
       ([controls] @
@@ -194,7 +195,7 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
          [Ui.muted (Msg.advisor_currency_unavailable locale)]
        else if declined then [Ui.button (Msg.advisor_ask locale) (set_declined false)]
        else match view.status with
-       | Some s when s.consent && s.available && (match scope, s.household with W.Personal, _ -> true | Household id, Some h -> h.enabled && String.equal id h.household_id | _ -> false) ->
+       | Some s when s.consent && (Option.is_some view.snapshot || s.available) && (match scope, s.household with W.Personal, _ -> true | Household id, Some h -> h.enabled && String.equal id h.household_id | _ -> false) ->
            [(if Option.is_some selected_finding then Ui.muted (Msg.advisor_historical locale) else Vdom.Node.none);
             (if Option.is_none view.snapshot then Ui.p (Msg.advisor_empty locale) else Vdom.Node.none);
             Ui.muted (Msg.advisor_readonly locale);

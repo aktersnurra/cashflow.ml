@@ -145,4 +145,12 @@ stop_server
 start_server restart-after --privacy-mode restart --database "$WORK/restart.sqlite3"
 ADVISOR_PRIVACY_CASE=restart-after run restart-after timeout 100 node web/e2e/advisor.js
 stop_server
+
+# Same marked restart database contract, with generation disabled only after persistence.
+start_server unavailable-history-before --privacy-mode restart --database "$WORK/unavailable.sqlite3"
+ADVISOR_HISTORY_PHASE=before run unavailable-history-before timeout 100 node web/e2e/advisor_unavailable_history.js
+stop_server
+start_server unavailable-history-after --privacy-mode restart --database "$WORK/unavailable.sqlite3" --unavailable
+ADVISOR_HISTORY_PHASE=after run unavailable-history-after timeout 100 node web/e2e/advisor_unavailable_history.js
+stop_server
 echo "Advisor evidence: $ADVISOR_EVIDENCE_DIR (synthetic DB removed on exit)"

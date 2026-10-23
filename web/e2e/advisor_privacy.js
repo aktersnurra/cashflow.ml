@@ -113,6 +113,21 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
      assert.notEqual((await state()).tool_hashes[1],first);
      await fetch(base+'/release');await page.getByRole('status').filter({hasText:'Answer complete'}).waitFor();
      const s=await snap(id);assert.equal(s.turns[0].attempts[0].segments.filter(x=>x.type==='Evidence_segment').length,2);
+     await page.locator('.sidebar').getByRole('link',{name:'Settings',exact:true}).click();
+     await page.locator('select:visible').first().selectOption('sv');await button('Save').click();
+     await page.getByRole('heading',{name:'Inställningar',exact:true}).waitFor();
+     await page.goto(base+'/advisor/'+id);
+     const cards=page.locator('[id^="advisor-evidence-"]');await cards.first().waitFor();
+     assert.equal(await cards.count(),2);
+     for(let i=0;i<2;i++){
+      const card=cards.nth(i), wire=s.turns[0].attempts[0].segments.filter(x=>x.type==='Evidence_segment')[i].value;
+      assert.ok((await card.innerText()).includes('Utgifter per kategori'));
+      assert.match(await card.innerText(),/Returnerade rader/);
+      assert.match(await card.innerText(),/Största returnerade kategori/);
+      const money=wire.facts.find(f=>f.value.type==='Money').value.value;
+      assert.ok((await card.innerText()).includes(money.decimal+' '+money.currency.code),'exact wire decimal retained');
+      assert.equal(await card.locator('script,img,a').count(),0);
+     }
      before.financial_digest=updated; // Only the explicit fixture import is an authorized financial mutation.
     }else if(mode==='invalid'||mode==='output'){
      await page.getByRole('status').filter({hasText:/could not|failed|limit|wrong/i}).waitFor();

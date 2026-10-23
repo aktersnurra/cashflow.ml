@@ -37,7 +37,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
    const body = await response.json();
    if (body.version === 1 && body.data?.turns?.length) {
     const s=body.data, a=s.turns[0].attempts[0];
-    a.segments.push({type:'Evidence_segment', value:{id:'00000000-0000-4000-8000-000000000010',scope:s.scope,currency:s.currency,sampled_at:'2026-10-22T00:00:00Z',title:'Synthetic authorized evidence',facts:[{label:'Exact amount',value:{type:'Money',value:{decimal:'9007199254740993.01',currency:s.currency}}}],source_references:['00000000-0000-4000-8000-000000000011'],import_status:{type:'Stale'},reconciled:false,assumptions:['Synthetic assumption']}});
+    a.segments.push({type:'Evidence_segment', value:{id:'00000000-0000-4000-8000-000000000010',scope:s.scope,currency:s.currency,sampled_at:'2026-10-22T00:00:00Z',title:'Synthetic authorized evidence <img src=x onerror=window.fixtureXss=true>',facts:[{label:'Exact amount',value:{type:'Money',value:{decimal:'9007199254740993.01',currency:s.currency}}}],source_references:['00000000-0000-4000-8000-000000000011'],import_status:{type:'Stale'},reconciled:false,assumptions:['Synthetic assumption <script>window.fixtureXss=true</script>']}});
    }
    await route.fulfill({response,json:body});
   });
@@ -48,13 +48,14 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
    });
   }
   await page.goto(base);
-  await page.getByRole('textbox').waitFor();
+  await page.locator('.advisor-conversation').waitFor();
   await page.addStyleTag({content:'.advisor-conversation {height:220px;overflow-y:auto;}'});
   if(process.env.ADVISOR_REVIEW_READINESS) {
    const copy=process.env.ADVISOR_REVIEW_READINESS==='consent'?'Enable Advisor in settings before sending financial data.':'Advisor is unavailable. Check your settings or try again later.';
-   await page.getByText(copy,{exact:true}).waitFor();assert.equal(posts,0);assert.deepEqual(errors,[]);
+   await page.getByText(copy,{exact:true}).waitFor();assert.equal(await page.getByRole('textbox').count(),0);assert.equal(posts,0);assert.deepEqual(errors,[]);
    console.log(JSON.stringify({result:'passed',delayedReadiness:process.env.ADVISOR_REVIEW_READINESS}));return;
   }
+  await page.getByRole('textbox').waitFor();
   if(process.env.ADVISOR_REVIEW_REJECTIONS==='1') {
    const responses=[{status:422,json:{error:'Invalid_request'}},{status:503,json:{error:'Invalid_request'}},{status:409,json:{error:'unknown'}},{status:202,json:{version:99}}];
    await page.route('**/api/advisor/turns',route=>responses.length?route.fulfill({contentType:'application/json',...responses.shift()}):route.continue());
@@ -161,12 +162,14 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
    await fetch(base+'/fixture/expire-a',{method:'POST'});
    await page.locator('#history').click();
    await page.getByText(/first héj <img/).waitFor({state:'detached'});
-   await page.getByRole('button',{name:'Send',exact:true}).click();await sleep(50);
+   assert.equal(await page.getByRole('button',{name:'Send',exact:true}).count(),0);await sleep(50);
    assert.equal(posts,1);assert.deepEqual(errors,[]);
    console.log(JSON.stringify({result:'passed',actual401ClearsAndDeactivates:true,malformed200:true,networkFailure:true,real15sTimeout:true,duplicateSettlement:true,privateTextRetained:true}));return;
   }
   assert.equal(await page.locator('.advisor-conversation img, .advisor-conversation svg, .advisor-conversation script, .advisor-conversation a').count(),0);
   assert.equal(await page.evaluate(()=>window.fixtureXss),undefined);
+  assert.ok((await page.locator('.advisor-conversation').innerText()).includes('Synthetic authorized evidence <img src=x onerror=window.fixtureXss=true>'));
+  assert.ok((await page.locator('.advisor-conversation').innerText()).includes('Synthetic assumption <script>window.fixtureXss=true</script>'));
   await page.getByText('Exact amount: 9007199254740993.01 SEK',{exact:true}).waitFor();
   assert.match(await page.locator('.advisor-conversation').innerText(),/Import may be stale/);
   await page.locator('#delete-other').click();
@@ -231,7 +234,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   assert.equal((await page.request.get(base+'/api/advisor/status')).status(),200);
   await page.locator('#resync').click();
   await page.getByText(/first héj <img/).waitFor({state:'detached'});
-  assert.equal(await page.getByRole('textbox').inputValue(),'');
+  assert.equal(await page.getByRole('textbox').count(),0);
   assert.equal(await page.locator('[id^="advisor-evidence-"]').count(),0);
   assert.equal(cancels,0);
   assert.deepEqual(errors,[]);
