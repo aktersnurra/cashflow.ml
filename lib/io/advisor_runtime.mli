@@ -17,8 +17,11 @@ val create : sw:Eio.Switch.t -> service:Service.t -> provider:Advisor_provider.t
     bounded batches on a 60s cadence. Known revocations must be signalled immediately after commit; expiry/deadline
     supervision also rechecks fresh authority at most every 50ms. *)
 
-val submit : t -> principal:Advisor_access.principal -> A.submit -> (A.accepted, A.error) result
-val retry : t -> principal:Advisor_access.principal -> A.retry -> (A.accepted, A.error) result
+val submit : ?available:bool -> t -> principal:Advisor_access.principal -> A.submit -> (A.accepted, A.error) result
+val retry : ?available:bool -> t -> principal:Advisor_access.principal -> A.retry -> (A.accepted, A.error) result
+
+(** Trusted readiness gates new work atomically after canonical repeat/conflict resolution. Unavailable repeats return
+    original acceptances without registering/starting/rebinding work. *)
 
 val start : t -> A.accepted -> unit
 (** Only starts canonical acceptances registered by this runtime's submit/retry. Unknown, foreign-runtime and duplicate

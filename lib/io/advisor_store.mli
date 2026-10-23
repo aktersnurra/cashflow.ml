@@ -19,6 +19,8 @@ val create : ?clock:(unit -> Ptime.t) -> Sql.db -> t
     timestamps are immutable. *)
 
 val accept :
+  ?available:bool ->
+  ?resolve_source_finding:(unit -> (A.finding option, A.error) result) ->
   t ->
   owner:Cashflow_core.User_id.t ->
   session:A.Session_ref.t ->
@@ -28,7 +30,13 @@ val accept :
   A.submit ->
   (A.accepted, A.error) result
 
+(** Readiness is checked only after canonical repeat/conflict resolution. The optional trusted
+    resolver captures a finding only for new available work, inside the short transaction;
+    it must never wait on network/provider/client IO. Combining it with a non-None explicit
+    finding is invalid. Repeats retain the original captured finding. *)
+
 val retry :
+  ?available:bool ->
   t ->
   owner:Cashflow_core.User_id.t ->
   session:A.Session_ref.t ->

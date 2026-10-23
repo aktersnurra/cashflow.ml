@@ -636,7 +636,7 @@ let register t principal (accepted : A.accepted) =
   notify t;
   Ok accepted
 
-let persist t principal operation =
+let persist ~available t principal operation =
   (* Shield the commit-registration-start handoff; no request cancellation gap. *)
   Eio.Cancel.protect (fun () ->
       t.handoffs <- t.handoffs + 1;
@@ -649,9 +649,9 @@ let persist t principal operation =
                 let* session = X.session t.service principal in
                 operation user session)
           in
-          let registered = register t principal accepted in
+          let registered = if not available then Ok accepted else register t principal accepted in
           (match registered with
-          | Ok a -> start t a
+          | Ok a -> if available then start t a
           | Error e ->
               ignore
                 (protect t (fun () ->
@@ -691,26 +691,26 @@ let cancel_live t principal id =
   signal_cancel t [ id ];
   Ok state
 
-let command_handler t principal : E.handler =
+let command_handler ?(available = true) t principal : E.handler =
   {
     handle =
       (fun (type a) (op : a E.operation) : a ->
         match op with
         | E.Check_authority -> Result.map (fun _ -> ()) (X.access t.service principal)
         | E.Persist_turn request ->
-            persist t principal (fun user session ->
+            persist ~available t principal (fun user session ->
                 let* () = X.authorize_scope t.service principal request.scope in
-                let* source_finding =
+                let resolve_source_finding () =
                   match request.source_finding_key with
                   | None -> Ok None
                   | Some key ->
                       Result.map Option.some
                         (Advisor_projection.resolve_finding t.service ~principal ~scope:request.scope ~key)
                 in
-                S.accept t.store ~owner:user.id ~session ~now:(t.clock.now ()) ~model:(P.model t.provider)
-                  ~source_finding request)
+                S.accept ~available ~resolve_source_finding t.store ~owner:user.id ~session ~now:(t.clock.now ())
+                  ~model:(P.model t.provider) ~source_finding:None request)
         | E.Persist_retry request ->
-            persist t principal (fun user session ->
+            persist ~available t principal (fun user session ->
                 let conversation =
                   Sql.(
                     run t.service.db
@@ -730,8 +730,9 @@ let command_handler t principal : E.handler =
                   | None -> Error (error A.Not_found)
                 in
                 let* () = X.authorize_history t.service principal conversation in
-                S.retry t.store ~owner:user.id ~session ~now:(t.clock.now ()) ~model:(P.model t.provider) request)
-        | E.Start_run accepted -> start t accepted
+                S.retry ~available t.store ~owner:user.id ~session ~now:(t.clock.now ()) ~model:(P.model t.provider)
+                  request)
+        | E.Start_run accepted -> if available then start t accepted
         | E.Request_cancel id -> cancel_live t principal id
         | E.Delete_owned_conversation id ->
             let* ids = X.delete_conversation t.service principal id in
@@ -753,8 +754,12 @@ let command_handler t principal : E.handler =
         | E.Commit_terminal _ -> Error (error A.Invalid_request));
   }
 
-let submit t ~principal request = E.run (command_handler t principal) (fun () -> W.accept_turn request)
-let retry t ~principal request = E.run (command_handler t principal) (fun () -> W.retry_turn request)
+let submit ?(available = true) t ~principal request =
+  E.run (command_handler ~available t principal) (fun () -> W.accept_turn request)
+
+let retry ?(available = true) t ~principal request =
+  E.run (command_handler ~available t principal) (fun () -> W.retry_turn request)
+
 let cancel t ~principal id = E.run (command_handler t principal) (fun () -> W.cancel_run id)
 let delete t ~principal id = E.run (command_handler t principal) (fun () -> W.delete_conversation id)
 

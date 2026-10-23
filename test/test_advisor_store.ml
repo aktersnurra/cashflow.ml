@@ -798,6 +798,91 @@ let bounded_prune_batches () =
     "retained snapshots" 1
     (List.length (ok (Advisor_store.snapshot store ~owner first.ids.conversation_id)).turns)
 
+let unavailable_canonical_admission () =
+  let db, store, owner, _ = fixture () in
+  Fun.protect
+    ~finally:(fun () -> Sql.close db)
+    (fun () ->
+      let calls = ref 0 in
+      let finding : A.finding =
+        {
+          kind = "overview";
+          key = "overview";
+          scope = Personal;
+          title = "synthetic";
+          summary = "synthetic";
+          sampled_at = now;
+        }
+      in
+      let resolve () =
+        incr calls;
+        Ok (Some finding)
+      in
+      let request = { (submit "contextual") with source_finding_key = Some "overview" } in
+      let accept ?(available = true) ?(resolver = resolve) request =
+        Advisor_store.accept ~available ~resolve_source_finding:resolver store ~owner ~session ~now ~model:"synthetic"
+          ~source_finding:None request
+      in
+      let a = ok (accept request) in
+      Alcotest.(check int) "fresh capture once" 1 !calls;
+      let fail () =
+        incr calls;
+        Error { A.code = A.Not_found; context = A.No_context }
+      in
+      let repeat = ok (accept ~available:false ~resolver:fail request) in
+      Alcotest.(check bool) "unavailable repeat IDs" true (repeat.ids = a.ids && repeat.idempotent_repeat);
+      ignore (ok (accept ~resolver:fail request));
+      error_code A.Idempotency_conflict (accept ~resolver:fail { request with user_text = "changed" });
+      Alcotest.(check int) "repeat never resolves stale feed" 1 !calls;
+      Alcotest.(check bool)
+        "original captured finding retained" true
+        ((ok (Advisor_store.snapshot store ~owner a.ids.conversation_id)).source_finding = Some finding);
+      error_code A.Invalid_request
+        (Advisor_store.accept ~resolve_source_finding:resolve store ~owner ~session ~now ~model:"synthetic"
+           ~source_finding:(Some finding) request);
+      error_code A.Idempotency_conflict (accept ~available:false ~resolver:fail { request with user_text = "changed" });
+      let tables =
+        [ "advisor_conversations"; "advisor_turns"; "advisor_attempts"; "advisor_runs"; "advisor_requests" ]
+      in
+      let counts () = List.map (count db) tables in
+      let all_before = counts () in
+      let before = count db "advisor_requests" in
+      error_code A.Provider_unavailable
+        (accept ~available:false ~resolver:fail { (submit "fresh") with source_finding_key = Some "overview" });
+      Alcotest.(check int) "unavailable no writes" before (count db "advisor_requests");
+      Alcotest.(check (list int)) "all new-work tables unchanged" all_before (counts ());
+      Alcotest.(check int) "unavailable/conflict never resolves" 1 !calls;
+      ignore
+        (ok
+           (Advisor_store.transition store ~run:a.ids.run_id
+              (A.Fail { code = Provider_unavailable; context = No_context })));
+      error_code A.Not_found (accept ~resolver:fail { (submit "missing") with source_finding_key = Some "overview" });
+      Alcotest.(check int) "resolver failure rollback" before (count db "advisor_requests");
+      let retry : A.retry =
+        {
+          turn_id = a.ids.turn_id;
+          expected_version = a.accepted_version;
+          idempotency_key = Test_service_support.key "retry-availability";
+        }
+      in
+      let r = ok (Advisor_store.retry store ~owner ~session ~now ~model:"synthetic" retry) in
+      let repeat = ok (Advisor_store.retry ~available:false store ~owner ~session ~now ~model:"synthetic" retry) in
+      Alcotest.(check bool) "unavailable retry repeat" true (repeat.ids = r.ids && repeat.idempotent_repeat);
+      error_code A.Provider_unavailable
+        (Advisor_store.retry ~available:false store ~owner ~session ~now ~model:"synthetic"
+           { retry with idempotency_key = Test_service_support.key "fresh-retry" });
+      error_code A.Idempotency_conflict
+        (Advisor_store.retry ~available:false store ~owner ~session ~now ~model:"synthetic"
+           { retry with expected_version = 99L });
+      Advisor_store.recover store ~now;
+      let recovered = ok (accept ~available:false ~resolver:fail request) in
+      let recovered_retry =
+        ok (Advisor_store.retry ~available:false store ~owner ~session ~now ~model:"synthetic" retry)
+      in
+      Alcotest.(check bool)
+        "recovered canonical IDs preserved" true
+        (recovered.ids = a.ids && recovered_retry.ids = r.ids))
+
 let () =
   Alcotest.run "advisor_store"
     [
@@ -805,6 +890,7 @@ let () =
         List.map
           (fun (name, test) -> Alcotest.test_case name `Quick test)
           [
+            ("unavailable_canonical_admission", unavailable_canonical_admission);
             ("pending_text_drain", pending_text_drain);
             ("bounded_prune_batches", bounded_prune_batches);
             ("workflow_text_evidence_order", workflow_store_transcript ~repeated:false);

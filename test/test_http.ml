@@ -19,7 +19,7 @@ let config : Config.t =
     oidc_audience = "https://cashflow.example"; web_client_id = Some "web"; web_client_secret = Some "secret"; admin_group = "cashflow-admin";
     static_dir = "/nonexistent"; openrouter_api_key = None; openrouter_model = "x";
     openrouter_provider_only = Config.default_openrouter_provider_only;
-    log_level = None }
+    advisor_limits = None; log_level = None }
 
 (* A fake identity provider: the nonce of the last authorization request comes back in the ID token. *)
 let last_nonce = ref None
@@ -43,7 +43,7 @@ let deps () : Http_server.deps =
     Web_auth.make ~client:fake_client ~verify_id_token
       ~config:{ issuer = "https://id.example"; client_id = "web"; client_secret = "secret"; redirect_uri = "https://cashflow.example/auth/callback"; admin_group = "cashflow-admin" }
   in
-  { service; verify_bearer; web_auth = Some web_auth; config; now = (fun () -> now) }
+  { service; verify_bearer; advisor = None; web_auth = Some web_auth; config; now = (fun () -> now) }
 
 let request ?(meth = Http_server.GET) ?(headers = []) ?(body = "") target : Http_server.request = { meth; target; headers; body }
 let header (r : Http_server.response) name = List.find_map (fun (k, v) -> if String.lowercase_ascii k = name then Some v else None) r.headers

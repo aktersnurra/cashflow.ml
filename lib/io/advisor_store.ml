@@ -451,8 +451,10 @@ let bump t id version now =
 let check_version expected version =
   if expected <> version then raise (Reject { A.code = Version_conflict; context = Version version })
 
-let accept t ~owner ~session ~now ~model ~source_finding (request : A.submit) =
+let accept ?(available = true) ?resolve_source_finding t ~owner ~session ~now ~model ~source_finding
+    (request : A.submit) =
   tx t (fun () ->
+      if Option.is_some source_finding && Option.is_some resolve_source_finding then reject A.Invalid_request;
       (* Native requests use the v1 projection as their canonical payload fingerprint. *)
       let projected : W.submit =
         {
@@ -473,6 +475,13 @@ let accept t ~owner ~session ~now ~model ~source_finding (request : A.submit) =
       match request_existing t owner request.idempotency_key "submit" fp with
       | Some a -> a
       | None ->
+          if not available then reject A.Provider_unavailable;
+          let source_finding =
+            match (resolve_source_finding, source_finding) with
+            | None, finding -> finding
+            | Some _, Some _ -> reject A.Invalid_request
+            | Some resolve, None -> ( match resolve () with Ok finding -> finding | Error e -> raise (Reject e))
+          in
           if String.length request.user_text > A.limits.user_bytes then
             raise (Reject { code = A.Run_limit_reached; context = Limit User_bytes });
           if Result.is_error (W.decode_submit (W.encode_submit projected)) then reject A.Invalid_request;
@@ -537,7 +546,7 @@ let accept t ~owner ~session ~now ~model ~source_finding (request : A.submit) =
           record_request t owner request.idempotency_key "submit" fp accepted;
           accepted)
 
-let retry t ~owner ~session ~now ~model (request : A.retry) =
+let retry ?(available = true) t ~owner ~session ~now ~model (request : A.retry) =
   tx t (fun () ->
       let turn = A.Turn_id.to_string request.turn_id in
       let projection : W.retry =
@@ -569,6 +578,7 @@ let retry t ~owner ~session ~now ~model (request : A.retry) =
       match request_existing t owner request.idempotency_key "retry" fp with
       | Some a -> a
       | None ->
+          if not available then reject A.Provider_unavailable;
           if Result.is_error (W.decode_retry encoded) then reject A.Invalid_request;
           let s, _ = conversation t owner conversation_id in
           check_version request.expected_version s.version;

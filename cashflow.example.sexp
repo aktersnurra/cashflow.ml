@@ -28,6 +28,13 @@
  ;; CASHFLOW_LOG_LEVEL overrides it for a single run.
  (log_level Info)
 
+ ;; Advisor generation remains unavailable unless openrouter.advisor_limits is supplied.
+ ;; Its required fields are context_tokens, completion_tokens,
+ ;; whole_completion_cap_supported, request_tokens_per_byte, request_token_overhead.
+ ;; No defaults: independently substantiate these for the exact model and ALL eligible
+ ;; routes, including reasoning/tool completion caps and tokenizer/provider framing.
+ ;; Positive arithmetic alone is not evidence. No production route is attested here.
+ ;; Missing/unsupported limits do not affect legacy categorisation or summaries.
  ;; Optional: category suggestions and month summaries through OpenRouter.
  ;; Remove #; to enable. Every request requires ZDR and denies data collection.
  ;; provider_only is optional; these are its defaults. An empty list is refused.

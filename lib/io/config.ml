@@ -17,6 +17,7 @@ type t = {
   openrouter_api_key : string option;
   openrouter_model : string;
   openrouter_provider_only : string list;
+  advisor_limits : Advisor_provider.generation_limits option;
   log_level : Logs.level option;  (** [None] silences logging *)
 }
 
@@ -35,8 +36,18 @@ module File = struct
   [@@deriving sexp]
 
   type web = { client_id : string; client_secret : secret } [@@deriving sexp]
+  type advisor_limits = {
+    context_tokens : int;
+    completion_tokens : int;
+    whole_completion_cap_supported : bool;
+    request_tokens_per_byte : int;
+    request_token_overhead : int;
+  }
+  [@@deriving sexp]
+
   type openrouter = {
     api_key : secret;
+    advisor_limits : advisor_limits option; [@sexp.option]
     model : string; [@default "anthropic/claude-haiku-5.5"]
     provider_only : string list; [@default default_openrouter_provider_only]
   }
@@ -85,6 +96,16 @@ let resolve (file : File.t) =
     | Some o -> check (o.provider_only <> []) "openrouter.provider_only must not be empty"
     | None -> Ok ()
   in
+  let advisor_limits = Option.bind file.openrouter (fun o -> o.File.advisor_limits) in
+  let* () =
+    match advisor_limits with
+    | None -> Ok ()
+    | Some l ->
+        check
+          (l.context_tokens > 0 && l.completion_tokens > 0 && l.completion_tokens <= l.context_tokens
+           && l.request_tokens_per_byte > 0 && l.request_token_overhead >= 0)
+          "openrouter.advisor_limits requires positive context/completion/factor, nonnegative overhead, completion <= context"
+  in
   let* web_client_secret = match file.web with Some web -> Result.map Option.some (read_secret web.client_secret) | None -> Ok None in
   let* openrouter_api_key = match file.openrouter with Some o -> Result.map Option.some (read_secret o.api_key) | None -> Ok None in
   let public_base_url = if String.ends_with ~suffix:"/" file.public_url then String.sub file.public_url 0 (String.length file.public_url - 1) else file.public_url in
@@ -94,6 +115,12 @@ let resolve (file : File.t) =
       static_dir = file.static_dir; openrouter_api_key;
       openrouter_model = Option.fold ~none:"anthropic/claude-haiku-5.5" ~some:(fun (o : File.openrouter) -> o.model) file.openrouter;
       openrouter_provider_only = Option.fold ~none:default_openrouter_provider_only ~some:(fun (o : File.openrouter) -> o.provider_only) file.openrouter;
+      advisor_limits = Option.map
+        (fun (l : File.advisor_limits) ->
+          { Advisor_provider.context_tokens = l.context_tokens; completion_tokens = l.completion_tokens;
+            whole_completion_cap_supported = l.whole_completion_cap_supported;
+            request_tokens_per_byte = l.request_tokens_per_byte; request_token_overhead = l.request_token_overhead })
+        advisor_limits;
       log_level = (match file.log_level with Quiet -> None | Error -> Some Logs.Error | Warning -> Some Warning | Info -> Some Info | Debug -> Some Debug) }
 
 (* "lib/config.ml.File.t_of_sexp: extra fields: statc_dir" reads as "unknown field statc_dir". *)

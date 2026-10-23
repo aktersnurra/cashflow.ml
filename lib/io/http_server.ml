@@ -14,6 +14,7 @@ type response = { status : int; headers : (string * string) list; body : string 
 
 type deps = {
   service : Service.t;
+  advisor : Advisor_http.t option;
   verify_bearer : Oidc.t;
   web_auth : Web_auth.t option;
   config : Config.t;
@@ -242,7 +243,7 @@ let api_logo deps request id =
   (* Every image request must check current session and ownership, including after logout. *)
   {response with headers=("cache-control", "private, no-store") :: response.headers}
 
-let handle deps (request : request) =
+let handle_legacy deps (request : request) =
   let uri = Uri.of_string request.target in
   let path = Uri.path uri and query = Uri.query uri in
   let metadata_path = Uri.path (Uri.of_string (snd (protected_resource deps))) in
@@ -260,6 +261,36 @@ let handle deps (request : request) =
   | _, p when String.starts_with ~prefix:"/api/" p || p = "/mcp" -> error_json 404 "not found"
   | (GET | HEAD), p -> static deps p
   | _ -> plain 404 "Not Found"
+
+let advisor_request (request : request) : Advisor_http.request =
+  {
+    meth = (match request.meth with GET -> GET | POST -> POST | HEAD -> HEAD | OTHER -> OTHER);
+    target = request.target;
+    headers = request.headers;
+    body = request.body;
+  }
+
+let advisor_handle deps request =
+  match deps.advisor with
+  | None -> None
+  | Some advisor -> (
+      let req = advisor_request request in
+      match (request.meth, Uri.path (Uri.of_string request.target)) with
+      | POST, "/auth/logout" -> Some (Advisor_http.logout advisor req)
+      | POST, "/api/commands/leave_household" -> Some (Advisor_http.leave_household advisor req)
+      | _ -> Advisor_http.handle advisor req)
+
+let buffered = function
+  | Advisor_http.Buffered (status, headers, body) -> { status; headers; body }
+  | Stream _ -> invalid_arg "stream requires native writer"
+
+let handle deps request =
+  match advisor_handle deps request with
+  | Some (Buffered _ as r) -> buffered r
+  | Some (Stream subscription) ->
+      Advisor_http.close subscription;
+      plain 500 "Streaming requires native transport"
+  | None -> handle_legacy deps request
 
 (* The server: from kcal's lib/http_adapter.ml. *)
 
@@ -281,30 +312,60 @@ let respond_with reqd response =
     else Httpun.Headers.add headers "content-length" (string_of_int (String.length response.body)) in
   Httpun.Reqd.respond_with_string reqd (Httpun.Response.create ~headers (status_of_int response.status)) response.body
 
-let serve_request deps reqd =
+let finish_stream ~sw ~sleep_s ~abort = function
+  | Advisor_http.Aborted -> abort ()
+  | Drained ->
+      (* Application frames are acknowledged; bound only the remaining HTTP/1.x drain. *)
+      Eio.Fiber.fork_daemon ~sw (fun () ->
+          sleep_s 1.;
+          abort ();
+          `Stop_daemon)
+
+let serve_request ~sw ~on_stream_end deps reqd =
   let request = Httpun.Reqd.request reqd in
   let meth = match request.meth with `GET -> GET | `POST -> POST | `HEAD -> HEAD | _ -> OTHER in
-  let path = match String.index_opt request.target '?' with Some i -> String.sub request.target 0 i | None -> request.target in
   let finish body =
-    let response =
-      try handle deps { meth; target = request.target; headers = Httpun.Headers.to_list request.headers; body }
-      with exn ->
-        Log.err (fun m -> m "path=%s raised %s" path (Printexc.to_string exn));
-        plain 500 "Internal Server Error"
-    in
-    let response = if meth = HEAD then { response with body = "" } else response in
-    let log = if response.status >= 500 then Log.err else if response.status >= 400 then Log.warn else Log.info in
-    log (fun m -> m "method=%s path=%s status=%d" (Httpun.Method.to_string request.meth) path response.status);
-    respond_with reqd response
+    let req = { meth; target = request.target; headers = Httpun.Headers.to_list request.headers; body } in
+    try
+      match advisor_handle deps req with
+      | Some (Advisor_http.Stream subscription) ->
+          Eio.Fiber.fork ~sw (fun () ->
+              match Advisor_http.stream subscription reqd with
+              | result -> on_stream_end result
+              | exception exn ->
+                  on_stream_end Advisor_http.Aborted;
+                  raise exn)
+      | advisor_response ->
+          let response = match advisor_response with Some r -> buffered r | None -> handle_legacy deps req in
+          let response = if meth = HEAD then { response with body = "" } else response in
+          (if Option.is_none advisor_response then
+             let path = Uri.path (Uri.of_string request.target) in
+             let log =
+               if response.status >= 500 then Log.err else if response.status >= 400 then Log.warn else Log.info
+             in
+             log (fun m -> m "method=%s path=%s status=%d" (Httpun.Method.to_string request.meth) path response.status));
+          respond_with reqd response
+    with
+    | Eio.Cancel.Cancelled _ as exn -> raise exn
+    | _ ->
+        Log.err (fun m -> m "HTTP request failed");
+        respond_with reqd (plain 500 "Internal Server Error")
   in
   let buffer = Buffer.create 1024 and responded = ref false in
-  let once f = if not !responded then (responded := true; f ()) in
+  let once f =
+    if not !responded then (
+      responded := true;
+      f ())
+  in
   let rec read () =
     Httpun.Body.Reader.schedule_read (Httpun.Reqd.request_body reqd)
       ~on_eof:(fun () -> once (fun () -> finish (Buffer.contents buffer)))
       ~on_read:(fun bytes ~off ~len ->
-        if Buffer.length buffer + len > max_body_bytes then once (fun () -> respond_with reqd (plain 413 "Payload Too Large"))
-        else (Buffer.add_string buffer (Bigstringaf.substring bytes ~off ~len); read ()))
+        if Buffer.length buffer + len > max_body_bytes then
+          once (fun () -> respond_with reqd (plain 413 "Payload Too Large"))
+        else (
+          Buffer.add_string buffer (Bigstringaf.substring bytes ~off ~len);
+          read ()))
   in
   read ()
 
@@ -314,9 +375,22 @@ let run env deps : 'a =
   let address = List.hd (Eio.Net.getaddrinfo_stream ~service:port env#net host) in
   let listener = Eio.Net.listen ~sw ~reuse_addr:true ~backlog:128 env#net address in
   Log.app (fun m -> m "listening on %s" deps.config.listen_address);
-  let handler =
-    Httpun_eio.Server.create_connection_handler ~sw
-      ~request_handler:(fun _ reqd -> serve_request deps reqd.Gluten.Reqd.reqd)
-      ~error_handler:(fun _ ?request:_ _ _ -> ())
-  in
-  Eio.Net.run_server ~on_error:(fun exn -> Log.err (fun m -> m "connection error: %s" (Printexc.to_string exn))) listener (fun socket address -> handler address socket)
+  Eio.Net.run_server
+    ~on_error:(fun _ -> Log.err (fun m -> m "connection error"))
+    listener
+    (fun socket address ->
+      try
+        Eio.Cancel.sub (fun context ->
+            Eio.Switch.run (fun connection_sw ->
+                let handler =
+                  Httpun_eio.Server.create_connection_handler ~sw:connection_sw
+                    ~request_handler:(fun _ reqd ->
+                      serve_request ~sw:connection_sw
+                        ~on_stream_end:
+                          (finish_stream ~sw:connection_sw ~sleep_s:(Eio.Time.sleep env#clock) ~abort:(fun () ->
+                               Eio.Cancel.cancel context Exit))
+                        deps reqd.Gluten.Reqd.reqd)
+                    ~error_handler:(fun _ ?request:_ _ _ -> ())
+                in
+                Fun.protect ~finally:(fun () -> Eio.Cancel.cancel context Exit) (fun () -> handler address socket)))
+      with Eio.Cancel.Cancelled Exit -> ())

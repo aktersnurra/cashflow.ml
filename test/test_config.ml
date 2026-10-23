@@ -78,10 +78,29 @@ let test_openrouter_cannot_disable_privacy () =
   ignore (error (with_openrouter "(zdr false)"));
   ignore (error (with_openrouter "(data_collection allow)"))
 
+let test_advisor_limits () =
+  Alcotest.(check bool) "absent refuses" true ((ok (with_openrouter "")).advisor_limits = None);
+  let limits extra =
+    with_openrouter
+      ("(advisor_limits ((context_tokens 10000) (completion_tokens 1000) (whole_completion_cap_supported true) \
+        (request_tokens_per_byte 4) (request_token_overhead 100)" ^ extra ^ "))")
+  in
+  let c = ok (limits "") in
+  Alcotest.(check bool) "explicit only" true (Option.is_some c.advisor_limits);
+  List.iter
+    (fun (old, by) -> ignore (error (Str_compat.replace_all ~sub:old ~by (limits ""))))
+    [
+      ("context_tokens 10000", "context_tokens 0");
+      ("completion_tokens 1000", "completion_tokens 10001");
+      ("request_tokens_per_byte 4", "request_tokens_per_byte 0");
+      ("request_token_overhead 100", "request_token_overhead -1");
+    ];
+  ignore (error (limits " (zdr false)"))
+
 let () =
   Alcotest.run "config"
     [ ( "file",
-        [ Alcotest.test_case "example file parses" `Quick test_example_file_parses; Alcotest.test_case "defaults" `Quick test_defaults;
+        [ Alcotest.test_case "Advisor explicit limits" `Quick test_advisor_limits; Alcotest.test_case "example file parses" `Quick test_example_file_parses; Alcotest.test_case "defaults" `Quick test_defaults;
           Alcotest.test_case "secrets" `Quick test_secrets; Alcotest.test_case "errors" `Quick test_errors;
           Alcotest.test_case "OpenRouter providers" `Quick test_openrouter_providers;
           Alcotest.test_case "OpenRouter requires providers" `Quick test_openrouter_requires_providers;
