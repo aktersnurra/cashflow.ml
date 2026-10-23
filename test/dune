@@ -185,7 +185,7 @@
  (name test_advisor_stream)
  (enabled_if (= %{context_name} default))
  (modules test_advisor_stream)
- (libraries alcotest cashflow_advisor_protocol cashflow_io eio_main))
+ (libraries alcotest cashflow_advisor_protocol cashflow_io eio_main ohex))
 
 (executable
  (name advisor_fixture_server)

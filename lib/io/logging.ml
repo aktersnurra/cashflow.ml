@@ -32,9 +32,21 @@ let level_of_env ~default =
   | None -> default
   | Some value -> ( match Logs.level_of_string value with Ok level -> level | Error (`Msg _) -> default)
 
+(* tls.tracing dumps plaintext application data (including recoverable hex).
+   Application-wide Debug must never enable it, including during concurrent
+   reconfiguration. Set it separately, never transiently via set_level ~all:true;
+   retain its non-payload warnings/errors and all other sources' diagnostics. *)
+let set_level level =
+  let tls_level = match level with Some Logs.Debug -> Some Logs.Info | level -> level in
+  Logs.Src.set_level Tls.Core.src tls_level;
+  Logs.set_level ~all:false level;
+  List.iter (fun source ->
+    if not (Logs.Src.equal source Tls.Core.src) then Logs.Src.set_level source level)
+    (Logs.Src.list ())
+
 let setup () =
   Logs.set_reporter reporter;
-  Logs.set_level ~all:true (level_of_env ~default:(Some Logs.Info))
+  set_level (level_of_env ~default:(Some Logs.Info))
 
 (* The level from the configuration file; CASHFLOW_LOG_LEVEL still wins, for a one-off debug run. *)
-let configure level = Logs.set_level ~all:true (level_of_env ~default:level)
+let configure level = set_level (level_of_env ~default:level)

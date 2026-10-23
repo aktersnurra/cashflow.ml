@@ -100,6 +100,47 @@ let fake_reader () =
   Alcotest.(check int) "legacy byte count matches" (String.length payload) (Buffer.length received);
   Alcotest.(check bool) "installed adapter duplicates bytes" false (String.equal payload (Buffer.contents received))
 
+let tls_fixture_process () =
+  let read path = let ch = open_in_bin path in Fun.protect ~finally:(fun () -> close_in ch) (fun () -> really_input_string ch (in_channel_length ch)) in
+  let certificate = ok (X509.Certificate.decode_pem (read Sys.argv.(2))) in
+  let private_key = ok (X509.Private_key.decode_pem (read Sys.argv.(3))) in
+  let server = ok (Tls.Config.server ~certificates:(`Single ([certificate], private_key)) ()) in
+  let large = bool_of_string Sys.argv.(4) and fixed = bool_of_string Sys.argv.(5)
+  and truncated = bool_of_string Sys.argv.(6) and malformed = bool_of_string Sys.argv.(7)
+  and chunk_extensions = bool_of_string Sys.argv.(8) and status = int_of_string Sys.argv.(9)
+  and cancel = bool_of_string Sys.argv.(10) in
+  Mirage_crypto_rng_unix.use_default ();
+  Eio_main.run @@ fun env -> Eio.Switch.run @@ fun sw ->
+  let listener = Eio.Net.listen ~sw ~reuse_addr:true ~backlog:1 env#net
+    (List.hd (Eio.Net.getaddrinfo_stream ~service:"0" env#net "localhost")) in
+  let port = match Eio.Net.listening_addr listener with `Tcp (_, port) -> port | _ -> assert false in
+  Eio.Flow.copy_string (string_of_int port ^ "\n") env#stdout;
+  let flow, _ = Eio.Net.accept ~sw listener in
+  try
+    let flow = Tls_eio.server_of_flow server flow in
+    let input = Eio.Buf_read.of_flow ~max_size:16384 flow in
+    Alcotest.(check string) "POST request target" "POST /stream?probe=1 HTTP/1.1" (Eio.Buf_read.line input);
+    let rec headers found =
+      let line = Eio.Buf_read.line input in
+      if String.length line = 0 then found
+      else headers (found || String.equal (String.lowercase_ascii line) (Printf.sprintf "host: localhost:%d" port)) in
+    Alcotest.(check bool) "authority with port" true (headers false);
+    let text = if large then payload else "first second" in
+    let head = if fixed then Printf.sprintf "Content-Length: %d" (String.length text) else "Transfer-Encoding: chunked" in
+    Eio.Flow.copy_string (Printf.sprintf "HTTP/1.1 %d Test\r\n%s\r\nConnection: close\r\nX-Private-Probe: HS6advisor-financial-unique\r\n\r\n" status head) flow;
+    if large then (
+      Eio.Flow.copy_string (if fixed then text else Printf.sprintf "%x\r\n%s\r\n0\r\n\r\n" (String.length text) text) flow)
+    else (
+      Eio.Flow.copy_string (if fixed then "first" else if chunk_extensions then "5;probe=yes\r\nfirst\r\n" else "5\r\nfirst\r\n") flow;
+      if status = 200 then (
+        if cancel then (
+          let b = Cstruct.create 16 in
+          (try while true do ignore (Eio.Flow.single_read flow b) done with End_of_file -> ()))
+        else (
+          ignore (Eio.Buf_read.line (Eio.Buf_read.of_flow ~max_size:32 env#stdin));
+          if not truncated then Eio.Flow.copy_string (if malformed then "bogus\r\n" else if fixed then " second" else if chunk_extensions then "7;probe=yes\r\n second\r\n0;done=yes\r\nX-Trailer: synthetic\r\n\r\n" else "7\r\n second\r\n0\r\n\r\n") flow)))
+  with Tls_eio.Tls_failure _ | Tls_eio.Tls_alert _ | End_of_file -> ()
+
 let tls_transport () =
   let dir = Filename.temp_file "advisor-tls-" "" in
   Sys.remove dir; Unix.mkdir dir 0o700;
@@ -110,61 +151,34 @@ let tls_transport () =
     Alcotest.(check int) "local certificate" 0 (Sys.command command);
     let read path = let ch = open_in_bin path in Fun.protect ~finally:(fun () -> close_in ch) (fun () -> really_input_string ch (in_channel_length ch)) in
     let certificate = ok (X509.Certificate.decode_pem (read cert)) in
-    let private_key = ok (X509.Private_key.decode_pem (read key)) in
-    let server = ok (Tls.Config.server ~certificates:(`Single ([certificate], private_key)) ()) in
     let authenticator = X509.Authenticator.chain_of_trust ~time:(fun () -> Ptime.of_float_s (Unix.gettimeofday ())) [certificate] in
     let trusted = ok (Tls.Config.client ~authenticator ()) in
     Eio_main.run @@ fun env ->
     let run ?tls ?(large=false) ?(fixed=false) ?(truncated=false) ?(malformed=false) ?(chunk_extensions=false) ~status ~cancel () =
       Eio.Time.with_timeout_exn env#clock 5.0 @@ fun () ->
       Eio.Switch.run @@ fun sw ->
-      let listener = Eio.Net.listen ~sw ~reuse_addr:true ~backlog:1 env#net (List.hd (Eio.Net.getaddrinfo_stream ~service:"0" env#net "localhost")) in
-      let port = match Eio.Net.listening_addr listener with `Tcp (_, port) -> port | _ -> assert false in
-      let gate, release = Eio.Promise.create () in
-      let server_closed = ref false in
-      let server_done = Eio.Fiber.fork_promise ~sw (fun () ->
-        Eio.Net.accept_fork ~sw listener ~on_error:(fun _ -> ()) (fun flow _ ->
-          Fun.protect ~finally:(fun () -> server_closed := true) (fun () ->
-            try
-              let flow = Tls_eio.server_of_flow server flow in
-              let input = Eio.Buf_read.of_flow ~max_size:16384 flow in
-              Alcotest.(check string) "POST request target" "POST /stream?probe=1 HTTP/1.1" (Eio.Buf_read.line input);
-              let rec headers found =
-                let line = Eio.Buf_read.line input in
-                if String.length line = 0 then found
-                else headers (found || String.equal (String.lowercase_ascii line) (Printf.sprintf "host: localhost:%d" port)) in
-              Alcotest.(check bool) "authority with port" true (headers false);
-              let text = if large then payload else "first second" in
-              let head = if fixed then Printf.sprintf "Content-Length: %d" (String.length text) else "Transfer-Encoding: chunked" in
-              Eio.Flow.copy_string (Printf.sprintf "HTTP/1.1 %d Test\r\n%s\r\nConnection: close\r\nX-Private-Probe: advisor-financial-unique\r\n\r\n" status head) flow;
-              if large then (
-                Eio.Flow.copy_string (if fixed then text else Printf.sprintf "%x\r\n%s\r\n0\r\n\r\n" (String.length text) text) flow)
-              else (
-              Eio.Flow.copy_string (if fixed then "first" else if chunk_extensions then "5;probe=yes\r\nfirst\r\n" else "5\r\nfirst\r\n") flow;
-              if status = 200 then (
-                if cancel then (
-                  let b = Cstruct.create 16 in
-                  (try while true do ignore (Eio.Flow.single_read flow b) done with End_of_file -> ()))
-                else (Eio.Promise.await gate;
-                  if not truncated then Eio.Flow.copy_string (if malformed then "bogus\r\n" else if fixed then " second" else if chunk_extensions then "7;probe=yes\r\n second\r\n0;done=yes\r\nX-Trailer: synthetic\r\n\r\n" else "7\r\n second\r\n0\r\n\r\n") flow)))
-            with Tls_eio.Tls_failure _ | Tls_eio.Tls_alert _ | End_of_file -> ()))) in
+      let ready, ready_output = Eio.Process.pipe ~sw env#process_mgr in
+      let gate_input, release = Eio.Process.pipe ~sw env#process_mgr in
+      let fixture = Eio.Process.spawn ~sw env#process_mgr ~stdin:gate_input ~stdout:ready_output
+        [Sys.executable_name; "--tls-fixture"; cert; key;
+         string_of_bool large; string_of_bool fixed; string_of_bool truncated;
+         string_of_bool malformed; string_of_bool chunk_extensions; string_of_int status; string_of_bool cancel] in
+      let port = int_of_string (Eio.Buf_read.line (Eio.Buf_read.of_flow ~max_size:32 ready)) in
+      let released = ref false in
       let chunks = Buffer.create 32 in
       let result =
         try
-          let outcome = Cashflow_io.Https.stream_post ?tls env ~uri:(Printf.sprintf "https://localhost:%d/stream?probe=1" port) ~headers:["authorization", "Bearer advisor-auth-unique"; "x-probe", "advisor-header-unique"] ~body:"advisor-request-unique"
+          let outcome = Cashflow_io.Https.stream_post ?tls env ~uri:(Printf.sprintf "https://localhost:%d/stream?probe=1" port) ~headers:["authorization", "Bearer AX9advisor-auth-unique"; "x-probe", "QZ7advisor-header-unique"] ~body:"RB8advisor-request-unique"
             ~on_chunk:(fun chunk ->
               Alcotest.(check bool) "bounded HTTP fragment" true (String.length chunk <= 32768);
               Buffer.add_string chunks chunk;
               if not large && Buffer.length chunks = 5 then (
-                Alcotest.(check bool) "gate still held on first chunk" false (Eio.Promise.is_resolved gate);
+                Alcotest.(check bool) "gate still held on first chunk" false !released;
                 if cancel then raise (Eio.Cancel.Cancelled Exit);
-                Eio.Promise.resolve release ())) in
+                released := true; Eio.Flow.copy_string "continue\n" release)) in
           `Result outcome
         with Eio.Cancel.Cancelled Exit -> `Cancelled in
-      ignore (Eio.Promise.await server_done);
-      (* accept_fork is switch-owned; await its cleanup before leaving the switch. *)
-      let rec await_close () = if not !server_closed then (Eio.Fiber.yield (); await_close ()) in
-      await_close ();
+      Eio.Process.await_exn fixture;
       result, Buffer.contents chunks
     in
     let result, text = run ~tls:trusted ~status:200 ~cancel:false () in
@@ -195,36 +209,81 @@ let tls_transport () =
       let result, _ = run ~tls:trusted ~fixed ~status:200 ~cancel:true () in
       match result with `Cancelled -> () | _ -> Alcotest.fail "mid-body cancellation swallowed") [false; true])
 
+let contains text needle =
+  let rec search offset =
+    offset + String.length needle <= String.length text &&
+    (String.equal needle (String.sub text offset (String.length needle)) || search (offset + 1)) in
+  search 0
+
+let decode_trace_hex logs =
+  (* Ohex's TLS trace format has a six-digit offset, two spaces, 42 hex
+     columns, then ASCII. Join decoded rows to detect markers split at 16B. *)
+  let decoded = Buffer.create 1024 in
+  List.iter (fun line ->
+    if String.length line >= 50 && String.equal (String.sub line 6 2) "  " then
+      try
+        ignore (int_of_string ("0x" ^ String.sub line 0 6));
+        Buffer.add_string decoded (Ohex.decode (String.sub line 8 42))
+      with Failure _ | Invalid_argument _ -> ()) (String.split_on_char '\n' logs);
+  Buffer.contents decoded
+
+let trace_hex_detection () =
+  let marker = "split-secret-marker" in
+  let trace = Format.asprintf "%a" (Ohex.pp_hexdump ()) (String.make 15 'x' ^ marker) in
+  Alcotest.(check bool) "marker split across trace rows" false (contains trace marker);
+  Alcotest.(check bool) "decoded split marker detected" true (contains (decode_trace_hex trace) marker)
+
 let tls_transport_no_logs () =
-  let previous = Logs.reporter () in
+  let previous = Logs.reporter () and global_level = Logs.level () in
+  let environment = Sys.getenv_opt "CASHFLOW_LOG_LEVEL" in
+  let unrelated = Logs.Src.create "advisor-test-unrelated" in
   let levels = List.map (fun src -> src, Logs.Src.level src) (Logs.Src.list ()) in
   let captured = Buffer.create 1024 in
-  let report _ _ ~over k msgf =
+  let report src _ ~over k msgf =
     msgf (fun ?header:_ ?tags:_ format ->
-      Format.kasprintf (fun message -> Buffer.add_string captured message; over (); k ()) format) in
+      Format.kasprintf (fun message ->
+        Buffer.add_string captured (Logs.Src.name src ^ ":" ^ message ^ "\n"); over (); k ()) format) in
   Fun.protect ~finally:(fun () ->
+    (match environment with None -> Unix.unsetenv "CASHFLOW_LOG_LEVEL" | Some value -> Unix.putenv "CASHFLOW_LOG_LEVEL" value);
     Logs.set_reporter previous;
+    Logs.set_level ~all:false global_level;
     List.iter (fun (src, level) -> Logs.Src.set_level src level) levels)
     (fun () ->
-      Logs.set_reporter {Logs.report};
-      Logs.set_level ~all:true (Some Logs.Debug);
-      tls_transport ();
-      let logs = Buffer.contents captured in
-      let contains needle =
-        let rec search offset =
-          offset + String.length needle <= String.length logs &&
-          (String.equal needle (String.sub logs offset (String.length needle)) || search (offset + 1)) in
-        search 0 in
-      List.iter (fun marker -> Alcotest.(check bool) ("not logged: " ^ marker) false (contains marker))
-        ["advisor-auth-unique"; "advisor-header-unique"; "advisor-request-unique";
-         "advisor-financial-unique"; "<<< first"; String.sub payload 0 100])
+      List.iter (fun (name, activate) ->
+        Buffer.clear captured;
+        activate ();
+        Logs.set_reporter {Logs.report};
+        let module Other_log = (val Logs.src_log unrelated : Logs.LOG) in
+        let module Tls_log = (val Logs.src_log Tls.Core.src : Logs.LOG) in
+        Other_log.debug (fun m -> m "unrelated-debug-survives");
+        Tls_log.warn (fun m -> m "tls-warning-survives");
+        Tls_log.err (fun m -> m "tls-error-survives");
+        tls_transport ();
+        let logs = Buffer.contents captured in
+        let decoded = decode_trace_hex logs in
+        List.iter (fun marker ->
+          Alcotest.(check bool) (name ^ " no plaintext: " ^ marker) false (contains logs marker);
+          Alcotest.(check bool) (name ^ " no recoverable hex: " ^ marker) false (contains decoded marker))
+          ["AX9"; "QZ7"; "RB8"; "HS6"; "bogus"; "first";
+           "advisor-auth-unique"; "advisor-header-unique"; "advisor-request-unique";
+           "advisor-financial-unique"; String.sub payload 0 100];
+        List.iter (fun diagnostic ->
+          Alcotest.(check bool) (name ^ " preserves " ^ diagnostic) true (contains logs diagnostic))
+          ["unrelated-debug-survives"; "tls-warning-survives"; "tls-error-survives"])
+        ["setup env debug", (fun () -> Unix.putenv "CASHFLOW_LOG_LEVEL" "debug"; Cashflow_io.Logging.setup ());
+         "configure config debug", (fun () -> Unix.unsetenv "CASHFLOW_LOG_LEVEL"; Cashflow_io.Logging.configure (Some Logs.Debug));
+         "configure env override", (fun () -> Unix.putenv "CASHFLOW_LOG_LEVEL" "debug"; Cashflow_io.Logging.configure (Some Logs.Info));
+         "reconfigure debug", (fun () -> Cashflow_io.Logging.configure (Some Logs.Debug))])
 
-let () = Alcotest.run "advisor stream" ["sse", [
+let () =
+  if Array.length Sys.argv > 1 && String.equal Sys.argv.(1) "--tls-fixture" then tls_fixture_process ()
+  else Alcotest.run "advisor stream" ["sse", [
   Alcotest.test_case "every split incl UTF-8" `Quick split_frame;
   Alcotest.test_case "256 KiB cap" `Quick bounds;
   Alcotest.test_case "raw LF/CRLF cap at every split" `Quick raw_frame_bounds;
   Alcotest.test_case "256 KiB raw cap at every delimiter split" `Quick production_raw_frame_bounds;
   Alcotest.test_case "line endings, comments, truncation" `Quick framing;
   Alcotest.test_case "encode multiline UTF-8" `Quick encode_roundtrip];
-  "https", [Alcotest.test_case "fake reader" `Quick fake_reader;
+  "https", [Alcotest.test_case "hex trace detection" `Quick trace_hex_detection;
+    Alcotest.test_case "fake reader" `Quick fake_reader;
     Alcotest.test_case "gated trusted TLS, status, cancellation, untrusted TLS" `Quick tls_transport_no_logs]]
