@@ -722,6 +722,82 @@ let workflow_store_transcript ~repeated () =
        events
     |> List.length)
 
+let pending_text_drain () =
+  with_fixture @@ fun _db store owner _ ->
+  let a = accept store owner (submit "drain") in
+  let run = a.ids.run_id in
+  let delta = A.Text_appended { segment_id = segment 1; text = "pre-cancel" } in
+  error_code A.Invalid_transition (Advisor_store.flush_pending store ~run ~expected_sequence:0L [ delta ]);
+  ignore (ok (Advisor_store.transition store ~run A.Start));
+  ignore (ok (Advisor_store.transition store ~run A.Request_cancel));
+  error_code A.Invalid_transition (Advisor_store.append store ~run ~expected_sequence:1L [ delta ]);
+  error_code A.Invalid_request
+    (Advisor_store.flush_pending store ~run ~expected_sequence:1L [ delta; A.Tool_started "invalid" ]);
+  Alcotest.(check int) "mixed batch rolls back" 1 (List.length (replay_events store run 0L));
+  ignore (ok (Advisor_store.flush_pending store ~run ~expected_sequence:1L [ delta ]));
+  error_code A.Cursor_gap (Advisor_store.flush_pending store ~run ~expected_sequence:1L [ delta ]);
+  error_code A.Invalid_request
+    (Advisor_store.flush_pending store ~run ~expected_sequence:2L
+       [ A.Text_appended { segment_id = segment 1; text = "\255" } ]);
+  ignore (ok (Advisor_store.transition store ~run A.Confirm_cancel));
+  error_code A.Invalid_transition (Advisor_store.flush_pending store ~run ~expected_sequence:3L [ delta ]);
+  ignore (ok (Advisor_store.delete store ~owner ~now a.ids.conversation_id));
+  error_code A.Not_found (Advisor_store.flush_pending store ~run ~expected_sequence:3L [ delta ])
+
+let bounded_prune_batches () =
+  with_fixture @@ fun db store owner clock ->
+  let first = accept store owner (submit "prune-first") in
+  let run = first.ids.run_id in
+  ignore (ok (Advisor_store.transition store ~run A.Start));
+  ignore (ok (append store run 1L "€"));
+  ignore (ok (Advisor_store.transition store ~run A.Finish));
+  advance clock 1;
+  let second = accept store owner (submit "prune-second") in
+  fail store second.ids.run_id;
+  let deleted = accept store owner (submit "prune-tombstone") in
+  ignore (ok (Advisor_store.delete store ~owner ~now deleted.ids.conversation_id));
+  let active = accept store owner (submit "prune-active") in
+  ignore (ok (Advisor_store.transition store ~run:active.ids.run_id A.Start));
+  advance clock 86398;
+  Alcotest.(check bool) "not before exact expiry" false (ok (Advisor_store.prune_batch store ~now:!clock ~limit:1));
+  advance clock 1;
+  let original = count db "advisor_events" in
+  let journal_bytes () =
+    Sql.(
+      run db
+        (stmt "SELECT coalesce(sum(length(CAST(projection AS BLOB))),0) FROM advisor_events WHERE run_id=?"
+           (text @-> nil)
+           (one (row (int @-> nil) Fun.id))))
+      (A.Run_id.to_string run)
+  in
+  error_code A.Invalid_request (Advisor_store.prune_batch store ~now:!clock ~limit:0);
+  error_code A.Invalid_request (Advisor_store.prune_batch store ~now:!clock ~limit:257);
+  Sql.exec_script db
+    "CREATE TRIGGER fail_prune BEFORE DELETE ON advisor_events BEGIN SELECT RAISE(ABORT,'synthetic'); END;";
+  error_code A.Storage_unavailable (Advisor_store.prune_batch store ~now:!clock ~limit:1);
+  Alcotest.(check int) "failed prune atomic" original (count db "advisor_events");
+  Sql.exec_script db "DROP TRIGGER fail_prune";
+  Alcotest.(check bool) "tiny batch has more" true (ok (Advisor_store.prune_batch store ~now:!clock ~limit:1));
+  Alcotest.(check int) "one row only removed" (original - 1) (count db "advisor_events");
+  let pruned_run = ok (Advisor_store.find_run store ~owner run) in
+  Alcotest.(check int) "actual UTF8 bytes retained" (journal_bytes ()) pruned_run.counters.journal_bytes;
+  Alcotest.(check bool)
+    "partial prefix causes resync only before floor" true
+    (match ok (Advisor_store.replay store ~run ~after:0L ~limit:1) with Resync_required _ -> true | _ -> false);
+  Alcotest.(check int) "remaining suffix available" 2 (List.length (replay_events store run 1L));
+  advance clock 1;
+  let rec finish bound =
+    if bound = 0 then Alcotest.fail "prune did not converge";
+    if ok (Advisor_store.prune_batch store ~now:!clock ~limit:1) then finish (bound - 1)
+  in
+  finish 10;
+  Alcotest.(check bool) "no repeated empty work" false (ok (Advisor_store.prune_batch store ~now:!clock ~limit:1));
+  Alcotest.(check int) "active journal unchanged" 1 (List.length (replay_events store active.ids.run_id 0L));
+  Alcotest.(check int) "only live idempotency records remain" 3 (count db "advisor_requests");
+  Alcotest.(check int)
+    "retained snapshots" 1
+    (List.length (ok (Advisor_store.snapshot store ~owner first.ids.conversation_id)).turns)
+
 let () =
   Alcotest.run "advisor_store"
     [
@@ -729,6 +805,8 @@ let () =
         List.map
           (fun (name, test) -> Alcotest.test_case name `Quick test)
           [
+            ("pending_text_drain", pending_text_drain);
+            ("bounded_prune_batches", bounded_prune_batches);
             ("workflow_text_evidence_order", workflow_store_transcript ~repeated:false);
             ("workflow_repeated_evidence", workflow_store_transcript ~repeated:true);
             ("queued_failure", queued_failure);

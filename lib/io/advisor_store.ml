@@ -630,11 +630,13 @@ let limit_exceeded kind = raise (Reject { A.code = Run_limit_reached; context = 
 (* Reserve space for the bounded identity/error-only terminal event, even at journal capacity. *)
 let terminal_event_reserve_bytes = 4096
 
-let append t ~run ~expected_sequence payloads =
+let append_internal ~draining t ~run ~expected_sequence payloads =
   let now = t.clock () in
   tx t (fun () ->
       let run = get_run t run in
-      (match run.state with Running _ -> () | _ -> reject A.Invalid_transition);
+      (match run.state with Running _ -> () | Cancel_requested when draining -> () | _ -> reject A.Invalid_transition);
+      if draining && not (List.for_all (function A.Text_appended _ -> true | _ -> false) payloads) then
+        reject A.Invalid_request;
       if expected_sequence <> run.counters.last_sequence then
         raise (Reject { code = A.Cursor_gap; context = Cursor run.counters.last_sequence });
       let conversation, _ = conversation t run.owner_id run.ids.conversation_id in
@@ -718,6 +720,9 @@ let append t ~run ~expected_sequence payloads =
       in
       write_counters t run !counters now;
       events)
+
+let append t ~run ~expected_sequence payloads = append_internal ~draining:false t ~run ~expected_sequence payloads
+let flush_pending t ~run ~expected_sequence payloads = append_internal ~draining:true t ~run ~expected_sequence payloads
 
 let state_name : A.run_state -> string = function
   | Queued -> "queued"
@@ -976,3 +981,48 @@ let resolve_account_alias t ~owner ~conversation:conversation_id ~alias =
       with
       | Some id -> (match Account_id.of_string id with Some id -> id | None -> reject A.Storage_unavailable)
       | None -> reject A.Not_found)
+
+let prune_batch t ~now ~limit =
+  if limit <= 0 || limit > 256 then Error (error A.Invalid_request)
+  else
+    tx t (fun () ->
+        let cutoff = stamp (require (Ptime.sub_span now (Ptime.Span.of_int_s A.limits.replay_retention_seconds))) in
+        let events =
+          Sql.(
+            run t.db
+              (stmt
+                 "SELECT e.run_id,e.sequence,length(CAST(e.projection AS BLOB)) FROM advisor_events e JOIN \
+                  advisor_runs r ON r.id=e.run_id WHERE r.terminal_at<=? ORDER BY e.run_id,e.sequence LIMIT ?"
+                 (text @-> int @-> nil)
+                 (many (row (text @-> int64 @-> int @-> nil) (fun r s b -> (r, s, b))))))
+            cutoff limit
+        in
+        List.iter
+          (fun (id, sequence, bytes) ->
+            Sql.(
+              run t.db (stmt "DELETE FROM advisor_events WHERE run_id=? AND sequence=?" (text @-> int64 @-> nil) exec))
+              id sequence;
+            Sql.(
+              run t.db
+                (stmt "UPDATE advisor_runs SET replay_floor=?,journal_bytes=journal_bytes-? WHERE id=?"
+                   (int64 @-> int @-> text @-> nil)
+                   exec))
+              sequence bytes id)
+          events;
+        Sql.(
+          run t.db
+            (stmt
+               "DELETE FROM advisor_requests WHERE rowid IN (SELECT rowid FROM advisor_requests WHERE deleted_at<=? \
+                LIMIT ?)"
+               (text @-> int @-> nil)
+               exec))
+          cutoff limit;
+        Sql.(
+          run t.db
+            (stmt
+               "SELECT EXISTS(SELECT 1 FROM advisor_events e JOIN advisor_runs r ON r.id=e.run_id WHERE \
+                r.terminal_at<=?) OR EXISTS(SELECT 1 FROM advisor_requests WHERE deleted_at<=?)"
+               (text @-> text @-> nil)
+               (one (row (bool @-> nil) Fun.id))))
+          cutoff cutoff)
+

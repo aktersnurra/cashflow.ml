@@ -192,7 +192,7 @@
  (name advisor_fixture_server)
  (enabled_if (= %{context_name} default))
  (modules advisor_fixture_server)
- (libraries cashflow_advisor_protocol cashflow_io eio_main httpun-eio gluten unix))
+ (libraries cashflow_advisor_protocol cashflow_core cashflow_io eio_main httpun-eio gluten unix yojson ptime.clock.os mtime))
 
 (test
  (name test_advisor_protocol)
@@ -230,3 +230,9 @@
  (enabled_if (= %{context_name} default))
  (modules test_advisor_workflow)
  (libraries alcotest cashflow_workflow cashflow_core ptime))
+
+(test
+ (name test_advisor_runtime)
+ (enabled_if (= %{context_name} default))
+ (modules test_advisor_runtime advisor_test_support test_service_support)
+ (libraries alcotest cashflow_io cashflow_core cashflow_workflow eio eio_main yojson))

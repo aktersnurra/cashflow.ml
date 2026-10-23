@@ -2,6 +2,8 @@ module P = Cashflow_io.Advisor_provider
 module A = Cashflow_core.Advisor
 module Sql = Cashflow_io.Sql
 
+let limits : P.generation_limits = { context_tokens = 262144; completion_tokens = 32768; whole_completion_cap_supported = true; request_tokens_per_byte=1; request_token_overhead=0 }
+let create ~post ~api_key ~model ~provider_only = P.create ~limits ~post ~api_key ~model ~provider_only ()
 let request : P.request = { system = "synthetic instructions"; messages = [ P.User "synthetic user" ] }
 let frame s = "data: " ^ s ^ "\r\n\r\n"
 let chunk delta finish = frame (Yojson.Safe.to_string (`Assoc ["choices", `List [`Assoc ["index", `Int 0; "delta", delta; "finish_reason", finish]]]))
@@ -21,7 +23,7 @@ let run ?(providers=["amazon-bedrock"]) chunks =
     requests := Yojson.Safe.from_string body :: !requests;
     List.iter on_chunk chunks; Ok ()
   in
-  let p = P.create ~post ~api_key:"synthetic-key" ~model:"synthetic-model" ~provider_only:providers in
+  let p = create ~post ~api_key:"synthetic-key" ~model:"synthetic-model" ~provider_only:providers in
   let result = P.stream p request ~on_event:(fun event -> events := event :: !events) in
   result, List.rev !events, !requests
 let ok = function Ok _ -> () | Error _ -> Alcotest.fail "expected success"
@@ -30,6 +32,8 @@ let policy requests =
   let open Yojson.Safe.Util in
   List.iter (fun r ->
     let p = member "provider" r in
+    Alcotest.(check int) "whole completion cap every round" limits.completion_tokens (member "max_tokens" r |> to_int);
+    Alcotest.(check bool) "require cap support every round" true (member "require_parameters" p = `Bool true);
     Alcotest.(check bool) "ZDR" true (member "zdr" p = `Bool true);
     Alcotest.(check string) "deny collection" "deny" (member "data_collection" p |> to_string);
     Alcotest.(check (list string)) "allowlist unchanged" ["amazon-bedrock"] (member "only" p |> to_list |> List.map to_string);
@@ -88,7 +92,7 @@ let cancellation () =
           requests := Yojson.Safe.from_string body :: !requests;
           on_chunk (tools [full_call 0 "a" "goals" "{"]);
           Eio.Switch.fail sw Exit; Eio.Fiber.yield (); Ok () in
-        let p = P.create ~post ~api_key:"fake" ~model:"fake" ~provider_only:["amazon-bedrock"] in
+        let p = create ~post ~api_key:"fake" ~model:"fake" ~provider_only:["amazon-bedrock"] in
         ignore (P.stream p request ~on_event:(fun e -> events := e :: !events));
         returned := true);
         false
@@ -106,7 +110,7 @@ let follow_up_policy () =
     if List.length !requests = 1 then on_chunk (tools [full_call 0 "call_1" "goals" "{}"] ^ finish "tool_calls" ^ done_)
     else on_chunk (text "synthetic answer" ^ finish "stop" ^ done_);
     Ok () in
-  let p = P.create ~post ~api_key:"fake" ~model:"fake" ~provider_only:["amazon-bedrock"] in
+  let p = create ~post ~api_key:"fake" ~model:"fake" ~provider_only:["amazon-bedrock"] in
   let calls = ref [] in
   ok (P.stream p request ~on_event:(function P.Calls_ready c -> calls := c | _ -> ()));
   let follow_up : P.request = { request with messages = request.messages @ [P.Assistant ("", !calls); P.Tool { call_id = "call_1"; content = "synthetic tool result" }] } in
@@ -123,7 +127,7 @@ let multiline_and_failures () =
   List.iter (fun error ->
     let captured = ref [] in
     let post ~uri:_ ~headers:_ ~body ~on_chunk:_ = captured := [Yojson.Safe.from_string body]; Error error in
-    let p = P.create ~post ~api_key:"fake" ~model:"fake" ~provider_only:["amazon-bedrock"] in
+    let p = create ~post ~api_key:"fake" ~model:"fake" ~provider_only:["amazon-bedrock"] in
     (match P.stream p request ~on_event:(fun _ -> Alcotest.fail "no error-body events") with
     | Error { A.code = A.Provider_unavailable; context = A.No_context } -> ()
     | _ -> Alcotest.fail "safe provider error");
@@ -135,7 +139,7 @@ let multiline_and_failures () =
     on_chunk (text "incremental");
     Alcotest.(check bool) "text before upstream completes" true !exposed;
     on_chunk (finish "stop" ^ done_); Ok () in
-  let p = P.create ~post ~api_key:"fake" ~model:"fake" ~provider_only:["amazon-bedrock"] in
+  let p = create ~post ~api_key:"fake" ~model:"fake" ~provider_only:["amazon-bedrock"] in
   ok (P.stream p request ~on_event:(function P.Text _ -> exposed := true | _ -> ()));
   policy !captured
 let schemas () =
@@ -186,6 +190,39 @@ let schemas () =
      "relevant_transactions", "{\"limit\":21}"; "budget_status", "{\"cycle_offset\":1}";
      "goals", "{\"currency\":\"sek\"}"; "forecast", "{\"cycles\":2}";
      "forecast", "{\"scenario\":{\"arbitrary\":true}}"]
+let configured_bounds () =
+  let sent = ref [] and activity = ref 0 in
+  let post ~uri:_ ~headers:_ ~body ~on_chunk =
+    sent := body :: !sent;
+    List.iter on_chunk [": ignored\n\n"; text "live"; finish "stop"; done_]; Ok () in
+  let make ?limits () = P.create ?limits ~post ~api_key:"fake" ~model:"synthetic" ~provider_only:["amazon-bedrock"] () in
+  List.iter (fun p -> failed (P.prepare p request); failed (P.stream p request ~on_event:(fun _ -> Alcotest.fail "unsupported event")))
+    [make (); make ~limits:{ limits with whole_completion_cap_supported = false } ();
+     make ~limits:{ limits with completion_tokens = 0 } ()];
+  Alcotest.(check int) "unsupported sends nothing" 0 (List.length !sent);
+  List.iter (fun l -> failed (P.prepare (make ~limits:l ()) request))
+    [{limits with request_tokens_per_byte=0}; {limits with request_token_overhead=(-1)};
+     {limits with request_tokens_per_byte=max_int}; {limits with request_token_overhead=max_int}];
+  let p = make ~limits () in
+  let prepared = match P.prepare p request with Ok p -> p | Error _ -> Alcotest.fail "prepare" in
+  ok (P.stream_prepared p prepared ~on_activity:(fun () -> incr activity) ~on_event:(fun _ -> ()));
+  Alcotest.(check int) "exact measured request" (String.length (List.hd !sent)) (P.serialized_bytes prepared);
+  Alcotest.(check int) "raw ignored activity" 4 !activity;
+  let bytes = P.serialized_bytes prepared in
+  Alcotest.(check int) "explicit synthetic token bound" bytes (P.conservative_tokens prepared);
+  let tight = {limits with request_tokens_per_byte=2;request_token_overhead=7;
+    context_tokens=bytes*2+7+limits.completion_tokens} in
+  let tight_prepared = match P.prepare (make ~limits:tight ()) request with Ok p -> p | Error _ -> Alcotest.fail "exact bound" in
+  Alcotest.(check int) "factor and overhead" (bytes*2+7) (P.conservative_tokens tight_prepared);
+  failed (P.prepare (make ~limits:{tight with context_tokens=tight.context_tokens-1} ()) request);
+  failed (P.stream_prepared (make ~limits ()) prepared ~on_activity:(fun () -> ()) ~on_event:(fun _ -> ()));
+  let other = make ~limits:{ limits with completion_tokens = 12 } () in
+  failed (P.stream_prepared other prepared ~on_activity:(fun () -> ()) ~on_event:(fun _ -> ()));
+  Alcotest.(check int) "cross-configuration sends nothing" 1 (List.length !sent);
+  let open Yojson.Safe.Util in
+  let body = Yojson.Safe.from_string (List.hd !sent) in
+  Alcotest.(check int) "whole completion cap" limits.completion_tokens (body |> member "max_tokens" |> to_int);
+  Alcotest.(check bool) "require cap support" true (body |> member "provider" |> member "require_parameters" = `Bool true)
 let () = Alcotest.run "advisor provider" ["synthetic", [
   Alcotest.test_case "fragmented_provider_rounds" `Quick fragmented_provider_rounds;
   Alcotest.test_case "interleaved_tools" `Quick interleaved_tools;
@@ -193,4 +230,5 @@ let () = Alcotest.run "advisor provider" ["synthetic", [
   Alcotest.test_case "cancellation" `Quick cancellation;
   Alcotest.test_case "follow-up policy and ordering" `Quick follow_up_policy;
   Alcotest.test_case "multiline, transport and live text" `Quick multiline_and_failures;
+  Alcotest.test_case "configured completion bound and exact request" `Quick configured_bounds;
   Alcotest.test_case "schemas" `Quick schemas]]

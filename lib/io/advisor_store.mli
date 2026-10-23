@@ -38,6 +38,12 @@ val retry :
   (A.accepted, A.error) result
 
 val append : t -> run:A.Run_id.t -> expected_sequence:int64 -> A.event_payload list -> (A.event list, A.error) result
+val flush_pending : t -> run:A.Run_id.t -> expected_sequence:int64 -> A.event_payload list -> (A.event list, A.error) result
+(** Runtime-internal drain of previously authorized buffered text only. Accepts Running
+    or Cancel_requested, never new callbacks after cancellation; no publication authority. *)
+val prune_batch : t -> now:Ptime.t -> limit:int -> (bool, A.error) result
+(** At most [limit] event rows and request tombstones, and at most [limit] run updates.
+    Ordered prefixes advance replay floors; true means more eligible work. Limit: 1..256. *)
 val snapshot : t -> owner:Cashflow_core.User_id.t -> A.Conversation_id.t -> (A.snapshot, A.error) result
 val replay : t -> run:A.Run_id.t -> after:int64 -> limit:int -> (replay, A.error) result
 val transition : t -> run:A.Run_id.t -> A.transition -> (A.run_state, A.error) result

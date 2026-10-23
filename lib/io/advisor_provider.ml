@@ -7,8 +7,14 @@ type request = { system : string; messages : message list }
 type finish_reason = Stop | Tool_calls | Length | Content_filter
 type usage = { prompt_tokens : int; completion_tokens : int; total_tokens : int }
 type provider_event = Text of string | Calls_ready of raw_call list | Round_finished of finish_reason
-type t = { post : Https.stream_post; api_key : string; model : string; provider_only : string list }
-let create ~post ~api_key ~model ~provider_only = { post; api_key; model; provider_only }
+type generation_limits = { context_tokens : int; completion_tokens : int; whole_completion_cap_supported : bool; request_tokens_per_byte : int; request_token_overhead : int }
+type t = { limits : generation_limits option; identity : unit ref; post : Https.stream_post; api_key : string; model : string; provider_only : string list }
+let create ?limits ~post ~api_key ~model ~provider_only () = { limits; identity = ref (); post; api_key; model; provider_only }
+let model t = t.model
+let limits t = t.limits
+type prepared_request = { identity : unit ref; body : string; conservative_tokens : int }
+let serialized_bytes p = String.length p.body
+let conservative_tokens p = p.conservative_tokens
 
 let str s = `String s
 let integer lo hi = `Assoc ["type", str "integer"; "minimum", `Int lo; "maximum", `Int hi]
@@ -41,11 +47,11 @@ let message_json = function
   | Assistant (content, calls) -> `Assoc (["role", str "assistant"; "content", str content] @
       if calls = [] then [] else ["tool_calls", `List (List.map call_json calls)])
   | Tool { call_id; content } -> `Assoc ["role", str "tool"; "tool_call_id", str call_id; "content", str content]
-let body t request = Yojson.Safe.to_string (`Assoc [
-  "model", str t.model; "stream", `Bool true; "stream_options", `Assoc ["include_usage", `Bool true];
+let body t completion_tokens request = Yojson.Safe.to_string (`Assoc [
+  "max_tokens", `Int completion_tokens; "model", str t.model; "stream", `Bool true; "stream_options", `Assoc ["include_usage", `Bool true];
   "messages", `List (`Assoc ["role", str "system"; "content", str request.system] :: List.map message_json request.messages);
   "tools", `List tool_schemas;
-  "provider", `Assoc ["only", `List (List.map str t.provider_only); "zdr", `Bool true; "data_collection", str "deny"]])
+  "provider", `Assoc ["require_parameters", `Bool true; "only", `List (List.map str t.provider_only); "zdr", `Bool true; "data_collection", str "deny"]])
 
 exception Decode of A.error
 let reject code = raise (Decode { A.code; context = A.No_context })
@@ -61,8 +67,23 @@ let append max buffer json = match json with
   | `Null -> ()
   | `String s when Buffer.length buffer + String.length s <= max -> Buffer.add_string buffer s
   | _ -> invalid ()
-let stream t request ~on_event =
-  if t.provider_only = [] then Error { A.code = A.Provider_unavailable; context = A.No_context }
+let prepare (t : t) request =
+  match t.limits with
+  | Some l when l.context_tokens > 0 && l.completion_tokens > 0 &&
+      l.whole_completion_cap_supported && t.provider_only <> [] &&
+      l.request_tokens_per_byte > 0 && l.request_token_overhead >= 0 ->
+      let body = body t l.completion_tokens request in
+      let bytes = String.length body in
+      if bytes > (max_int - l.request_token_overhead) / l.request_tokens_per_byte then
+        Error { A.code = A.Invalid_request; context = A.No_context }
+      else let conservative_tokens = bytes * l.request_tokens_per_byte + l.request_token_overhead in
+      if l.completion_tokens > l.context_tokens || conservative_tokens > l.context_tokens - l.completion_tokens then
+        Error { A.code = A.Run_limit_reached; context = A.Limit A.Context_bytes }
+      else Ok { identity = t.identity; body; conservative_tokens }
+  | _ -> Error { A.code = A.Invalid_request; context = A.No_context }
+
+let stream_prepared (t : t) prepared ~on_activity ~on_event =
+  if t.identity != prepared.identity then Error { A.code = A.Invalid_request; context = A.No_context }
   else
   let parser = Sse.create ~max_frame_bytes:(256 * 1024) in
   let fragments = Hashtbl.create 8 in
@@ -132,6 +153,7 @@ let stream t request ~on_event =
      exceptions must cross this boundary unchanged. No provider body is logged. *)
   try
     let on_chunk chunk =
+      on_activity ();
       bytes := !bytes + String.length chunk;
       if !bytes > 2 * 1024 * 1024 then invalid ();
       let frames = match Sse.feed parser chunk with Ok f -> f | Error _ -> invalid () in
@@ -139,7 +161,7 @@ let stream t request ~on_event =
     in
     match t.post ~uri:"https://openrouter.ai/api/v1/chat/completions"
       ~headers:["authorization", "Bearer " ^ t.api_key; "content-type", "application/json"; "x-title", "cashflow"]
-      ~body:(body t request) ~on_chunk with
+      ~body:prepared.body ~on_chunk with
     | Error _ -> Error { A.code = A.Provider_unavailable; context = A.No_context }
     | Ok () ->
         (match Sse.finish parser with Error _ -> invalid () | Ok () -> ());
@@ -156,3 +178,8 @@ let stream t request ~on_event =
         on_event (Round_finished reason);
         Ok !usage
   with Decode e -> Error e
+
+let stream t request ~on_event =
+  match prepare t request with
+  | Error e -> Error e
+  | Ok prepared -> stream_prepared t prepared ~on_activity:(fun () -> ()) ~on_event
