@@ -39,11 +39,13 @@ let page ~(ctx : Ctx.t) ~review ~(offset : int Bonsai.t) ~(category : string opt
     in
     if review then Bonsai.return Remote.Loading else Remote.load ~name:"query_transactions" ~args ~ctx graph
   in
+  let logo_component = Merchant_logo.component ~ctx graph in
   let search, set_search = Bonsai.state "" graph in
   let account_filter, set_account_filter = Bonsai.state "" graph in
-  let%arr accounts and inbox and range and transactions and search and set_search and account_filter and set_account_filter
+  let%arr accounts and inbox and range and transactions and logo_component and search and set_search and account_filter and set_account_filter
   and offset and category and locale = ctx.locale and session = ctx.session and navigate = ctx.navigate and changed = ctx.changed
   and notify = ctx.notify in
+  let logo_tile, logo_editor = logo_component in
   let accounts = match accounts with Remote.Loaded json -> Accounts_data.of_list json | _ -> [] in
   let find id = Accounts_data.find accounts id in
   let inbox_count = J.int (J.field "inbox_count" session) in
@@ -133,11 +135,18 @@ let page ~(ctx : Ctx.t) ~review ~(offset : int Bonsai.t) ~(category : string opt
       let description = J.str (J.field "description" t) in
       let code = J.str ~default:"SEK" (J.field "currency" t) and amount = J.str (J.field "amount" t) in
       let dir = direction t in
-      let tile = sprintf "tile c%d" ((String.hash description % 5 + 5) % 5 + 1) in
+      let merchant = J.field "merchant" t in
+      let owner = J.str_opt (J.field "owner" merchant) in
+      let logo = J.str_opt (J.field "logo" merchant) in
+      let tile = match owner with
+        | Some ("personal" | "household" as owner) when not (String.is_empty (J.str (J.field "key" merchant))) ->
+            logo_tile Merchant_logo.{ key = J.str (J.field "key" merchant); owner; logo;
+              can_retry = J.bool (J.field "can_retry" merchant); description; row_id = J.str (J.field "id" t) }
+        | _ -> Ui.span ~cls:(sprintf "tile c%d" ((String.hash description % 5 + 5) % 5 + 1)) [Ui.text (String.prefix description 1)] in
       Ui.div ~cls:"row txn-row"
         [ Ui.span ~cls:"txn-date" [ Ui.text (Fmt.format_date locale (J.field "date" t)) ];
           Ui.div ~cls:"category-cell"
-            [ Ui.span ~cls:tile [ Ui.text (Ui.initial description) ]; Ui.span ~cls:"row-title" [ Ui.text description ];
+            [ tile; Ui.span ~cls:"row-title" [ Ui.text description ];
               (if String.equal (J.str (J.field "kind" t)) "posted" then Vdom.Node.none else Ui.span ~cls:"review-tag" [ Ui.text (Msg.transactions_pending locale) ]) ];
           Ui.div ~cls:"txn-category" [ category_cell t ];
           Ui.span ~cls:"txn-account muted" [ Ui.text (Option.value_map (bank_side t) ~default:"" ~f:(fun a -> a.name)) ];
@@ -172,4 +181,4 @@ let page ~(ctx : Ctx.t) ~review ~(offset : int Bonsai.t) ~(category : string opt
           ~on_change:(fun v -> go ~category:(if String.is_empty v then None else Some v) ()) ]
   in
   Vdom.Node.main ~attrs:[ Vdom.Attr.class_ "page page-wide" ]
-    ([ head; tabs ] @ if review then [ inbox ] else [ toolbar; Remote.view ~locale transactions ~f:table ])
+    ([ head; tabs ] @ if review then [ inbox ] else [ toolbar; Remote.view ~locale transactions ~f:table; logo_editor ])

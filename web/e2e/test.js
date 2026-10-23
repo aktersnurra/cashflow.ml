@@ -1,6 +1,6 @@
 const { chromium } = require('playwright');
 const fs = require('fs');
-const base = 'http://127.0.0.1:18090';
+const base = process.env.BASE_URL || 'http://127.0.0.1:18090';
 const out = process.env.OUT || __dirname;
 const csv = `Bokföringsdag;Transaktionsdatum;Text;Belopp;Saldo
 2026-10-20;2026-10-19;ICA NARA;-250,00;29 512,00

@@ -64,3 +64,43 @@ let post env : post =
             | #Cohttp.Code.success_status -> Ok text
             | status -> Error ("HTTP " ^ Cohttp.Code.string_of_status status)
         with exn -> Error (Printexc.to_string exn)
+
+(* The checked address is the only address passed to connect; the URI still supplies Host and SNI. *)
+let logo_network env : Logo_fetch.network =
+  let with_request : type a. (unit -> (a, Logo_fetch.error) result) -> (a, Logo_fetch.error) result = fun f ->
+    try Eio.Time.with_timeout_exn env#clock 5. f
+    with Eio.Time.Timeout -> Error Logo_fetch.Unreachable_site in
+  let protect f =
+    try Ok (f ())
+    with Eio.Cancel.Cancelled _ as exn -> raise exn
+       | _ -> Error Logo_fetch.Unreachable_site
+  in
+  let resolve ~host =
+    match protect (fun () -> Eio.Net.getaddrinfo_stream ~service:"443" env#net host) with
+    | Error e -> Error e
+    | Ok addresses ->
+        if addresses = [] || List.exists (function `Unix _ -> true | _ -> false) addresses then
+          Error Logo_fetch.Unreachable_site
+        else Ok (List.filter_map (function
+          | `Tcp (ip, _) -> Some (Fmt.str "%a" Eio.Net.Ipaddr.pp ip)
+          | `Unix _ -> None) addresses)
+  in
+  let get ~uri ~address ~max_bytes =
+    match protect (fun () ->
+      let ip = Ipaddr.of_string_exn address |> Ipaddr.to_octets |> Eio.Net.Ipaddr.of_raw in
+      Eio.Switch.run @@ fun sw ->
+      let tls = match tls_config () with Ok tls -> tls | Error () -> failwith "TLS unavailable" in
+      Mirage_crypto_rng_unix.use_default ();
+      let client = Cohttp_eio.Client.make_generic (fun ~sw uri ->
+        let socket = Eio.Net.connect ~sw env#net (`Tcp (ip, 443)) in
+        (connector tls uri socket :> _ Eio.Flow.two_way)) in
+      let response, body = Cohttp_eio.Client.get client ~sw uri in
+      let text =
+        try Ok (Eio.Buf_read.(parse_exn take_all) body ~max_size:(max_bytes + 1))
+        with Eio.Buf_read.Buffer_limit_exceeded -> Error Logo_fetch.Oversized_body in
+      Result.map (fun body ->
+        { Logo_fetch.status = Cohttp.Code.code_of_status (Cohttp.Response.status response);
+          headers = Cohttp.Header.to_list (Cohttp.Response.headers response); body }) text) with
+    | Ok response -> response
+    | Error e -> Error e
+  in { Logo_fetch.with_request; resolve; get }

@@ -7,6 +7,7 @@ module Account = Cashflow_core.Account
 module Account_id = Cashflow_core.Account_id
 module Account_info = Cashflow_core.Account_info
 module Amount = Cashflow_core.Amount
+module Analytics = Cashflow_core.Analytics
 module Currency = Cashflow_core.Currency
 module Household = Cashflow_core.Household
 module Household_id = Cashflow_core.Household_id
@@ -248,6 +249,19 @@ let code_of_string = function
       | Some c -> Ok (Some c)
       | None -> invalid ("unknown code " ^ s))
 
+let merchant_json service access (v : Service.transfer_view) =
+  let visible_owners = List.filter_map (function Service.Own info -> Some info.account.owner | Hidden _ -> None)
+    [v.debit; v.credit] in
+  let owner = if List.exists (Owner.equal v.transfer.scope) visible_owners then Some v.transfer.scope
+    else List.nth_opt visible_owners 0 in
+  let item = Import_store.find_item service.Service.db v.transfer.id in
+  let key = match item with Some item -> item.merchant_key | None -> Analytics.merchant_key v.transfer in
+  let merchant = Option.map (fun owner -> Merchant_logos.view service access ~owner ~merchant_key:key) owner in
+  let logo = Option.bind merchant (fun (v : Merchant_logos.view) -> v.logo) in
+  `Assoc ["key", `String key; "logo", Json.option (fun s -> `String s) logo;
+          "can_retry", `Bool (Option.exists (fun (v : Merchant_logos.view) -> v.can_retry) merchant);
+          "owner", Json.option (function Owner.User _ -> `String "personal" | Owner.Household _ -> `String "household") owner]
+
 let query_transactions =
   command "query_transactions" Read "List transactions you can see, newest first, filtered by date, account, text, tag or code."
     [ date_prop "from_date" "Earliest date, inclusive."; date_prop "to_date" "Latest date, inclusive."; string_prop "account_id" "Only transactions touching this account.";
@@ -271,19 +285,55 @@ let query_transactions =
       let* limit = arg (A.int "limit" ~default:100 ~min:1 ~max:500 fields) in
       let* fold = arg (A.bool "fold_triage" ~default:false fields) in
       let views = Service.query_transfers service access { from_date; to_date; account_id; text; tag; code; without_triage = fold; limit } in
-      if not fold then Ok (`Assoc [ ("transactions", `List (List.map Json.transfer views)) ])
+      if not fold then Ok (`Assoc [ ("transactions", `List (List.map (fun v -> match Json.transfer v with
+        | `Assoc fields -> `Assoc (fields @ ["merchant", merchant_json service access v])
+        | json -> json) views)) ])
       else
         (* An imported row stays where the bank put it; triage moves its amount on with separate
            transfers. Folded, the row carries where it sits now, and the query leaves those transfers
            out before the limit counts. *)
         let row (v : Service.transfer_view) =
-          match Import_store.find_item service.db v.transfer.id, Json.transfer v with
+          let json = match Json.transfer v with
+            | `Assoc fields -> `Assoc (fields @ ["merchant", merchant_json service access v])
+            | json -> json in
+          match Import_store.find_item service.db v.transfer.id, json with
           | Some item, `Assoc fields ->
               let category = Result.to_option (Service.find_account service access item.current_account_id) in
               `Assoc (fields @ [ ("category", Json.option Json.account_ref category); ("triage", `String item.status) ])
           | _, json -> json
         in
         Ok (`Assoc [ ("transactions", `List (List.map row views)) ]))
+
+let logo_error e : Import.error = `Logo (Merchant_logos.error_code e, Merchant_logos.error_message e)
+let logo_arg code = Result.map_error (fun (`Invalid reason) -> (`Logo (code, reason) : Import.error))
+let logo_view (v : Merchant_logos.view) =
+  `Assoc ["key", `String v.key; "logo", Json.option (fun s -> `String s) v.logo; "can_retry", `Bool v.can_retry]
+
+let set_merchant_logo =
+  command "set_merchant_logo" Write "Save a merchant logo from a website or image link."
+    ~required:["merchant_key"; "link"]
+    [string_prop "merchant_key" "Merchant identity."; string_prop "owner" "personal (default) or household.";
+     string_prop "link" "HTTPS website or image link."]
+    (fun service access fields ->
+      let* merchant_key = logo_arg "invalid_merchant_key" (required_string "merchant_key" fields) in
+      let* owner = logo_arg "invalid_owner" (owner_arg access fields) in
+      let* link = logo_arg "invalid_link" (required_string "link" fields) in
+      let* view = Result.map_error logo_error (Merchant_logos.set service access ~owner ~merchant_key ~link) in
+      Ok (logo_view view))
+
+let clear_merchant_logo =
+  command "clear_merchant_logo" Write "Remove a logo or use automatic resolution."
+    ~required:["merchant_key"; "mode"]
+    [string_prop "merchant_key" "Merchant identity."; string_prop "owner" "personal (default) or household.";
+     ("mode", `Assoc ["type", `String "string"; "enum", `List [`String "none"; `String "automatic"]])]
+    (fun service access fields ->
+      let* merchant_key = logo_arg "invalid_merchant_key" (required_string "merchant_key" fields) in
+      let* owner = logo_arg "invalid_owner" (owner_arg access fields) in
+      let* mode = logo_arg "invalid_mode" (required_string "mode" fields) in
+      let* mode = match mode with "none" -> Ok Merchant_logos.None_selected | "automatic" -> Ok Automatic
+        | _ -> Error (`Logo ("invalid_mode", "mode must be none or automatic")) in
+      let* view = Result.map_error logo_error (Merchant_logos.clear service access ~owner ~merchant_key ~mode) in
+      Ok (logo_view view))
 
 let get_transaction =
   command "get_transaction" Read "One transaction, with what resolved or reversed it." ~required:[ "id" ] [ string_prop "id" "The transaction id." ]
@@ -812,7 +862,7 @@ let queries =
 
 let base =
   [ get_session; list_accounts; open_account; update_account; close_account; set_opening_balance; set_market_value; query_transactions;
-    get_transaction; add_transaction; reverse_transaction; correct_transaction; post_pending; void_pending; list_inbox; categorize; share;
+    set_merchant_logo; clear_merchant_logo; get_transaction; add_transaction; reverse_transaction; correct_transaction; post_pending; void_pending; list_inbox; categorize; share;
     pair; pair_candidates; accept_candidate; dismiss; import_statement; undo_import; list_imports; reconcile; set_budget; save_goal; earmark;
     list_rules; add_rule; remove_rule; update_settings; respond_to_invitation; leave_household; create_household; invite_member;
     update_household ]

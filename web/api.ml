@@ -45,6 +45,19 @@ let command name (args : json) =
   | Ok (_, body) -> Error (error_message body)
   | Error (`Network m) -> Error m
 
+(* Logo editing needs machine-readable failure codes; other commands retain readable errors. *)
+let command_with_code name (args : json) =
+  match%map http ~meth:`Post ~url:("/api/commands/" ^ name) ~body:(Yojson.Safe.to_string args) () with
+  | Ok (200, body) -> (match parse body with Some json -> Ok json | None -> Error "unreachable_site")
+  | Ok (_, body) ->
+      (match parse body with
+       | Some (`Assoc fields) -> (match List.Assoc.find fields ~equal:String.equal "code" with Some (`String code) -> Error code | _ -> Error "unreachable_site")
+       | _ -> Error "unreachable_site")
+  | Error (`Network _) -> Error "unreachable_site"
+
+let logo_command_effect = Bonsai_web.Effect.of_deferred_fun (fun (name, args) -> command_with_code name args)
+let run_with_code name args = logo_command_effect (name, args)
+
 let command_effect = Bonsai_web.Effect.of_deferred_fun (fun (name, args) -> command name args)
 let run name args = command_effect (name, args)
 

@@ -21,6 +21,7 @@ type _ field =
   | Int : int field
   | Int64 : int64 field
   | Text : string field
+  | Blob : string field
   | Bool : bool field  (** stored as 0 or 1 *)
   | Nullable : 'a field -> 'a option field
   | Map : { name : string; field : 'b field; to_db : 'a -> 'b; of_db : 'b -> 'a option } -> 'a field
@@ -31,6 +32,7 @@ type ('f, 'r) spec = Nil : ('r, 'r) spec | Cons : 'a field * ('f, 'r) spec -> ('
 val int : int field
 val int64 : int64 field
 val text : string field
+val blob : string field
 val bool : bool field
 val nullable : 'a field -> 'a option field
 val map : name:string -> 'b field -> to_db:('a -> 'b) -> of_db:('b -> 'a option) -> 'a field

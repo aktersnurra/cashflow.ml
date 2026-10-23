@@ -1,5 +1,8 @@
 module Config = Cashflow_io.Config
 module Http_server = Cashflow_io.Http_server
+module Logo_fetch = Cashflow_io.Logo_fetch
+module Merchant_logo_store = Cashflow_io.Merchant_logo_store
+module Owner = Cashflow_core.Owner
 module Oidc = Cashflow_io.Oidc
 module Sql = Cashflow_io.Sql
 module Web_auth = Cashflow_io.Web_auth
@@ -163,6 +166,27 @@ let test_login_return_paths () =
       ("/\\example.org", "/"); ("/\\\\example.org", "/"); ("/\t/example.org", "/");
       ("/inbox\r\nLocation: https://example.org", "/"); ("/inbox\000", "/"); ("/inbox\127", "/") ]
 
+let test_unversioned_assets_revalidate () =
+  let dir = Filename.temp_file "cashflow-assets-" "" in
+  Sys.remove dir;
+  Unix.mkdir dir 0o700;
+  let files = ["index.html"; "style.css"; "main.bc.js"] in
+  let file name = Filename.concat dir name in
+  Fun.protect
+    ~finally:(fun () -> List.iter (fun name -> if Sys.file_exists (file name) then Sys.remove (file name)) files; Unix.rmdir dir)
+    (fun () ->
+      let deps = deps () in
+      let deps = {deps with config={deps.config with static_dir=dir}} in
+      List.iter (fun version ->
+        List.iter (fun name -> Out_channel.with_open_bin (file name) (fun out -> output_string out version)) files;
+        List.iter (fun target ->
+          let response = Http_server.handle deps (request target) in
+          Alcotest.(check int) "asset served" 200 response.status;
+          Alcotest.(check string) "same URL serves current build" version response.body;
+          Alcotest.(check (option string)) "fixed asset URLs must revalidate" (Some "no-cache") (header response "cache-control"))
+          ["/transactions"; "/assets/style.css"; "/assets/main.bc.js"])
+        ["build-one"; "build-two"])
+
 let test_static_paths_stay_inside () =
   let deps = deps () in
   Alcotest.(check int) "traversal" 404 (Http_server.handle deps (request "/assets/../../etc/passwd")).status;
@@ -221,10 +245,59 @@ let test_reporting_envelopes () =
   Alcotest.(check int) "MCP transport" 200 response.status;
   check_json "complete MCP storage" (Yojson.Safe.from_string {|{"jsonrpc":"2.0","id":1,"error":{"code":-32603,"message":"Internal error"}}|}) (body_json response)
 
+
+let test_private_logos () =
+  let deps = deps () in
+  let deps = {deps with verify_bearer=(function "bob-token" -> Ok (claims "bob") | token -> deps.verify_bearer token)} in
+  let png = let path = if Sys.file_exists "test/fixtures/logo_64x48.png" then "test/fixtures/logo_64x48.png" else "fixtures/logo_64x48.png" in
+    In_channel.with_open_bin path In_channel.input_all in
+  let image = Logo_fetch.fetch Logo_fetch.{with_request=(fun f -> f ()); resolve=(fun ~host:_ -> Ok ["8.8.8.8"]);
+    get=(fun ~uri:_ ~address:_ ~max_bytes:_ -> Ok {status=200; headers=[]; body=png})} "shop.com/pic.png" |> Result.get_ok in
+  let alice = Service.sign_in deps.service {issuer="https://id.example"; subject="alice"; display_name=None; email=None; is_admin=None; locale=None} in
+  let bob = sign_in deps.service "bob" in
+  let owner = Access.personal alice in
+  let id = Sql.transaction deps.service.db (fun () ->
+    let id = Merchant_logo_store.save_blob deps.service.db now image in
+    Merchant_logo_store.put deps.service.db owner "shop" {source=User; status=Resolved; website=None; logo_id=Some id; confidence=None; resolved_at=now}; id) in
+  let target = "/api/logos/" ^ string_of_int id in
+  let fetch ?(meth=Http_server.GET) ?(token="alice-token") () =
+    Http_server.handle deps (request ~meth ~headers:["authorization", "Bearer " ^ token] target) in
+  Alcotest.(check int) "unsigned" 404 (Http_server.handle deps (request target)).status;
+  Alcotest.(check int) "other user" 404 (fetch ~token:"bob-token" ()).status;
+  let bob_owner = Access.personal bob in
+  Merchant_logo_store.put deps.service.db bob_owner "shop"
+    {source=User; status=Resolved; website=None; logo_id=Some id; confidence=None; resolved_at=now};
+  Alcotest.(check int) "shared hash allows associated user" 200 (fetch ~token:"bob-token" ()).status;
+  Merchant_logo_store.delete deps.service.db bob_owner "shop";
+  let allowed = fetch () in
+  Alcotest.(check int) "allowed" 200 allowed.status;
+  Alcotest.(check string) "bytes" png allowed.body;
+  Alcotest.(check (option string)) "detected type" (Some "image/png") (header allowed "content-type");
+  Alcotest.(check bool) "private cache" true (String.starts_with ~prefix:"private" (Option.get (header allowed "cache-control")));
+  Alcotest.(check bool) "CSP self" true (Str_compat.contains ~sub:"img-src 'self' data:" (Option.get (header allowed "content-security-policy")));
+  let head = fetch ~meth:Http_server.HEAD () in
+  Alcotest.(check int) "HEAD" 200 head.status;
+  Alcotest.(check string) "HEAD empty" "" head.body;
+  Merchant_logo_store.delete deps.service.db owner "shop";
+  Alcotest.(check int) "removed association" 404 (fetch ()).status;
+  let admin = sign_in deps.service ~admin:true "household-admin" in
+  let household = ok (Service.create_household deps.service admin ~name:"Home" ~default_currency:"SEK") in
+  let owner = Owner.Household household.id in
+  let member = Service.access_for deps.service (Access.user admin) in
+  Merchant_logo_store.put deps.service.db owner "shop"
+    {source=User; status=Resolved; website=None; logo_id=Some id; confidence=None; resolved_at=now};
+  let deps = {deps with verify_bearer=(function "member-token" -> Ok (claims "household-admin") | token -> deps.verify_bearer token)} in
+  let member_fetch () = Http_server.handle deps (request ~headers:["authorization", "Bearer member-token"] target) in
+  Alcotest.(check int) "household member" 200 (member_fetch ()).status;
+  ignore (Service.leave_household deps.service member);
+  Alcotest.(check int) "left household" 404 (member_fetch ()).status
+
 let () =
   Alcotest.run "http"
     [ ( "routes",
         [ Alcotest.test_case "reporting envelopes" `Quick test_reporting_envelopes;
+          Alcotest.test_case "unversioned assets revalidate" `Quick test_unversioned_assets_revalidate;
+          Alcotest.test_case "private logos" `Quick test_private_logos;
           Alcotest.test_case "health and metadata" `Quick test_health_and_metadata;
           Alcotest.test_case "mcp requires a token" `Quick test_mcp_requires_a_token; Alcotest.test_case "mcp tools" `Quick test_mcp_tools;
           Alcotest.test_case "mcp scopes" `Quick test_mcp_scopes; Alcotest.test_case "web login and csrf" `Quick test_web_login_and_csrf;
