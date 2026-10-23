@@ -249,7 +249,12 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
   let authentication_changed = let%arr invalidate_shell and auth_lost in fun old current ->
     if Option.value old ~default:false && not current then Effect.Many [invalidate_shell; auth_lost] else Effect.Ignore in
   Bonsai.Edge.on_change' ~equal:Bool.equal authenticated ~callback:authentication_changed graph;
-  let initialize = let%arr invalidate_shell in Effect.of_thunk (fun () -> register_invalidation invalidate_shell) in
+  (* Home's authenticated session establishes its authorization baseline even when
+     initial Advisor readiness omits household metadata. Never overwrite a known baseline. *)
+  let initialize = let%arr invalidate_shell and confirmed_membership and set_confirmed_membership and session_membership in
+    Effect.Many [
+      (if Option.is_none confirmed_membership then set_confirmed_membership (Some session_membership) else Effect.Ignore);
+      Effect.of_thunk (fun () -> register_invalidation invalidate_shell)] in
   Bonsai.Edge.lifecycle ~on_activate:initialize graph;
   let page =
     match%sub route with
