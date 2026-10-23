@@ -100,7 +100,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await page.getByText(/first héj <img/).waitFor();
   assert.equal((await (await fetch(base+'/state')).json()).released,false);
   assert.equal(posts,1);
-  if(process.env.ADVISOR_REVIEW_VERSION==='1') {
+  if(process.env.ADVISOR_REVIEW_VERSION) {
    await fetch(base+'/release',{method:'POST'});await page.getByRole('status').filter({hasText:'Answer completed.'}).waitFor();
    let first=true;
    await page.route('**/api/advisor/turns',route=>{
@@ -108,6 +108,14 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     const body=JSON.parse(route.request().postData());body.data.expected_version='0';
     return route.continue({postData:JSON.stringify(body)});
    });
+   const refreshFailure=process.env.ADVISOR_REVIEW_VERSION!=='1';
+   if(refreshFailure) {
+    let fail=true;
+    await page.route('**/api/advisor/conversations/*',route=>{
+     if(!fail)return route.fallback();fail=false;
+     return process.env.ADVISOR_REVIEW_VERSION==='transport'?route.abort('failed'):route.fulfill({status:200,contentType:'application/json',json:{version:99}});
+    });
+   }
    await page.getByRole('textbox').fill('explicit followup  ');const before=snapshots;
    const denied=page.waitForResponse(r=>r.url().endsWith('/api/advisor/turns') && r.status()===409);
    await page.getByRole('button',{name:'Send',exact:true}).click();await denied;
@@ -115,12 +123,23 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
    assert.equal(snapshots,before+1);assert.equal(posts,2);
    assert.equal(await page.getByRole('textbox').inputValue(),'explicit followup  ');
    assert.equal(await page.getByRole('button',{name:'Retry request',exact:true}).count(),0);
+   if(refreshFailure) {
+    const conversation=page.locator('.advisor-conversation');
+    await conversation.getByRole('button',{name:'Reconnect',exact:true}).waitFor();
+    await page.getByRole('button',{name:'Send',exact:true}).click();await sleep(100);
+    assert.equal(posts,2,'failed refresh must not unlock stale version');
+    assert.equal(await page.getByRole('textbox').inputValue(),'explicit followup  ');
+    assert.match(await conversation.innerText(),/first héj/);
+    await conversation.getByRole('button',{name:'Reconnect',exact:true}).click();
+    await page.getByRole('status').filter({hasText:'Answer completed.'}).waitFor();
+    assert.equal(snapshots,before+2);assert.equal(posts,2);
+   }
    await page.getByRole('button',{name:'Send',exact:true}).click();
    await page.getByText('explicit followup',{exact:true}).waitFor();
    for(let i=0;i<100 && (await page.getByRole('textbox').inputValue())!=='';i++)await sleep(20);
    assert.equal(posts,3);assert.notEqual(JSON.parse(postBodies[1]).data.idempotency_key,JSON.parse(postBodies[2]).data.idempotency_key);
    assert.equal(JSON.parse(postBodies[2]).data.expected_version,'1');assert.deepEqual(errors,[]);
-   console.log(JSON.stringify({result:'passed',actualVersion409:true,oneSnapshotNoAutoPost:true,freshExplicitSubmissionAccepted:true}));return;
+   console.log(JSON.stringify({result:'passed',actualVersion409:true,refreshFailure:refreshFailure?process.env.ADVISOR_REVIEW_VERSION:null,explicitReconnectUnlocked:true,explicitRecoverySnapshots:refreshFailure?2:1,noAutoPost:true,freshExplicitSubmissionAccepted:true}));return;
   }
   if(process.env.ADVISOR_API_ERRORS === '1') {
    const pattern='**/api/advisor/conversations/*';

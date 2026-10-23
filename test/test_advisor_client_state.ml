@@ -424,6 +424,91 @@ let definitive_post_rejection () =
        (function C.Retry_turn (_, p) -> p.expected_version = "2" && p.idempotency_key = "retry-new" | _ -> false)
        cs)
 
+let failed_conflict_recovery () =
+  List.iter
+    (fun retry ->
+      List.iter
+        (fun error ->
+          let s, t = opened () in
+          let s =
+            apply s (C.Event (t, event 1 delta)) |> fun s ->
+            apply s (C.Event (t, event 2 (if retry then W.Run_cancelled else W.Run_completed)))
+          in
+          let s = apply s (C.Draft_changed "retained draft  ") in
+          let operation key = if retry then C.Retry_latest key else C.Submit_draft key in
+          let post_token cs = token_of (function C.Post_turn (t, _) | C.Retry_turn (t, _) -> Some t | _ -> None) cs in
+          let is_post = function C.Post_turn _ | C.Retry_turn _ -> true | _ -> false in
+          let s, cs = C.reduce s (operation "stale-key") in
+          let s, cs = C.reduce s (C.Accepted (post_token cs, Error (C.Not_accepted W.Version_conflict))) in
+          let obsolete = snapshot_token cs in
+          let snap = { (Option.get (C.view s).snapshot) with version = "2" } in
+          let s = apply s (C.Snapshot (obsolete, Error error)) in
+          let _, blocked = C.reduce s (operation "too-early") in
+          Alcotest.(check bool) "failed refresh cannot unlock known stale version" false (List.exists is_post blocked);
+          Alcotest.(check bool) "explicit reconnect available without active run" true (C.view s).can_reconnect;
+          Alcotest.(check string) "failed refresh retains draft" "retained draft  " (C.view s).draft;
+          Alcotest.(check string) "failed refresh retains partials" "héllo <img onerror=evil()>" (text s);
+          List.iter
+            (fun selection ->
+              let selected =
+                apply s selection |> fun selected ->
+                apply selected (C.Draft_changed "new context") |> fun selected ->
+                apply selected (C.Snapshot (obsolete, Ok snap))
+              in
+              let _, commands = C.reduce selected (C.Submit_draft "new-context") in
+              Alcotest.(check bool)
+                "new explicit context does not inherit conflict recovery" true
+                (List.exists
+                   (function C.Post_turn (_, p) -> p.conversation_id = None && p.expected_version = "0" | _ -> false)
+                   commands))
+            [
+              C.Open_empty (W.Personal, snapshot.currency, "en");
+              C.Open_finding ("new-finding", W.Personal, snapshot.currency, "en");
+            ];
+          let signed_out = apply s C.Auth_lost in
+          Alcotest.(check bool) "session loss clears partial content" true ((C.view signed_out).snapshot = None);
+          let signed_in =
+            apply signed_out C.Activate |> fun s ->
+            apply s (C.Open_empty (W.Personal, snapshot.currency, "en")) |> fun s ->
+            apply s (C.Draft_changed "new-session") |> fun s -> apply s (C.Snapshot (obsolete, Ok snap))
+          in
+          let _, commands = C.reduce signed_in (C.Submit_draft "new-session-key") in
+          Alcotest.(check bool)
+            "new session not locked by old recovery" true
+            (List.exists
+               (function C.Post_turn (_, p) -> p.user_text = "new-session" && p.expected_version = "0" | _ -> false)
+               commands);
+          let denied, commands = C.reduce s C.Reconnect in
+          let denied = apply denied (C.Snapshot (snapshot_token commands, Error C.Access_lost)) in
+          Alcotest.(check bool)
+            "access loss clears private recovery content" true
+            ((C.view denied).snapshot = None && (C.view denied).draft = "");
+          let s, cs = C.reduce s C.Reconnect in
+          let current = snapshot_token cs in
+          Alcotest.(check bool) "explicit reconnect never posts" false (List.exists is_post cs);
+          let s = apply s (C.Snapshot (obsolete, Ok snap)) in
+          let _, blocked = C.reduce s (operation "stale-success") in
+          Alcotest.(check bool) "obsolete success cannot unlock recovery" false (List.exists is_post blocked);
+          let s = apply s (C.Snapshot (current, Ok { snap with conversation_id = "other"; turns = [] })) in
+          let _, blocked = C.reduce s (operation "wrong-conversation") in
+          Alcotest.(check bool) "wrong snapshot identity cannot unlock recovery" false (List.exists is_post blocked);
+          let s, cs = C.reduce s C.Reconnect in
+          let current = snapshot_token cs in
+          let s, commands = C.reduce s (C.Snapshot (current, Ok snap)) in
+          Alcotest.(check bool) "successful snapshot never auto posts" false (List.exists is_post commands);
+          let _, cs = C.reduce s (operation "fresh-key") in
+          Alcotest.(check bool)
+            "matching success unlocks explicit fresh version and key" true
+            (List.exists
+               (function
+                 | C.Post_turn (_, p) -> (not retry) && p.expected_version = "2" && p.idempotency_key = "fresh-key"
+                 | C.Retry_turn (_, p) -> retry && p.expected_version = "2" && p.idempotency_key = "fresh-key"
+                 | _ -> false)
+               cs);
+          ())
+        [ C.Transport; C.Rejected ])
+    [ false; true ]
+
 let () =
   Alcotest.run "advisor client state"
     [
@@ -431,6 +516,7 @@ let () =
         List.map
           (fun (name, f) -> Alcotest.test_case name `Quick f)
           [
+            ("failed conflict recovery", failed_conflict_recovery);
             ("definitive POST rejection", definitive_post_rejection);
             ("delayed readiness", delayed_readiness);
             ("session and owned deletion", session_and_owned_deletion);

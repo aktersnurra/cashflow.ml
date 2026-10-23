@@ -48,6 +48,12 @@ class AdvisorBrowser(unittest.TestCase):
     def test_review_rejection_classification(self):
         self.run_smoke("ADVISOR_REVIEW_REJECTIONS")
 
+    def test_review_failed_version_refresh_transport(self):
+        self.run_smoke("ADVISOR_REVIEW_VERSION", "transport")
+
+    def test_review_failed_version_refresh_protocol(self):
+        self.run_smoke("ADVISOR_REVIEW_VERSION", "protocol")
+
     def test_review_version_recovery(self):
         self.run_smoke("ADVISOR_REVIEW_VERSION")
 

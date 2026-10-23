@@ -92,6 +92,7 @@ type t = {
   serial : int;
   active : bool;
   snapshot_request : token option;
+  recovery_required : bool; (* Only a current authorized snapshot can clear a version conflict. *)
   write_request : token option;
   stop_request : token option;
   delete_request : token option;
@@ -130,6 +131,7 @@ let empty =
     serial = 0;
     active = false;
     snapshot_request = None;
+    recovery_required = false;
     write_request = None;
     stop_request = None;
     delete_request = None;
@@ -270,6 +272,7 @@ let reduce t action =
           {
             t with
             latest = false;
+            recovery_required = false;
             context = None;
             suspended = None;
             status_request = None;
@@ -300,7 +303,8 @@ let reduce t action =
       let t, tok = fresh t in
       ({ t with latest = false; history_request = Some tok }, [ List_conversations (tok, 20, offset) ])
   | Submit_draft key
-    when t.active && t.v.pending = None && t.v.draft <> "" && t.write_request = None && t.snapshot_request = None -> (
+    when t.active && t.v.pending = None && t.v.draft <> "" && t.write_request = None && t.snapshot_request = None
+         && not t.recovery_required -> (
       let context =
         match (t.v.snapshot, t.context) with Some s, _ -> Some (None, s.scope, s.currency, s.locale) | _, c -> c
       in
@@ -323,7 +327,7 @@ let reduce t action =
             in
             request_pending { t with v = { t.v with pending = Some (Submit p) } })
   | Repeat_pending when t.active && t.write_request = None -> request_pending t
-  | Retry_latest key when t.active && t.v.pending = None && t.snapshot_request = None -> (
+  | Retry_latest key when t.active && t.v.pending = None && t.snapshot_request = None && not t.recovery_required -> (
       match t.v.snapshot with
       | Some s when s.active_run = None -> (
           match List.rev s.turns with
@@ -341,7 +345,7 @@ let reduce t action =
       | Error (Not_accepted code) ->
           let t, commands = notice { t with v = { t.v with pending = None } } Request_failed in
           if code = W.Version_conflict then
-            let t, recovery = resync t in
+            let t, recovery = resync { t with recovery_required = true } in
             (t, commands @ recovery)
           else (t, commands)
       | Error e -> failure t e
@@ -371,7 +375,13 @@ let reduce t action =
                 | _ -> Answer_running)
             | [] -> Quiet
           in
-          let t = { t with v = { t.v with snapshot = Some s; connection = Disconnected; notice = snapshot_notice } } in
+          let t =
+            {
+              t with
+              recovery_required = false;
+              v = { t.v with snapshot = Some s; connection = Disconnected; notice = snapshot_notice };
+            }
+          in
           match s.active_run with
           | None -> (t, [])
           | Some run -> (
@@ -504,6 +514,7 @@ let reduce t action =
                      status_request = None;
                      consent_request = None;
                      selected = Some h.conversation_id;
+                     recovery_required = false;
                      context = None;
                      suspended = None;
                      v = { blank with draft = t.v.draft; status = t.v.status; history };
