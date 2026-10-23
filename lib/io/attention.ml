@@ -201,7 +201,7 @@ let note_rank = function "over_budget" -> 2 | "ahead_of_pace" -> 1 | _ -> 0
 
 (* The feed *)
 
-let feed (service : Service.t) access =
+let feed ?(narrative = true) (service : Service.t) access =
   let today = Service.today service access in
   let user = Access.user access in
   let db = service.db in
@@ -220,7 +220,7 @@ let feed (service : Service.t) access =
       if Date.days_between ~first:current.first ~last:today < 10 then (
         let summary = match Analytics.cashflow_summary (Insights.book ctx) ~cycles:[ previous ] ~reconciled_through:(Insights.reconciled_through ctx) (Insights.transfers ctx ~first:previous.first ~last:previous.last) with [ s ] -> Some s | _ -> None in
         let text =
-          Option.bind summary (fun summary ->
+          if not narrative then None else Option.bind summary (fun summary ->
               let before = Cycle.previous ctx.setting previous in
               let previous_summary =
                 match Analytics.cashflow_summary (Insights.book ctx) ~cycles:[ before ] ~reconciled_through:None (Insights.transfers ctx ~first:before.first ~last:before.last) with
@@ -258,10 +258,10 @@ let feed (service : Service.t) access =
                     let key = Printf.sprintf "unusual:%s:%s" (Account_id.to_string u.unusual_category.account.id) (Cycle.label report.report_cycle) in
                     let explanation =
                       match current_state db user.id key ~today with
-                      | State Shown ->
+                      | State Shown when narrative ->
                           Llm_features.unusual_spending service access ~cycle:report.report_cycle ~currency:ctx.currency ~unusual:u
                             ~transactions:(Insights.category_spending ctx u.unusual_category.account.id)
-                      | State (Snoozed _ | Resolved _) -> None
+                      | State (Shown | Snoozed _ | Resolved _) -> None
                     in
                     add Unusual_spend key { unusual = u; unusual_currency = ctx.currency; scope; explanation })
                 (Insights.unusual_spending ctx);

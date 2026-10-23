@@ -61,3 +61,8 @@ val active_runs_for_owner : t -> owner:Cashflow_core.User_id.t -> (A.run list, A
 
 val account_alias : t -> conversation:A.Conversation_id.t -> Cashflow_core.Account_id.t -> (string, A.error) result
 (** The account must already be authorized by the caller. Aliases never enter metadata. *)
+
+val resolve_account_alias :
+  t -> owner:Cashflow_core.User_id.t -> conversation:A.Conversation_id.t -> alias:string -> (Cashflow_core.Account_id.t, A.error) result
+(** Owner-checked lookup only, not financial authorization. Unknown aliases and wrong owners
+    or conversations are indistinguishable. Callers must recheck current pinned scope. *)

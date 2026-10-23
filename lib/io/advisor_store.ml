@@ -963,3 +963,16 @@ let account_alias t ~conversation account =
                  exec))
             (cid conversation) (Account_id.to_string account) alias;
           alias)
+
+let resolve_account_alias t ~owner ~conversation:conversation_id ~alias =
+  tx t (fun () ->
+      ignore (conversation t owner conversation_id);
+      match
+        Sql.(
+          run t.db
+            (stmt "SELECT account_id FROM advisor_account_aliases WHERE conversation_id=? AND alias=?"
+               (text @-> text @-> nil) (opt (row (text @-> nil) Fun.id))))
+          (cid conversation_id) alias
+      with
+      | Some id -> (match Account_id.of_string id with Some id -> id | None -> reject A.Storage_unavailable)
+      | None -> reject A.Not_found)
