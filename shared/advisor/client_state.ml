@@ -14,7 +14,9 @@ type notice =
   | Stopping
 
 type token = { epoch : int; generation : int }
-type failure = Session_lost | Access_lost | Transport | Rejected
+
+(* Rejected is an uncertain/protocol response; only Not_accepted proves a write was refused. *)
+type failure = Session_lost | Access_lost | Transport | Rejected | Not_accepted of W.error_code
 type status = { available : bool; consent : bool }
 type metadata = { conversation_id : string; version : string; updated_at : string }
 type connection = Disconnected | Connecting | Connected | Reconnecting
@@ -174,6 +176,13 @@ let fetch t id =
     },
     [ Unsubscribe; Cancel_flush; Fetch_snapshot (tok, id) ] )
 
+(* Selection may invalidate conversation callbacks, but must not lose delayed readiness. *)
+let selection_status (t, commands) =
+  if t.v.status <> None && t.status_request = None then (t, commands)
+  else
+    let t, tok = fresh t in
+    ({ t with status_request = Some tok }, commands @ [ Get_status tok ])
+
 let resync t = match t.selected with None -> (t, []) | Some id -> fetch t id
 
 let map_attempt (s : W.snapshot) ids f =
@@ -232,7 +241,7 @@ let failure t = function
   | Session_lost -> ({ (clear t) with active = false }, clear_commands)
   | Access_lost -> (clear t, clear_commands)
   | Transport -> notice t Interrupted
-  | Rejected -> notice t Request_failed
+  | Rejected | Not_accepted _ -> notice t Request_failed
 
 let request_pending t =
   match t.v.pending with
@@ -273,22 +282,25 @@ let reduce t action =
             v = { blank with draft = t.v.draft; status = t.v.status };
           }
         in
-        fetch t id
+        selection_status (fetch t id)
   | Open_empty (scope, currency, locale) when t.active ->
       let status = t.v.status in
       let t = clear t in
-      ({ t with context = Some (None, scope, currency, locale); v = { t.v with status } }, clear_commands)
+      selection_status
+        ({ t with context = Some (None, scope, currency, locale); v = { t.v with status } }, clear_commands)
   | Open_finding (key, scope, currency, locale) when t.active ->
       let status = t.v.status in
       let t = clear t in
-      ({ t with context = Some (Some key, scope, currency, locale); v = { t.v with status } }, clear_commands)
+      selection_status
+        ({ t with context = Some (Some key, scope, currency, locale); v = { t.v with status } }, clear_commands)
   | Open_latest when t.active ->
       let t, tok = fresh t in
       ({ t with latest = true; history_request = Some tok }, [ List_conversations (tok, 1, 0) ])
   | Load_history offset when t.active && offset >= 0 ->
       let t, tok = fresh t in
       ({ t with latest = false; history_request = Some tok }, [ List_conversations (tok, 20, offset) ])
-  | Submit_draft key when t.active && t.v.pending = None && t.v.draft <> "" && t.write_request = None -> (
+  | Submit_draft key
+    when t.active && t.v.pending = None && t.v.draft <> "" && t.write_request = None && t.snapshot_request = None -> (
       let context =
         match (t.v.snapshot, t.context) with Some s, _ -> Some (None, s.scope, s.currency, s.locale) | _, c -> c
       in
@@ -311,7 +323,7 @@ let reduce t action =
             in
             request_pending { t with v = { t.v with pending = Some (Submit p) } })
   | Repeat_pending when t.active && t.write_request = None -> request_pending t
-  | Retry_latest key when t.active && t.v.pending = None -> (
+  | Retry_latest key when t.active && t.v.pending = None && t.snapshot_request = None -> (
       match t.v.snapshot with
       | Some s when s.active_run = None -> (
           match List.rev s.turns with
@@ -326,6 +338,12 @@ let reduce t action =
   | Accepted (tok, result) when current t t.write_request tok -> (
       let t = { t with write_request = None } in
       match result with
+      | Error (Not_accepted code) ->
+          let t, commands = notice { t with v = { t.v with pending = None } } Request_failed in
+          if code = W.Version_conflict then
+            let t, recovery = resync t in
+            (t, commands @ recovery)
+          else (t, commands)
       | Error e -> failure t e
       | Ok a ->
           let draft = match t.v.pending with Some (Submit p) when p.user_text = t.v.draft -> "" | _ -> t.v.draft in
@@ -476,23 +494,24 @@ let reduce t action =
           let t = { t with latest = false; history_request = None; v = { t.v with history } } in
           match (latest, history) with
           | true, h :: _ ->
-              fetch
-                {
-                  t with
-                  write_request = None;
-                  stop_request = None;
-                  delete_request = None;
-                  status_request = None;
-                  consent_request = None;
-                  selected = Some h.conversation_id;
-                  context = None;
-                  suspended = None;
-                  v = { blank with draft = t.v.draft; status = t.v.status; history };
-                }
-                h.conversation_id
+              selection_status
+                (fetch
+                   {
+                     t with
+                     write_request = None;
+                     stop_request = None;
+                     delete_request = None;
+                     status_request = None;
+                     consent_request = None;
+                     selected = Some h.conversation_id;
+                     context = None;
+                     suspended = None;
+                     v = { blank with draft = t.v.draft; status = t.v.status; history };
+                   }
+                   h.conversation_id)
           | true, [] ->
               let t = clear t in
-              ({ t with v = { t.v with notice = Choose_context } }, clear_commands)
+              selection_status ({ t with v = { t.v with notice = Choose_context } }, clear_commands)
           | _ -> (t, [])))
   | _ -> (t, [])
 

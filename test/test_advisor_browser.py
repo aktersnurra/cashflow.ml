@@ -12,7 +12,7 @@ import urllib.request
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 class AdvisorBrowser(unittest.TestCase):
-    def run_smoke(self, mode=None):
+    def run_smoke(self, mode=None, value="1"):
         with tempfile.TemporaryDirectory(prefix="advisor-browser-") as directory:
             path = pathlib.Path(directory)
             (path / "index.html").write_text('<!doctype html><html><body><div id="app"></div><script src="/main.bc.js"></script></body></html>')
@@ -30,7 +30,7 @@ class AdvisorBrowser(unittest.TestCase):
                     self.fail("fixture did not start")
                 env = dict(os.environ, NODE_PATH="/tmp/cashflow-browser-tools/node_modules")
                 if mode:
-                    env[mode] = "1"
+                    env[mode] = value
                 result = subprocess.run(["node", "web/e2e/advisor_controller_smoke.js"], cwd=ROOT, env=env, text=True, capture_output=True, timeout=65)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 print(result.stdout.strip())
@@ -38,6 +38,18 @@ class AdvisorBrowser(unittest.TestCase):
                 server.terminate()
                 _, error = server.communicate(timeout=5)
                 self.assertEqual(error, b"")
+
+    def test_review_delayed_unavailable(self):
+        self.run_smoke("ADVISOR_REVIEW_READINESS", "unavailable")
+
+    def test_review_delayed_consent(self):
+        self.run_smoke("ADVISOR_REVIEW_READINESS", "consent")
+
+    def test_review_rejection_classification(self):
+        self.run_smoke("ADVISOR_REVIEW_REJECTIONS")
+
+    def test_review_version_recovery(self):
+        self.run_smoke("ADVISOR_REVIEW_VERSION")
 
     def test_stream_reconnect_scroll_access(self):
         self.run_smoke()

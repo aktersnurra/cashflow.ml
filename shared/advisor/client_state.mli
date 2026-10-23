@@ -14,7 +14,9 @@ type notice =
   | Stopping
 
 type token = { epoch : int; generation : int }
-type failure = Session_lost | Access_lost | Transport | Rejected
+
+(* Rejected is an uncertain/protocol response; only Not_accepted proves a write was refused. *)
+type failure = Session_lost | Access_lost | Transport | Rejected | Not_accepted of W.error_code
 type status = { available : bool; consent : bool }
 type metadata = { conversation_id : string; version : string; updated_at : string }
 type connection = Disconnected | Connecting | Connected | Reconnecting

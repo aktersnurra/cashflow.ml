@@ -198,9 +198,18 @@ let list_races () =
   let old = token_of (function C.List_conversations (t, _, _) -> Some t | _ -> None) cs in
   let s, cs = C.reduce s (C.Load_history 20) in
   let newer = token_of (function C.List_conversations (t, _, _) -> Some t | _ -> None) cs in
-  let s = apply s (C.History (old, Error C.Access_lost)) |> fun s -> apply s (C.History (newer, Ok [])) in
-  let _, cs = C.reduce s (C.Draft_changed "still active") in
-  Alcotest.(check int) "stale page denial ignored" 0 (List.length cs)
+  let page : C.metadata list = [ { conversation_id = "current-page"; version = "2"; updated_at = "now" } ] in
+  let s = apply s (C.History (old, Error C.Access_lost)) |> fun s -> apply s (C.History (newer, Ok page)) in
+  let s = apply s (C.Draft_changed "still active") in
+  Alcotest.(check string) "stale page denial preserves active draft" "still active" (C.view s).draft;
+  Alcotest.(check bool) "current page applied" true ((C.view s).history = page);
+  let _, cs = C.reduce s (C.Submit_draft "context-key") in
+  Alcotest.(check bool)
+    "explicit empty context survives page race" true
+    (List.exists
+       (function
+         | C.Post_turn (_, p) -> p.scope = W.Personal && p.locale = "en" && p.conversation_id = None | _ -> false)
+       cs)
 
 let bounds () =
   let s, t = opened () in
@@ -317,6 +326,104 @@ let session_and_owned_deletion () =
   let s = apply s (C.Draft_changed "new selection") in
   Alcotest.(check string) "obsolete deletion cannot clear new selection" "new selection" (C.view s).draft
 
+let delayed_readiness () =
+  List.iter
+    (fun (selection, latest_empty) ->
+      List.iter
+        (fun (status : C.status) ->
+          let s, cs = C.reduce C.empty C.Activate in
+          let original = token_of (function C.Get_status t -> Some t | _ -> None) cs in
+          let s, cs = C.reduce s selection in
+          let s, more =
+            match selection with
+            | C.Open_latest ->
+                let t = token_of (function C.List_conversations (t, _, _) -> Some t | _ -> None) cs in
+                C.reduce s
+                  (C.History
+                     ( t,
+                       Ok
+                         (if latest_empty then [] else [ { conversation_id = "c"; version = "1"; updated_at = "now" } ])
+                     ))
+            | _ -> (s, [])
+          in
+          let effective = List.fold_left (fun old -> function C.Get_status t -> t | _ -> old) original (cs @ more) in
+          let s = apply s (C.Status (effective, Ok status)) in
+          Alcotest.(check bool) "delayed initial readiness reaches view" true ((C.view s).status = Some status);
+          let s = apply s (C.Status (original, Error C.Session_lost)) in
+          Alcotest.(check bool) "obsolete selection status denial ignored" true ((C.view s).status = Some status);
+          let s, cs = C.reduce (apply s C.Auth_lost) C.Activate in
+          let current = token_of (function C.Get_status t -> Some t | _ -> None) cs in
+          let s =
+            apply s (C.Status (effective, Ok status)) |> fun s -> apply s (C.Status (effective, Error C.Session_lost))
+          in
+          Alcotest.(check bool) "old-session readiness cannot return" true ((C.view s).status = None);
+          let s = apply s (C.Status (current, Ok status)) in
+          Alcotest.(check bool) "new-session readiness still applies" true ((C.view s).status = Some status))
+        [ { available = false; consent = true }; { available = true; consent = false } ])
+    [
+      (C.Open_empty (W.Personal, snapshot.currency, "en"), false);
+      (C.Open_finding ("finding", W.Personal, snapshot.currency, "en"), false);
+      (C.Open_conversation "c", false);
+      (C.Open_latest, false);
+      (C.Open_latest, true);
+    ]
+
+let definitive_post_rejection () =
+  let s, t = opened () in
+  let s = apply s (C.Event (t, event 1 W.Run_completed)) in
+  let s = apply s (C.Draft_changed "unchanged draft  ") in
+  let s, cs = C.reduce s (C.Submit_draft "old-key") in
+  let old, p = token_of (function C.Post_turn (t, p) -> Some (t, p) | _ -> None) cs in
+  let rejected, cs = C.reduce s (C.Accepted (old, Error (C.Not_accepted W.Version_conflict))) in
+  Alcotest.(check bool) "definitive conflict resolves pending" true ((C.view rejected).pending = None);
+  Alcotest.(check string) "conflict preserves draft" "unchanged draft  " (C.view rejected).draft;
+  Alcotest.(check bool)
+    "conflict never auto posts" false
+    (List.exists (function C.Post_turn _ | C.Retry_turn _ -> true | _ -> false) cs);
+  let q = snapshot_token cs in
+  let _, early = C.reduce rejected (C.Submit_draft "too-early") in
+  Alcotest.(check bool)
+    "version recovery waits for authoritative snapshot" false
+    (List.exists (function C.Post_turn _ -> true | _ -> false) early);
+  let snap = { (Option.get (C.view rejected).snapshot) with version = "2" } in
+  let refreshed = apply rejected (C.Snapshot (q, Ok snap)) in
+  let fresh, cs = C.reduce refreshed (C.Submit_draft "fresh-key") in
+  let tok, next = token_of (function C.Post_turn (t, p) -> Some (t, p) | _ -> None) cs in
+  Alcotest.(check string) "fresh request uses current version" "2" next.expected_version;
+  Alcotest.(check string) "fresh key is explicit" "fresh-key" next.idempotency_key;
+  let fresh = apply fresh (C.Accepted (old, Error (C.Not_accepted W.Invalid_request))) in
+  Alcotest.(check bool)
+    "stale rejection cannot resolve fresh pending" true
+    ((C.view fresh).pending = Some (C.Submit next));
+  let accepted : W.accepted = { ids; accepted_version = "3"; idempotent_repeat = false } in
+  let accepted = apply fresh (C.Accepted (tok, Ok accepted)) in
+  Alcotest.(check bool) "fresh submit accepted" true ((C.view accepted).pending = None);
+  let invalid, cs = C.reduce s (C.Accepted (old, Error (C.Not_accepted W.Invalid_request))) in
+  Alcotest.(check bool)
+    "invalid request resolves pending without IO retry" true
+    ((C.view invalid).pending = None
+    && not (List.exists (function C.Post_turn _ | C.Fetch_snapshot _ -> true | _ -> false) cs));
+  List.iter
+    (fun error ->
+      let ambiguous = apply s (C.Accepted (old, Error error)) in
+      let _, cs = C.reduce ambiguous C.Repeat_pending in
+      let repeated = token_of (function C.Post_turn (_, p) -> Some p | _ -> None) cs in
+      Alcotest.(check string) "ambiguous outcome preserves exact payload" (W.encode_submit p) (W.encode_submit repeated))
+    [ C.Transport; C.Rejected ];
+  let s, t = opened () in
+  let s = apply s (C.Event (t, event 1 W.Run_cancelled)) in
+  let s, cs = C.reduce s (C.Retry_latest "retry-old") in
+  let tok = token_of (function C.Retry_turn (t, _) -> Some t | _ -> None) cs in
+  let s, cs = C.reduce s (C.Accepted (tok, Error (C.Not_accepted W.Version_conflict))) in
+  let snap = { (Option.get (C.view s).snapshot) with version = "2" } in
+  let s = apply s (C.Snapshot (snapshot_token cs, Ok snap)) in
+  let _, cs = C.reduce s (C.Retry_latest "retry-new") in
+  Alcotest.(check bool)
+    "explicit retry unlocked with fresh version" true
+    (List.exists
+       (function C.Retry_turn (_, p) -> p.expected_version = "2" && p.idempotency_key = "retry-new" | _ -> false)
+       cs)
+
 let () =
   Alcotest.run "advisor client state"
     [
@@ -324,6 +431,8 @@ let () =
         List.map
           (fun (name, f) -> Alcotest.test_case name `Quick f)
           [
+            ("definitive POST rejection", definitive_post_rejection);
+            ("delayed readiness", delayed_readiness);
             ("session and owned deletion", session_and_owned_deletion);
             ("generated duplicate gap permutations", generated_out_of_order);
             ("versions and exact money", versions_and_money);

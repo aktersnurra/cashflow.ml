@@ -41,9 +41,43 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
    }
    await route.fulfill({response,json:body});
   });
+  if(process.env.ADVISOR_REVIEW_READINESS) {
+   await page.route('**/api/advisor/status',async route=>{
+    await sleep(250);
+    await route.fulfill({status:200,contentType:'application/json',json:{available:process.env.ADVISOR_REVIEW_READINESS==='consent',consent:process.env.ADVISOR_REVIEW_READINESS!=='consent'}});
+   });
+  }
   await page.goto(base);
   await page.getByRole('textbox').waitFor();
   await page.addStyleTag({content:'.advisor-conversation {height:220px;overflow-y:auto;}'});
+  if(process.env.ADVISOR_REVIEW_READINESS) {
+   const copy=process.env.ADVISOR_REVIEW_READINESS==='consent'?'Enable Advisor in settings before sending financial data.':'Advisor is unavailable. Check your settings or try again later.';
+   await page.getByText(copy,{exact:true}).waitFor();assert.equal(posts,0);assert.deepEqual(errors,[]);
+   console.log(JSON.stringify({result:'passed',delayedReadiness:process.env.ADVISOR_REVIEW_READINESS}));return;
+  }
+  if(process.env.ADVISOR_REVIEW_REJECTIONS==='1') {
+   const responses=[{status:422,json:{error:'Invalid_request'}},{status:503,json:{error:'Invalid_request'}},{status:409,json:{error:'unknown'}},{status:202,json:{version:99}}];
+   await page.route('**/api/advisor/turns',route=>responses.length?route.fulfill({contentType:'application/json',...responses.shift()}):route.continue());
+   await page.getByRole('textbox').fill('original payload  ');
+   await page.getByRole('button',{name:'Send',exact:true}).click();
+   await page.getByRole('status').filter({hasText:'Request could not be completed.'}).waitFor();
+   assert.equal(await page.getByRole('button',{name:'Retry request',exact:true}).count(),0);
+   assert.equal(await page.getByRole('textbox').inputValue(),'original payload  ');
+   await page.getByRole('button',{name:'Send',exact:true}).click();
+   await page.getByRole('button',{name:'Retry request',exact:true}).waitFor();
+   await page.getByRole('textbox').fill('different next draft');
+   for(let i=0;i<3;i++) {
+    const before=posts;
+    await page.getByRole('button',{name:'Retry request',exact:true}).click();
+    for(let n=0;n<100 && posts===before;n++) await sleep(20);
+    await sleep(100);
+   }
+   await page.getByText(/first héj <img/).waitFor();
+   assert.equal(posts,5);assert.notEqual(JSON.parse(postBodies[0]).data.idempotency_key,JSON.parse(postBodies[1]).data.idempotency_key);
+   for(const payload of postBodies.slice(2)) assert.equal(payload,postBodies[1]);
+   assert.equal(await page.getByRole('textbox').inputValue(),'different next draft');assert.deepEqual(errors,[]);
+   console.log(JSON.stringify({result:'passed',invalid422Resolved:true,uncertain503Retained:true,unknown409Retained:true,malformed202Retained:true,exactRepeat:true}));return;
+  }
   if(process.env.ADVISOR_POST_TIMEOUT === '1') {
    let first=true;
    await page.route('**/api/advisor/turns', async route=>{
@@ -66,6 +100,28 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await page.getByText(/first héj <img/).waitFor();
   assert.equal((await (await fetch(base+'/state')).json()).released,false);
   assert.equal(posts,1);
+  if(process.env.ADVISOR_REVIEW_VERSION==='1') {
+   await fetch(base+'/release',{method:'POST'});await page.getByRole('status').filter({hasText:'Answer completed.'}).waitFor();
+   let first=true;
+   await page.route('**/api/advisor/turns',route=>{
+    if(!first)return route.continue();first=false;
+    const body=JSON.parse(route.request().postData());body.data.expected_version='0';
+    return route.continue({postData:JSON.stringify(body)});
+   });
+   await page.getByRole('textbox').fill('explicit followup  ');const before=snapshots;
+   const denied=page.waitForResponse(r=>r.url().endsWith('/api/advisor/turns') && r.status()===409);
+   await page.getByRole('button',{name:'Send',exact:true}).click();await denied;
+   for(let i=0;i<100 && snapshots===before;i++)await sleep(20);await sleep(100);
+   assert.equal(snapshots,before+1);assert.equal(posts,2);
+   assert.equal(await page.getByRole('textbox').inputValue(),'explicit followup  ');
+   assert.equal(await page.getByRole('button',{name:'Retry request',exact:true}).count(),0);
+   await page.getByRole('button',{name:'Send',exact:true}).click();
+   await page.getByText('explicit followup',{exact:true}).waitFor();
+   for(let i=0;i<100 && (await page.getByRole('textbox').inputValue())!=='';i++)await sleep(20);
+   assert.equal(posts,3);assert.notEqual(JSON.parse(postBodies[1]).data.idempotency_key,JSON.parse(postBodies[2]).data.idempotency_key);
+   assert.equal(JSON.parse(postBodies[2]).data.expected_version,'1');assert.deepEqual(errors,[]);
+   console.log(JSON.stringify({result:'passed',actualVersion409:true,oneSnapshotNoAutoPost:true,freshExplicitSubmissionAccepted:true}));return;
+  }
   if(process.env.ADVISOR_API_ERRORS === '1') {
    const pattern='**/api/advisor/conversations/*';
    for(const mode of ['malformed','network','timeout']) {

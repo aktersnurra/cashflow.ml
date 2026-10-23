@@ -4,6 +4,23 @@ module W = Cashflow_advisor_protocol.Wire
 module C = Cashflow_advisor_protocol.Client_state
 open Js_of_ocaml
 
+(* Only known application rejections paired with their authoritative 4xx status
+   prove nonacceptance. Unknown/5xx/protocol responses remain ambiguous. *)
+let rejection code content =
+  if String.length content > 4096 then C.Rejected
+  else
+    try
+      match Yojson.Safe.from_string content with
+      | `Assoc [ ("error", `String name) ] -> (
+          match (code, name) with
+          | 409, "Version_conflict" -> C.Not_accepted W.Version_conflict
+          | 409, "Idempotency_conflict" -> C.Not_accepted W.Idempotency_conflict
+          | 409, "Run_busy" -> C.Not_accepted W.Run_busy
+          | 422, "Invalid_request" | 400, "Malformed_JSON" | 415, "Send_JSON" -> C.Not_accepted W.Invalid_request
+          | _ -> C.Rejected)
+      | _ -> C.Rejected
+    with _ -> C.Rejected
+
 (* Async_js.Http discards non-2xx status. Keep it at this browser edge so an
    authoritative denial is never mistaken for a lost connection. *)
 let request ?body path decode =
@@ -39,7 +56,9 @@ let request ?body path decode =
             let content = Js.Opt.case req##.responseText (fun () -> "") Js.to_string in
             if String.length content > 4 * 1024 * 1024 then settle (Error C.Rejected)
             else settle (match decode content with Some x -> Ok x | None -> Error C.Rejected)
-          else settle (Error C.Rejected));
+          else
+            let content = Js.Opt.case req##.responseText (fun () -> "") Js.to_string in
+            settle (Error (rejection code content)));
   req##send (Js.Opt.option (Option.map body ~f:Js.string));
   Ivar.read result
 
