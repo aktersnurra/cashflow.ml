@@ -356,6 +356,36 @@ let unsafe_values () =
     (Result.is_error (W.decode_event (W.encode_event (event (Text_appended { segment_id = uuid; text = "\xff" })))));
   check "empty display label" true (Result.is_error (W.decode_event (W.encode_event (event (Tool_started "")))))
 
+let timestamp_seconds () =
+  List.iter
+    (fun suffix ->
+      List.iter
+        (fun (seconds, valid) ->
+          let sampled_at = "2026-10-22T12:34:" ^ seconds ^ suffix in
+          let check_timestamp name decode encode value =
+            let expected = if valid then Ok value else Error (W.Invalid_field "timestamp") in
+            check (name ^ " " ^ sampled_at) true (decode (encode value) = expected)
+          in
+          let evidence = { evidence with sampled_at } in
+          check_timestamp "event evidence" W.decode_event W.encode_event (event (Evidence_added evidence));
+          let finding = { (Option.get snapshot.source_finding) with sampled_at } in
+          check_timestamp "snapshot finding" W.decode_snapshot W.encode_snapshot
+            { snapshot with source_finding = Some finding };
+          let turns =
+            List.map
+              (fun (turn : W.turn) ->
+                let attempts =
+                  List.map
+                    (fun (attempt : W.attempt) -> { attempt with segments = [ Evidence_segment evidence ] })
+                    turn.attempts
+                in
+                { turn with attempts })
+              snapshot.turns
+          in
+          check_timestamp "snapshot evidence" W.decode_snapshot W.encode_snapshot { snapshot with turns })
+        [ ("59", true); ("60", false) ])
+    [ "Z"; "+02:00"; "-05:30"; ".123Z"; ".123+02:00"; ".123-05:30" ]
+
 let%hegel_test total_decoders tc =
   let length = Hegel.draw tc (Hegel.integers ~min_value:0 ~max_value:1000 ()) in
   let text = String.init length (fun _ -> Char.chr (Hegel.draw tc (Hegel.integers ~min_value:0 ~max_value:255 ()))) in
@@ -375,6 +405,7 @@ let () =
           Alcotest.test_case "Hegel terminal sequences (300 cases)" `Quick terminal_sequences;
           Alcotest.test_case "wire roundtrips and native projection" `Quick roundtrips;
           Alcotest.test_case "unsafe values" `Quick unsafe_values;
+          Alcotest.test_case "timestamp seconds subset" `Quick timestamp_seconds;
           Alcotest.test_case "Hegel total decoders (300 cases)" `Quick total_decoders;
         ] );
     ]

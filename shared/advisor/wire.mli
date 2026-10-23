@@ -135,8 +135,8 @@ type snapshot = {
 
 (** Encoders are total structural projections. Decoders validate the version-1 envelope, required fields, canonical
     decimal counters, UUIDs, UTF-8 and money. Optional fields are present with null when absent. Currency scale is 0..4;
-    money decimal precision exactly matches scale and fits signed int64 minor units. Timestamps use RFC3339, dates
-    YYYY-MM-DD. *)
+    money decimal precision exactly matches scale and fits signed int64 minor units. Timestamps use RFC3339 with seconds
+    00..59 (leap seconds unsupported), including offsets and fractions; dates use YYYY-MM-DD. *)
 type decode_error = Invalid_json | Invalid_field of string | Unknown_variant of string | Unknown_version
 
 val version : int

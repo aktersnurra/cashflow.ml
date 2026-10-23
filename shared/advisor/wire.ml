@@ -219,12 +219,12 @@ let valid_date s =
   if day < 1 || day > days then invalid "date";
   s
 
-(* RFC3339 validation needs no additional browser dependency. *)
+(* Version 1 supports RFC3339 without leap seconds (00..59); no extra browser dependency. *)
 let timestamp s =
   let length = String.length s in
   if length < 20 || s.[10] <> 'T' || s.[13] <> ':' || s.[16] <> ':' then invalid "timestamp";
   ignore (valid_date (String.sub s 0 10));
-  if digits_at s 11 2 > 23 || digits_at s 14 2 > 59 || digits_at s 17 2 > 60 then invalid "timestamp";
+  if digits_at s 11 2 > 23 || digits_at s 14 2 > 59 || digits_at s 17 2 > 59 then invalid "timestamp";
   let zone =
     if s.[19] = '.' then (
       let pos = ref 20 in
