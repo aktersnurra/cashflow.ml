@@ -31,7 +31,8 @@ let run ?(access=access) ?(scope=Analytics.Me) ?currency ?(cycles=1) ?(facts=fac
    Alcotest.(check string) "range first" (if cycles > 1 then "2026-08-25" else "2026-09-25") (Date.to_string (Cashflow_request.first request));
    Alcotest.(check string) "range last" "2026-10-22" (Date.to_string (Cashflow_request.last request));
    Alcotest.(check bool) "request access" true (Reporting_context.access (Cashflow_request.context request) == access);
-   Ok facts) } in
+   Ok facts
+ | Load_forecast _ -> Alcotest.fail "no forecast here") } in
  let result = Effects.run handler (fun () -> Reporting.cashflow_summary ~access ~scope ?currency ~cycles ()) in
  (result, !events)
 let current report = List.hd (ok (fst report)).Reporting.cycles
@@ -78,7 +79,8 @@ let distinct_scope_settings () =
      let handler = { Effects.handle = (fun (type a) (op : a Effect_ops.t) : a -> match op with
        | Resolve_currency code -> events := !events @ [code]; Ok (if String.equal code "EUR" then eur else sek)
        | Now -> events := !events @ ["now"]; now
-       | Load_cashflow _ -> events := !events @ ["load"]; Ok facts) } in
+       | Load_cashflow _ -> events := !events @ ["load"]; Ok facts
+       | Load_forecast _ -> Alcotest.fail "no forecast here") } in
      let report = ok (Effects.run handler (fun () -> Reporting.cashflow_summary ~access ~scope ?currency:override ~cycles:1 ())) in
      Alcotest.(check (list string)) "scope default or override and single clock" [Option.value override ~default:code; "now"; "load"] !events;
      Alcotest.(check string) "scope setting" (Pay_cycle_setting.to_string setting) (Pay_cycle_setting.to_string (Reporting_context.setting report.context));
@@ -103,14 +105,59 @@ let storage_errors () =
    let handler = { Effects.handle = (fun (type a) (op : a Effect_ops.t) : a -> match op with
      | Resolve_currency _ -> operations := "currency" :: !operations; Ok sek
      | Now -> operations := "now" :: !operations; now
-     | Load_cashflow _ -> operations := "load" :: !operations; Error error) } in
+     | Load_cashflow _ -> operations := "load" :: !operations; Error error
+     | Load_forecast _ -> Alcotest.fail "no forecast here") } in
    let result = Effects.run handler (fun () -> Reporting.cashflow_summary ~access ~scope:Me ~cycles:1 ()) in
    Alcotest.(check bool) "typed load failure" true (result = Error error);
    Alcotest.(check (list string)) "one load" ["load";"now";"currency"] !operations)
    [Reporting_error.Access_denied; Reporting_error.Storage_unavailable Load_cashflow];
  let handler = { Effects.handle = (fun (type a) (op : a Effect_ops.t) : a -> match op with
    | Resolve_currency _ -> Error (Reporting_error.Storage_unavailable Resolve_currency)
-   | Now | Load_cashflow _ -> Alcotest.fail "must stop at currency") } in
+   | Now | Load_cashflow _ | Load_forecast _ -> Alcotest.fail "must stop at currency") } in
  let result = Effects.run handler (fun () -> Reporting.cashflow_summary ~access ~scope:Me ~cycles:1 ()) in
  Alcotest.(check bool) "typed currency storage failure" true (result = Error (Reporting_error.Storage_unavailable Resolve_currency))
-let () = Alcotest.run "Reporting" ["workflow", List.map (fun (n,f) -> Alcotest.test_case n `Quick f) ["distinct scope settings",distinct_scope_settings;"literal scopes",scopes;"context and ordering",context_and_order;"edge cases",edge_cases;"storage errors",storage_errors]]
+
+(* Forecast: checks before anything is loaded, then one load and a projection. *)
+let spotify n on = { (transfer n groceries checking 12900L Purchase) with value_date = date on; memo = { Transfer.empty_memo with counterparty = Some "Spotify" } }
+let forecast_facts : Forecast_facts.t =
+  { accounts = [ checking; salary; groceries ]; transfers = [ spotify 30 "2026-07-05"; spotify 31 "2026-08-05"; spotify 32 "2026-09-05"; spotify 33 "2026-10-05" ];
+    imported_through = []; budgets = []; goals = []; contribution = None }
+let run_forecast ?(horizon=1) ?(scenario=Forecast_request.no_scenario) ?(load=fun _ -> Ok forecast_facts) () =
+  let events = ref [] in
+  let handler = { Effects.handle = (fun (type a) (op : a Effect_ops.t) : a -> match op with
+    | Resolve_currency code -> events := !events @ [code]; Ok (if code = "EUR" then eur else sek)
+    | Now -> events := !events @ ["now"]; now
+    | Load_cashflow _ -> Alcotest.fail "no cash-flow load"
+    | Load_forecast request ->
+        events := !events @ ["load"];
+        Alcotest.(check string) "800 days back" "2024-08-13" (Date.to_string (Forecast_request.since request));
+        Alcotest.(check int) "horizon" horizon (Forecast_request.horizon request);
+        load request) } in
+  let result = Effects.run handler (fun () -> Reporting.forecast ~access ~scope:Me ~horizon ~scenario ()) in
+  (result, !events)
+let refused label expected (result, events) =
+  Alcotest.(check bool) label true (match result with Error e -> e = expected | Ok _ -> false);
+  Alcotest.(check (list string)) (label ^ ": nothing loaded") ["SEK"; "now"] events
+let invalid_scenario = function Error (Reporting_error.Invalid_scenario _), events -> Alcotest.(check (list string)) "nothing loaded" ["SEK"; "now"] events | _ -> Alcotest.fail "expected Invalid_scenario"
+let forecast () =
+  let result, events = run_forecast () in
+  Alcotest.(check (list string)) "effect order" ["SEK"; "now"; "load"] events;
+  let report = ok result in
+  Alcotest.(check string) "today" "2026-10-22" (Date.to_string report.forecast.today);
+  Alcotest.(check (list string)) "the bill found in the facts" ["2026-11-05"]
+    (List.filter_map (fun (i : Forecast.item) -> if i.item_id = "bill:spotify" then Some (Date.to_string i.date) else None) report.forecast.items);
+  refused "horizon" (Reporting_error.Invalid_horizon 2) (run_forecast ~horizon:2 ());
+  let one_off on amount = run_forecast ~scenario:{ Forecast_request.no_scenario with one_off = [ (date on, amount, "Soffa") ] } () in
+  invalid_scenario (one_off "2026-12-01" "-12000");
+  invalid_scenario (one_off "2026-10-21" "-12000");
+  invalid_scenario (one_off "2026-11-01" "12.345");
+  invalid_scenario (one_off "2026-11-01" "0");
+  invalid_scenario (run_forecast ~scenario:{ Forecast_request.no_scenario with one_off = List.init 11 (fun _ -> (date "2026-11-01", "-1", "x")) } ());
+  let report = ok (fst (one_off "2026-11-22" "-12000.50")) in
+  Alcotest.(check bool) "a what-if line" true (Option.is_some report.forecast.scenario);
+  let result, _ = run_forecast ~load:(fun _ -> Error (Reporting_error.Storage_unavailable Load_forecast)) () in
+  Alcotest.(check bool) "storage failure passed back" true (result = Error (Reporting_error.Storage_unavailable Load_forecast));
+  let report = ok (fst (run_forecast ~scenario:{ Forecast_request.no_scenario with leave_out = [ "bill:gone" ] } ())) in
+  Alcotest.(check bool) "a stale id is ignored" true
+    (List.map (fun (p : Forecast.point) -> p.cash) (Option.get report.forecast.scenario) = List.map (fun (p : Forecast.point) -> p.cash) report.forecast.baseline)
+let () = Alcotest.run "Reporting" ["workflow", List.map (fun (n,f) -> Alcotest.test_case n `Quick f) ["distinct scope settings",distinct_scope_settings;"literal scopes",scopes;"context and ordering",context_and_order;"edge cases",edge_cases;"storage errors",storage_errors;"forecast",forecast]]

@@ -1,6 +1,6 @@
 (* The app shell: loads the session, then shows the sign-in page or the app. The app has a
-   sidebar on wide screens and a tab bar on phones, a command palette (⌘K or /), and single-key
-   navigation (g then h, i, a, b, o, n, s). *)
+   sidebar on wide screens and a tab bar on phones, a command palette (⌘K or /), single-key
+   navigation (g then h, c, t, i, a, b, f, o, n, s), and a light/dark switch. *)
 open! Core
 open! Async_kernel
 open! Bonsai_web.Cont
@@ -9,20 +9,27 @@ open Js_of_ocaml
 
 let session_effect = Effect.of_deferred_thunk Api.session
 
+(* The history entry is pushed when the effect runs, not when it is built: views build navigation
+   effects for every link and button they render. *)
 let navigate_to set_route route =
-  Dom_html.window##.history##pushState Js.null (Js.string "") (Js.some (Js.string (Route.to_path route)));
-  set_route route
+  Effect.Many
+    [ Effect.of_thunk (fun () -> Dom_html.window##.history##pushState Js.null (Js.string "") (Js.some (Js.string (Route.to_path route))));
+      set_route route ]
 
-let nav_items = Route.[ Home; Inbox; Accounts; Budgets; Household; Insights; Settings ]
-let tab_items = Route.[ Home; Inbox; Add; Budgets; Settings ]
+(* The sidebar: what you look at, then where the money lives; Settings sits at the foot. *)
+let nav_groups = Route.[ [ Home; Cashflow; Transactions { offset = 0; category = None }; Budgets; Forecast; Insights ]; [ Accounts; Household ] ]
+let tab_items = Route.[ Home; Transactions { offset = 0; category = None }; Add; Budgets; Settings ]
 
 let icon route =
   let name : Feather_icon.t =
     match route with
     | Route.Home -> Home
+    | Cashflow -> Shuffle
     | Inbox -> Inbox
+    | Transactions _ -> List
     | Accounts | Account _ -> Credit_card
     | Budgets -> Pie_chart
+    | Forecast -> Activity
     | Household -> Users
     | Insights -> Trending_up
     | Settings -> Settings
@@ -33,9 +40,12 @@ let icon route =
 let shortcut = function
   | "h" -> Some Route.Home
   | "i" -> Some Route.Inbox
+  | "t" -> Some Route.(Transactions { offset = 0; category = None })
   | "a" -> Some Route.Accounts
   | "b" -> Some Route.Budgets
+  | "f" -> Some Route.Forecast
   | "o" -> Some Route.Household
+  | "c" -> Some Route.Cashflow
   | "n" -> Some Route.Insights
   | "s" -> Some Route.Settings
   | _ -> None
@@ -57,14 +67,19 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
       let%bind.Effect () = Effect.of_deferred_thunk (fun () -> Async_kernel.after (Time_ns.Span.of_sec 4.)) in
       set_toast None
   in
-  let ctx : Ctx.t = { session; locale; currency; version; changed; navigate; notify } in
+  let theme, set_theme_state = Bonsai.state ~equal:Theme.equal (Theme.load ()) graph in
+  let set_theme = let%arr set_theme_state in fun t -> Effect.Many [ Effect.of_thunk (fun () -> Theme.save t); set_theme_state t ] in
+  let ctx : Ctx.t = { session; locale; currency; version; changed; navigate; notify; theme; set_theme } in
   let page =
     match%sub route with
     | Home -> Home.page ~ctx graph
-    | Inbox -> Inbox_page.page ~ctx graph
+    | Cashflow -> Cashflow_page.page ~ctx graph
+    | Inbox -> Transactions_page.page ~ctx ~review:true ~offset:(Bonsai.return 0) ~category:(Bonsai.return None) graph
+    | Transactions { offset; category } -> Transactions_page.page ~ctx ~review:false ~offset ~category graph
     | Accounts -> Accounts_page.list ~ctx graph
     | Account id -> Accounts_page.detail ~ctx ~account_id:id graph
     | Budgets -> Budgets_page.page ~ctx graph
+    | Forecast -> Forecast_page.page ~ctx graph
     | Household -> Household_page.page ~ctx graph
     | Insights -> Insights_page.page ~ctx graph
     | Settings -> Settings_page.page ~ctx graph
@@ -73,7 +88,7 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
   let palette_view = Palette.component ~ctx ~open_:palette ~close:(let%arr set_palette in set_palette false) graph in
   let inbox_count = let%arr session in J.int (J.field "inbox_count" session) in
   let%arr page and route and locale and navigate and toast and pending_g and set_pending_g and set_palette and palette_view and inbox_count
-  and set_route in
+  and set_route and theme and set_theme in
   (* Back and forward buttons. *)
   Dom_html.window##.onpopstate :=
     Dom_html.handler (fun _ ->
@@ -85,7 +100,7 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
         [ Vdom.Attr.class_ (cls ^ if Route.equal r route then " active" else ""); Vdom.Attr.href (Route.to_path r);
           Vdom.Attr.on_click (fun _ -> Effect.Many [ Effect.Prevent_default; navigate r ]) ]
       [ Ui.span ~cls:"icon" [ icon r ]; Ui.span ~cls:"label" [ Ui.text (Route.title locale r) ];
-        (match r with Route.Inbox when inbox_count > 0 -> Ui.span ~cls:"badge" [ Ui.text (Int.to_string inbox_count) ] | _ -> Vdom.Node.none) ]
+        (match r with Route.Transactions _ when inbox_count > 0 -> Ui.span ~cls:"badge" [ Ui.text (Int.to_string inbox_count) ] | _ -> Vdom.Node.none) ]
   in
   (* Keyboard: ⌘K or / opens the palette; g then a letter goes to a page. Typing in a field is left alone. *)
   let on_key (event : Dom_html.keyboardEvent Js.t) =
@@ -107,9 +122,22 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
     ~attrs:[ Vdom.Attr.class_ "shell"; Vdom.Attr.Global_listeners.keydown on_key ]
     [ Vdom.Node.create "nav"
         ~attrs:[ Vdom.Attr.class_ "sidebar" ]
-        ([ Ui.div ~cls:"brand" [ Ui.text (Msg.app_name locale) ] ]
-        @ List.map nav_items ~f:(link ~cls:"nav-link")
-        @ [ Ui.div ~cls:"sidebar-foot" [ Ui.button ~kind:"ghost" ~key_hint:"⌘K" (Msg.command_placeholder locale) (set_palette true) ] ]);
+        ([ Ui.div ~cls:"brand"
+             [ Ui.span [ Ui.text (Msg.app_name locale) ];
+               Vdom.Node.button
+                 ~attrs:
+                   [ Vdom.Attr.class_ "button icon-button"; Vdom.Attr.type_ "button"; Vdom.Attr.title (Msg.command_placeholder locale ^ " (⌘K)");
+                     Vdom.Attr.create "aria-label" (Msg.command_placeholder locale); Vdom.Attr.on_click (fun _ -> set_palette true) ]
+                 [ Feather_icon.svg ~size:(`Px 16) ~stroke:(`Name "currentColor") ~stroke_width:(`Px 2) Search ] ] ]
+        @ List.concat_map nav_groups ~f:(fun routes -> Ui.div ~cls:"nav-gap" [] :: List.map routes ~f:(link ~cls:"nav-link"))
+        @ [ Ui.div ~cls:"sidebar-foot"
+              [ link ~cls:"nav-link" Route.Settings;
+                Vdom.Node.button
+                  ~attrs:
+                    [ Vdom.Attr.class_ "button icon-button"; Vdom.Attr.type_ "button"; Vdom.Attr.title (Msg.palette_flip_theme locale);
+                      Vdom.Attr.create "aria-label" (Msg.palette_flip_theme locale); Vdom.Attr.on_click (fun _ -> set_theme (Theme.flipped theme)) ]
+                  [ Feather_icon.svg ~size:(`Px 16) ~stroke:(`Name "currentColor") ~stroke_width:(`Px 2)
+                      (if (match theme with Theme.Light -> false | Dark -> true | System -> Theme.system_is_dark ()) then Sun else Moon) ] ] ]);
       Ui.div ~cls:"content" [ page ];
       Vdom.Node.create "nav" ~attrs:[ Vdom.Attr.class_ "tabbar" ] (List.map tab_items ~f:(link ~cls:"tab"));
       palette_view;
@@ -145,5 +173,6 @@ let app graph =
   | Some (Signed_in _) -> shell
 
 let () =
+  Theme.apply (Theme.load ());
   Async_js.init ();
   Bonsai_web.Start.start app

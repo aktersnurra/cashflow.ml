@@ -73,7 +73,7 @@ let test_mcp_tools () =
   let deps = deps () in
   let tools = member "tools" (member "result" (body_json (rpc deps "tools/list" (`Assoc [])))) in
   let names = match tools with `List tools -> List.map (fun t -> Yojson.Safe.Util.to_string (member "name" t)) tools | _ -> [] in
-  List.iter (fun name -> Alcotest.(check bool) name true (List.mem name names)) [ "add_transaction"; "cashflow_summary"; "import_statement"; "list_inbox" ];
+  List.iter (fun name -> Alcotest.(check bool) name true (List.mem name names)) [ "add_transaction"; "cashflow_summary"; "forecast"; "import_statement"; "list_inbox" ];
   Alcotest.(check bool) "web-only commands stay off MCP" false (List.mem "update_settings" names);
   let _, accounts = tool deps "list_accounts" (`Assoc []) in
   let id name =

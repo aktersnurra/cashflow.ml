@@ -1,6 +1,6 @@
 # cashflow
 
-A double-entry ledger of personal and household money, following TigerBeetle's rules, with an MCP server for Claude and other agents and a Bonsai web UI. The design is in [`docs/design.md`](docs/design.md).
+A double-entry ledger of personal and household money, following TigerBeetle's rules, with an MCP server for Claude and other agents and a Bonsai web UI. The design is in [`design/design.md`](design/design.md).
 
 It is a single OCaml binary serving MCP, a JSON API and the web UI over HTTP, backed by SQLite, signing people in with an OIDC provider (Pocket ID). It runs natively on FreeBSD (Eio's POSIX backend), like kcal.
 

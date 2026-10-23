@@ -8,7 +8,7 @@
 
 **Tech Stack:** Stock OCaml 5.5.1, `Stdlib.Effect.Deep`, Dune >=3.24, existing Eio/SQLite stack, Alcotest/Hegel, separate OCaml 5.1.1/Bonsai web switch. Base is the default for new workflow modules; add its direct package dependency without upgrading unrelated packages.
 
-**Spec:** `docs/superpowers/specs/2026-10-22-effect-backed-modules-design.md` (staged design approved).
+**Spec:** `design/superpowers/specs/2026-10-22-effect-backed-modules-design.md` (staged design approved).
 
 ## Global Constraints
 

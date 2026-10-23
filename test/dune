@@ -79,6 +79,26 @@
  (modules test_sql)
  (libraries alcotest cashflow_io eio eio_main))
 
+(library
+ (name core_fixtures)
+ (enabled_if (= %{context_name} default))
+ (modules core_fixtures)
+ (libraries cashflow_core ptime))
+
+(test
+ (name test_series)
+ (enabled_if (= %{context_name} default))
+ (modules test_series)
+ (libraries alcotest cashflow_core core_fixtures hegel ptime)
+ (preprocess (pps ppx_hegel_test)))
+
+(test
+ (name test_forecast)
+ (enabled_if (= %{context_name} default))
+ (modules test_forecast)
+ (libraries alcotest cashflow_core core_fixtures hegel ptime)
+ (preprocess (pps ppx_hegel_test)))
+
 (test
  (name test_core)
  (enabled_if (= %{context_name} default))

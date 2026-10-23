@@ -8,6 +8,8 @@ type account = {
   owner : string;  (** "personal" or "household" *)
   currency : string;
   balance : J.t;
+  pending : J.t;
+  institution : string option;
   role : string option;
   statement_backed : bool;
   number : string option;
@@ -17,7 +19,8 @@ type account = {
 
 let of_json json =
   { id = J.str (J.field "id" json); name = J.str (J.field "name" json); kind = J.str (J.field "kind" json); owner = J.str (J.field "owner" json);
-    currency = J.str (J.field "currency" json); balance = J.field "balance" json; role = J.str_opt (J.field "role" json);
+    currency = J.str (J.field "currency" json); balance = J.field "balance" json;
+    pending = J.field "pending" json; institution = J.str_opt (J.field "institution" json); role = J.str_opt (J.field "role" json);
     statement_backed = J.bool (J.field "statement_backed" json); number = J.str_opt (J.field "number" json);
     tags = List.map (J.list (J.field "tags" json)) ~f:(fun t -> J.str t); closed = J.bool (J.field "closed" json) }
 

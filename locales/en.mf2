@@ -1,8 +1,8 @@
 # The UI's messages in English, the reference locale. Ids are stable; every other locale must
 # have the same ids with the same variables. See tools/mf2c for the syntax supported.
 
-app.name = Cashflow
-nav.home = Home
+app.name = cashflow.ml
+nav.home = Overview
 nav.inbox = Inbox
 nav.accounts = Accounts
 nav.budgets = Budgets
@@ -10,6 +10,50 @@ nav.household = Household
 nav.insights = Insights
 nav.settings = Settings
 nav.add = Add
+nav.cashflow = Cash flow
+nav.transactions = Transactions
+transactions.subtitle = Browse, search and manage your transactions.
+transactions.tab_all = All
+transactions.tab_review = Needs review
+transactions.search = Search transactions, merchants or notes…
+transactions.all_accounts = All accounts
+transactions.all_categories = All categories
+transactions.col_date = Date
+transactions.col_description = Description
+transactions.col_account = Account
+transactions.today = Today
+transactions.yesterday = Yesterday
+transactions.transfer = Transfer
+transactions.pending = Pending
+transactions.review = Review
+transactions.empty = No transactions in this period.
+transactions.no_match = Nothing matches these filters.
+transactions.add = Add transaction
+transactions.recategorized = Category changed.
+cashflow.subtitle = See how money flows from income to expenses and savings.
+cashflow.tab_flow = Flow
+cashflow.tab_trend = Trend
+cashflow.breakdown = Breakdown
+cashflow.col_amount = Amount
+cashflow.col_share = % of income
+cashflow.col_change = vs. last month
+cashflow.details = Cash flow by month
+cashflow.col_month = Month
+cashflow.col_net = Net
+cashflow.net = Net
+overview.net_savings = Net savings
+overview.expenses = Expenses
+overview.vs_average = {$change} vs. 6-month average
+overview.where = Where your money went
+overview.attention = Needs attention
+overview.savings = Savings
+overview.other = Other
+overview.from_savings = From savings
+overview.transfers_in = Transfers in
+overview.transfers_out = Transfers out
+overview.empty = Import a bank statement to see where your money went.
+overview.previous = Previous period
+overview.next = Next period
 
 action.sign_in = Sign in
 action.sign_out = Sign out
@@ -181,8 +225,18 @@ accounts.title = Accounts
 accounts.empty = No accounts yet.
 accounts.bank = Bank accounts and cards
 accounts.categories = Categories
+accounts.subtitle = Where your money is, and the categories it moves through.
+accounts.this_month = this month
+accounts.col_account = Account
+accounts.col_total = All time
 
 budgets.title = Budgets
+budgets.subtitle = Set budgets, track progress and understand your spending.
+budgets.tab_categories = Categories
+budgets.col_category = Category
+budgets.col_spent = Spent
+budgets.col_budget = Budget
+budgets.col_remaining = Remaining
 budgets.empty = No budgets yet. Set one for a category to see your pace.
 budgets.set = Monthly budget for {$category}
 
@@ -190,12 +244,47 @@ household.title = Household
 household.none = You're not in a household yet.
 household.plan = Transfers this month
 household.invite_hint = They need to have signed in once.
+household.subtitle = Shared costs, and what each of you has paid in this month.
+household.none_body = A household shares its accounts, budgets and costs between its members. Personal accounts stay personal.
+household.col_member = Member
+household.col_planned = Planned
+household.no_plan = Planned transfers come from the household's budgets and savings goals. Set a budget to see who pays what.
 
 insights.title = Insights
+insights.subtitle = Find patterns, changes and opportunities.
+insights.tab_all = All
+insights.tab_spending = Spending
+insights.tab_income = Income
+insights.tab_savings = Savings
+insights.tab_subscriptions = Subscriptions
+insights.range = Last {$count} months
+insights.spending_up = Spending is up {$change}
+insights.spending_down = Spending is down {$change}
+insights.spending_more = You spent {$amount} more than your average over the previous {$count} months.
+insights.spending_less = You spent {$amount} less than your average over the previous {$count} months.
+insights.income_up = Higher than usual income
+insights.income_down = Lower than usual income
+insights.income_body = Your income was {$amount} this month, against {$average} on average.
+insights.rate_up = Your savings rate improved
+insights.rate_down = Your savings rate dropped
+insights.rate_body = You're saving {$rate} of your income, against {$average} on average.
+insights.worth_up = Your balance is growing
+insights.worth_down = Your balance is shrinking
+insights.worth_body = Your net worth is {$amount}, {$change} over the period.
+insights.price_title = {$merchant} changed price
+insights.price_body = {$merchant} went from {$previous} to {$last}.
+insights.recurring_title = Recurring expenses
+insights.recurring_body = You have {$count} recurring payments, about {$amount} a month.
+insights.top_title = Highest spending category
+insights.top_body = {$category} accounts for {$share} of your spending this month.
+insights.view_budget = View budget
+insights.view_accounts = View accounts
+insights.empty = Insights appear once there are a few months of imported statements to compare.
 
 settings.title = Settings
 
 add.title = Add a transaction
+add.subtitle = Cash, or spending you want counted before the statement arrives.
 add.pending_note = This account is confirmed by bank statements, so the entry stays pending until the statement arrives.
 
 error.generic = Something went wrong: {$message}
@@ -231,13 +320,96 @@ action.new_goal = New goal
 action.apply = Apply
 action.earmark = Set aside
 settings.saved = Saved.
+settings.appearance = Appearance
+settings.subtitle = Your account, language and pay cycle.
+settings.account = Account
+settings.general = General
+settings.currency_hint = For new accounts and for totals.
+settings.cycle_hint = Budgets and the overview follow your pay cycle.
+settings.theme = Theme
+settings.theme_hint = Applies on this device.
+theme.system = System
+theme.light = Light
+theme.dark = Dark
 household.invited = Invited {$name}.
 add.saved = Added.
 add.saved_pending = Added. It will be confirmed when the bank statement is imported.
 palette.add = Add a transaction
 palette.account = Open {$account}
+palette.flip_theme = Switch between light and dark
 inbox.share_pick = Which household category?
 inbox.no_pairs = No transaction with the same amount the other way within three days.
 budgets.no_budget = No budget
 goals.empty = No savings goals yet.
 accounts.no_transactions = No transactions yet. Import a statement or add one.
+nav.forecast = Forecast
+forecast.subtitle = Your cash over the coming months, from regular payments and usual spending.
+forecast.months =
+  .input {$count :integer}
+  .match $count
+  one {{1 month}}
+  * {{{$count} months}}
+forecast.loading = Projecting your cash
+forecast.no_accounts = Add a bank account to see a forecast.
+forecast.today = Today
+forecast.note = A projection, not a range: it assumes the payments below and your usual spending.
+forecast.lowest = Lowest point
+forecast.on = on {$date :date}
+forecast.before_salary = Before next salary
+forecast.no_salary = No regular salary found
+forecast.due_before_salary = Due before salary
+forecast.due_next_month = Due in the next month
+forecast.payments =
+  .input {$count :integer}
+  .match $count
+  one {{1 payment}}
+  * {{{$count} payments}}
+forecast.end = On {$date :date}
+forecast.overdraw = {$account} goes below zero on {$date :date}
+forecast.overdraw_body = Lowest {$amount :currency} on {$date :date}, after {$items}.
+forecast.upcoming = Upcoming
+forecast.no_series = No regular payments found yet. They show up after three of the same.
+forecast.cadence.weekly = Weekly
+forecast.cadence.monthly = Monthly
+forecast.cadence.quarterly = Quarterly
+forecast.cadence.yearly = Yearly
+forecast.basis = {$cadence} since {$since :date}, usually {$typical :currency}, last {$last :currency}.
+forecast.past_payments = Past payments
+forecast.leave_out = Leave out
+forecast.include = Include
+forecast.household_transfer = Household transfer
+forecast.what_if = What if
+forecast.add_one_off = Add a one-off
+forecast.follow_budgets = Keep to my budgets
+forecast.reset = Reset
+forecast.difference = Lowest point {$lowest}, end {$end} compared with now.
+forecast.set_aside = Set aside for goals
+forecast.assumptions = Assumptions
+forecast.a.usual = Usual spending {$amount :currency} a month: the average of {$from :date} to {$to :date}, without the payments above.
+forecast.a.stale = Your accounts are imported up to {$date :date}, so later payments count as still due.
+forecast.a.stopped = {$name} not seen since {$date :date}, so it's left out.
+forecast.a.other_currency = Left out for their currency: {$accounts}.
+forecast.a.short =
+  .input {$days :integer}
+  .match $days
+  one {{Usual spending is based on only 1 day.}}
+  * {{Usual spending is based on only {$days} days.}}
+forecast.a.no_history = No spending history yet, so none is assumed.
+forecast.a.no_income = No regular income found, so none is assumed.
+forecast.a.cards = Card purchases reach your cash when the card bill is paid.
+forecast.money_out = Money out
+forecast.money_in = Money in
+forecast.overdraw_spending = Lowest {$amount :currency} on {$date :date}, from usual spending.
+action.see_forecast = See forecast
+forecast.legend_projected = Projected balance
+forecast.legend_range = 80% range
+forecast.range_note = 8 in 10 past forecasts landed inside the band.
+forecast.chance = Chance above zero
+forecast.based_on =
+  .input {$count :integer}
+  .match $count
+  one {{from 1 past forecast}}
+  * {{from {$count} past forecasts}}
+forecast.a.range = The range comes from {$count} past forecasts since {$date :date}, compared with what happened.
+forecast.a.no_range = There isn't enough history for a range yet: it comes from comparing past forecasts with what happened.
+forecast.a.seasonal = Usual spending in {$month} is adjusted {$percent}, from how {$last} went.

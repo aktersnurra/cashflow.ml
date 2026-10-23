@@ -97,6 +97,53 @@ let test_categories_recurring_and_budgets () =
       Alcotest.(check string) "status" "on_pace" (str [ "status" ] line)
   | other -> Alcotest.failf "expected one budget line, got %s" (Yojson.Safe.to_string other)
 
+(* Regular visits to the same café are not a subscription: the amounts vary too much. *)
+let test_irregular_spending_is_not_recurring () =
+  let service, alice, groceries = scenario () in
+  let checking = account_named service alice "Checking" in
+  List.iteri
+    (fun i (on, value) ->
+      let e = entry (Printf.sprintf "cafe %d" i) ~from_account:checking ~to_account:groceries.account.id value in
+      ignore (ok (Service.add_entry service alice { e with value_date = date on; memo = { e.memo with counterparty = Some "Espresso House" } })))
+    [ ("2026-07-05", 65_00); ("2026-08-04", 410_00); ("2026-09-06", 120_00); ("2026-10-05", 300_00) ];
+  match field [ "payments" ] (query service alice "recurring_payments" []) with
+  | `List [ only ] -> Alcotest.(check string) "only the subscription" "Spotify AB" (str [ "merchant" ] only)
+  | other -> Alcotest.failf "expected only spotify, got %s" (Yojson.Safe.to_string other)
+
+
+(* The forecast query: Spotify is charged on the 2nd of every month, so it repeats. *)
+let test_forecast_query () =
+  let service, alice, _ = scenario () in
+  let forecast args = query service alice "forecast" args in
+  let f = forecast [] in
+  Alcotest.(check string) "today" "2026-10-21" (str [ "today" ] f);
+  Alcotest.(check string) "three months ahead by default" "2027-01-21" (str [ "horizon_end" ] f);
+  Alcotest.(check string) "no what-if" "null" (str [ "scenario" ] f);
+  let items json = match field [ "items" ] json with `List items -> items | _ -> [] in
+  let spotify = List.filter (fun i -> str [ "id" ] i = "bill:spotify ab") (items f) in
+  Alcotest.(check (list string)) "every month" [ "2026-11-02"; "2026-12-02"; "2027-01-02" ] (List.map (str [ "date" ]) spotify);
+  let first = List.hd spotify in
+  Alcotest.(check string) "kind" "bill" (str [ "kind" ] first);
+  Alcotest.(check string) "amount" "-119.00" (str [ "amount" ] first);
+  Alcotest.(check string) "account" "Checking" (str [ "account"; "name" ] first);
+  Alcotest.(check string) "category" "Subscriptions" (str [ "category"; "name" ] first);
+  Alcotest.(check string) "basis" "monthly 4 2026-07-02" (String.concat " " [ str [ "basis"; "cadence" ] first; str [ "basis"; "occurrences" ] first; str [ "basis"; "since" ] first ]);
+  Alcotest.(check bool) "says no income was found" true
+    (match field [ "assumptions" ] f with `List a -> List.exists (fun a -> str [ "kind" ] a = "no_income_detected") a | _ -> false);
+  Alcotest.(check string) "too little history for a range" "[] null" (str [ "range" ] f ^ " " ^ str [ "chance_positive" ] f);
+  Alcotest.(check bool) "and it says so" true
+    (match field [ "assumptions" ] f with `List a -> List.exists (fun a -> str [ "kind" ] a = "no_range_yet") a | _ -> false);
+  Alcotest.(check (list string)) "stable ids" (List.map (str [ "id" ]) (items f)) (List.map (str [ "id" ]) (items (forecast [])));
+  let last key json = match field [ key ] json with `List points -> str [ "cash" ] (List.nth points (List.length points - 1)) | _ -> Alcotest.fail key in
+  let minor text = Option.get (Json.parse_decimal ~scale:2 text) in
+  let left_out = forecast [ ("scenario", `Assoc [ ("leave_out", `List [ `String "bill:spotify ab" ]) ]) ] in
+  Alcotest.(check int64) "without Spotify" (Int64.add (minor (last "baseline" left_out)) 357_00L) (minor (last "scenario" left_out));
+  let refused args = match Query.execute service alice (Option.get (Query.find "forecast")) args with Error (`Invalid m) -> m | _ -> Alcotest.fail "expected a refusal" in
+  Alcotest.(check string) "horizon" "cycles must be 1, 3 or 6" (refused [ ("cycles", `Int 2) ]);
+  Alcotest.(check string) "amount" "amount must be a decimal like 1240.50"
+    (refused [ ("scenario", `Assoc [ ("one_off", `List [ `Assoc [ ("date", `String "2026-11-01"); ("amount", `String "12.345") ] ]) ]) ]);
+  Alcotest.(check string) "shape" "scenario.leave_out must be a list of series ids" (refused [ ("scenario", `Assoc [ ("leave_out", `String "x") ]) ])
+
 let test_contribution_plan () =
   let service, alice, _ = scenario () in
   let bob = sign_in service "bob" in
@@ -342,7 +389,8 @@ let test_cashflow_query_boundary () =
     let scripted = W.Effects.run { W.Effects.handle = (fun (type a) (op : a W.Effect_ops.t) : a -> match op with
       | Now -> now
       | Resolve_currency code -> Result.map_error (fun _ -> W.Reporting_error.Unknown_currency code) (Service.currency service code)
-      | Load_cashflow _ -> Ok facts) } (fun () -> W.Reporting.cashflow_summary ~access:alice ~scope ~cycles:2 ()) in
+      | Load_cashflow _ -> Ok facts
+      | Load_forecast _ -> Alcotest.fail "no forecast here") } (fun () -> W.Reporting.cashflow_summary ~access:alice ~scope ~cycles:2 ()) in
     let scripted = match scripted with Ok report -> report | Error _ -> Alcotest.fail "scripted report failed" in
     Alcotest.(check string) "live/scripted parity" (Yojson.Safe.to_string expected)
       (Yojson.Safe.to_string (Query.cashflow_summary.encode legacy scripted.cycles));
@@ -392,6 +440,8 @@ let () =
           Alcotest.test_case "cashflow query boundary" `Quick test_cashflow_query_boundary;
           Alcotest.test_case "cashflow by scope" `Quick test_cashflow_by_scope;
           Alcotest.test_case "categories, recurring and budgets" `Quick test_categories_recurring_and_budgets;
+          Alcotest.test_case "irregular spending is not recurring" `Quick test_irregular_spending_is_not_recurring;
+          Alcotest.test_case "forecast" `Quick test_forecast_query;
           Alcotest.test_case "contribution plan" `Quick test_contribution_plan;
           Alcotest.test_case "net worth with a loan" `Quick test_net_worth_with_a_loan;
           Alcotest.test_case "goal report currency" `Quick test_goal_report_currency;

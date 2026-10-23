@@ -16,10 +16,12 @@ type filter = {
   text : string option;  (** matched against description and counterparty *)
   tag : string option;
   code : Transfer.code option;
+  without_triage : bool;  (** leave out the transfers inbox triage posted, before the limit counts *)
   limit : int;
 }
 
-let default_filter = { from_date = None; to_date = None; account_id = None; text = None; tag = None; code = None; limit = 100 }
+let default_filter =
+  { from_date = None; to_date = None; account_id = None; text = None; tag = None; code = None; without_triage = false; limit = 100 }
 let max_limit = 500
 
 (* ?1 user id, ?2 household id or ''. *)
@@ -38,9 +40,10 @@ let filtered =
       AND (?6 IS NULL OR t.description LIKE '%' || ?6 || '%' OR t.counterparty LIKE '%' || ?6 || '%') \
       AND (?7 IS NULL OR EXISTS (SELECT 1 FROM transfer_tags g WHERE g.transfer_id = t.id AND g.tag = ?7)) \
       AND (?8 IS NULL OR t.code = ?8) \
-      ORDER BY t.value_date DESC, t.seq DESC LIMIT ?9")
+      AND (?9 = 0 OR NOT EXISTS (SELECT 1 FROM triage_transfers x WHERE x.transfer_id = t.id)) \
+      ORDER BY t.value_date DESC, t.seq DESC LIMIT ?10")
     Codec.(text @-> text @-> nullable date @-> nullable date @-> nullable account_id @-> nullable text @-> nullable text
-           @-> nullable transfer_code @-> int @-> nil)
+           @-> nullable transfer_code @-> bool @-> int @-> nil)
     (many Store_sqlite.transfer_row)
 
 let scope_params access =
@@ -50,7 +53,7 @@ let scope_params access =
 let run_filter db access filter =
   let user_id, household_id = scope_params access in
   run db filtered user_id household_id filter.from_date filter.to_date filter.account_id filter.text filter.tag filter.code
-    (max 1 (min max_limit filter.limit))
+    filter.without_triage (max 1 (min max_limit filter.limit))
 
 (* Every visible posted or pending transfer in a date range, oldest first, for analytics. *)
 let in_range =

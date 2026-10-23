@@ -8,7 +8,8 @@ open Js_of_ocaml
 
 type picker = No_picker | Category of string | Share of string | Pair of J.t option
 
-let page ~(ctx : Ctx.t) graph =
+(* [embedded] leaves out the page title, for the Needs review view of Transactions. *)
+let page ?(embedded = false) ~(ctx : Ctx.t) graph =
   let inbox = Remote.load ~name:"list_inbox" ~args:(Bonsai.return (`Assoc [ ("limit", `Int 200) ])) ~ctx graph in
   let accounts = Remote.load ~name:"list_accounts" ~ctx graph in
   let selected, set_selected = Bonsai.state 0 graph in
@@ -154,8 +155,10 @@ let page ~(ctx : Ctx.t) graph =
   in
   Vdom.Node.div
     ~attrs:[ Vdom.Attr.Global_listeners.keydown on_key ]
-    [ Ui.page ~title:(Msg.inbox_title locale)
-        [ Remote.view ~locale inbox ~f:(fun _ ->
-              if count = 0 then Ui.empty (Msg.inbox_empty locale)
-              else Ui.div [ Ui.div ~cls:"hint kbd-only" [ Ui.text (Msg.inbox_keys locale) ]; Ui.div ~cls:"list" (List.mapi items ~f:row) ]) ];
+    [ (let body =
+         [ Remote.view ~locale inbox ~f:(fun _ ->
+               if count = 0 then Ui.empty (Msg.inbox_empty locale)
+               else Ui.div [ Ui.div ~cls:"hint kbd-only" [ Ui.text (Msg.inbox_keys locale) ]; Ui.div ~cls:"list" (List.mapi items ~f:row) ]) ]
+       in
+       if embedded then Ui.div body else Ui.page ~title:(Msg.inbox_title locale) body);
       overlay ]

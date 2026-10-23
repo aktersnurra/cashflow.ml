@@ -6,3 +6,5 @@ _opam/
 .pi/
 *.install
 .DS_Store
+docs/
+
