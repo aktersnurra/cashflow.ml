@@ -218,3 +218,9 @@
  (enabled_if (= %{context_name} default))
  (modules test_advisor_tools advisor_test_support test_service_support)
  (libraries alcotest cashflow_core cashflow_io cashflow_workflow yojson))
+
+(test
+ (name test_advisor_provider)
+ (enabled_if (= %{context_name} default))
+ (modules test_advisor_provider)
+ (libraries alcotest cashflow_io cashflow_core yojson eio eio_main))
