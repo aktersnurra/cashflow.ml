@@ -174,7 +174,7 @@ let concurrent_and_consent () =
   let status = token_of (function C.Get_status t -> Some t | _ -> None) cs in
   let s, cs = C.reduce s (C.Load_history 0) in
   let history = token_of (function C.List_conversations (t, _, _) -> Some t | _ -> None) cs in
-  let s = apply s (C.Status (status, Ok { available = true; consent = true })) in
+  let s = apply s (C.Status (status, Ok { available = true; consent = true; household = None })) in
   let s = apply s (C.History (history, Ok [])) in
   Alcotest.(check bool) "concurrent request lanes coexist" true ((C.view s).status <> None);
   let s, cs = C.reduce s (C.Consent (true, Some "explicit-household")) in
@@ -308,7 +308,7 @@ let session_and_owned_deletion () =
   Alcotest.(check string) "401 blocks draft" "" (C.view lost).draft;
   let fresh, cs = C.reduce lost C.Activate in
   let status = token_of (function C.Get_status t -> Some t | _ -> None) cs in
-  let fresh = apply fresh (C.Status (status, Ok { available = true; consent = true })) in
+  let fresh = apply fresh (C.Status (status, Ok { available = true; consent = true; household = None })) in
   let fresh = apply fresh (C.Deleted (token, Error C.Session_lost)) in
   Alcotest.(check bool) "stale401 cannot deactivate new epoch" true ((C.view fresh).status <> None);
   let s, _ = opened () in
@@ -359,7 +359,7 @@ let delayed_readiness () =
           Alcotest.(check bool) "old-session readiness cannot return" true ((C.view s).status = None);
           let s = apply s (C.Status (current, Ok status)) in
           Alcotest.(check bool) "new-session readiness still applies" true ((C.view s).status = Some status))
-        [ { available = false; consent = true }; { available = true; consent = false } ])
+        [ { available = false; consent = true; household = None }; { available = true; consent = false; household = None } ])
     [
       (C.Open_empty (W.Personal, snapshot.currency, "en"), false);
       (C.Open_finding ("finding", W.Personal, snapshot.currency, "en"), false);
@@ -509,6 +509,59 @@ let failed_conflict_recovery () =
         [ C.Transport; C.Rejected ])
     [ false; true ]
 
+let conversation_drafts () =
+  let s, _ = opened () in
+  let s = apply s (C.Draft_changed "personal private draft") in
+  let s = apply s (C.Open_conversation "other") in
+  Alcotest.(check string) "new conversation never copies draft" "" (C.view s).draft;
+  let s = apply s (C.Draft_changed "other draft") in
+  let s = apply s (C.Open_conversation "c") in
+  Alcotest.(check string) "conversation draft restored" "personal private draft" (C.view s).draft;
+  let s = apply s (C.Open_empty (W.Household "h", snapshot.currency, "en")) in
+  Alcotest.(check string) "new scope never copies draft" "" (C.view s).draft;
+  let s = apply s C.Auth_lost |> fun s -> apply s C.Activate |> fun s -> apply s (C.Open_conversation "c") in
+  Alcotest.(check string) "auth loss forgets drafts" "" (C.view s).draft
+
+let denied_ownership_handoff () =
+  let s, _ = opened () in
+  let s = apply s (C.Draft_changed "private draft") in
+  let s, commands = C.reduce s C.Reconnect in
+  let tok = List.find_map (function C.Fetch_snapshot (tok, _) -> Some tok | _ -> None) commands |> Option.get in
+  let s = apply s (C.Snapshot (tok, Error C.Access_lost)) in
+  let v = C.view s in
+  Alcotest.(check bool) "denial clears source transcript and draft" true (v.snapshot = None && v.draft = "");
+  Alcotest.(check bool) "only confirmed opaque ID retained" true (v.access_denied && v.denied_conversation = Some "c");
+  let _, commands = C.reduce s (C.Delete_owned "c") in
+  Alcotest.(check bool) "ownership delete never refetches denied contents" true
+    (List.exists (function C.Delete_conversation (_, "c") -> true | _ -> false) commands
+     && not (List.exists (function C.Fetch_snapshot _ -> true | _ -> false) commands));
+  let s = apply s (C.Open_empty (W.Personal, snapshot.currency, "en")) in
+  Alcotest.(check bool) "selection change invalidates denied handoff" true ((C.view s).denied_conversation = None);
+  let s = apply s (C.Open_conversation "c") in
+  Alcotest.(check string) "denial forgets old conversation drafts" "" (C.view s).draft
+
+let first_acceptance_and_revocation () =
+  let s = apply C.empty C.Activate |> fun s -> apply s (C.Open_empty (W.Personal, snapshot.currency, "en"))
+    |> fun s -> apply s (C.Draft_changed "new conversation") in
+  let s, commands = C.reduce s (C.Submit_draft "first") in
+  let token = token_of (function C.Post_turn (token, _) -> Some token | _ -> None) commands in
+  let s = apply s (C.Accepted (token, Ok {W.ids; accepted_version="1"; idempotent_repeat=false})) in
+  Alcotest.(check bool) "first acceptance is distinct from selection" true ((C.view s).first_acceptance = Some "c");
+  let s = apply s (C.Open_conversation "history") in
+  Alcotest.(check bool) "explicit history never signals first acceptance" true ((C.view s).first_acceptance = None);
+  let s, _ = opened () in
+  let s, commands = C.reduce s C.Refresh_status in
+  let token = token_of (function C.Get_status token -> Some token | _ -> None) commands in
+  let _, commands = C.reduce s (C.Status (token, Ok {C.available=true; consent=false; household=None})) in
+  Alcotest.(check bool) "revoked readiness rechecks actual snapshot authority" true
+    (List.exists (function C.Fetch_snapshot (_, "c") -> true | _ -> false) commands
+     && not (List.exists (function C.Post_turn _ | C.Retry_turn _ -> true | _ -> false) commands));
+  let s, commands = C.reduce s (C.Consent (false, None)) in
+  let token = token_of (function C.Set_consent (token, _, _) -> Some token | _ -> None) commands in
+  let s = apply s (C.Consent_result (token, Ok ())) in
+  Alcotest.(check bool) "explicit opt-out clears private view and preserves only delete handoff" true
+    ((C.view s).snapshot = None && (C.view s).access_denied && (C.view s).denied_conversation = Some "c")
+
 let () =
   Alcotest.run "advisor client state"
     [
@@ -516,6 +569,9 @@ let () =
         List.map
           (fun (name, f) -> Alcotest.test_case name `Quick f)
           [
+            ("first acceptance and revocation", first_acceptance_and_revocation);
+            ("denied ownership handoff", denied_ownership_handoff);
+            ("per conversation memory-only drafts", conversation_drafts);
             ("failed conflict recovery", failed_conflict_recovery);
             ("definitive POST rejection", definitive_post_rejection);
             ("delayed readiness", delayed_readiness);

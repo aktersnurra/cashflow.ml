@@ -11,8 +11,9 @@ type controller = {
   open_latest : unit Effect.t;
   leave_surface : unit Effect.t;
   stop : unit Effect.t;
+  invalidate : unit Effect.t; (** Synchronously closes resources before queued private-view clearing. *)
 }
 
 val component : ctx:Ctx.t -> Bonsai.graph -> controller Bonsai.t
-(** Mount once in the signed-in shell, above the route switch. Surface leave is not cleanup. Deactivation invalidates
-    all callbacks; Task11 must also dispatch Auth_lost on session replacement. *)
+(** Mount once in the signed-in shell, above the route switch. Surface leave is not cleanup.
+    Deactivation invalidates callbacks; the shell must run [invalidate] before replacing a session identity. *)

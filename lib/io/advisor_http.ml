@@ -182,7 +182,15 @@ let route t req p path query parsed =
       result (fun () ->
           read t p (fun user store ->
               let* consent = Advisor_store.consent store (User user.id) in
-              Ok (json 200 (`Assoc [ ("available", `Bool t.available); ("consent", `Bool consent) ]))))
+              let* access = X.access t.service p in
+              let* household = match Cashflow_core.Access.household access with
+                | None -> Ok `Null
+                | Some h ->
+                    let* enabled = Advisor_store.consent store (Household h.id) in
+                    Ok (`Assoc [ ("household_id", `String (Household_id.to_string h.id));
+                      ("enabled", `Bool enabled); ("can_manage", `Bool (Cashflow_core.Access.is_admin access)) ])
+              in
+              Ok (json 200 (`Assoc [ ("available", `Bool t.available); ("consent", `Bool consent); ("household", household) ]))))
   | POST, [ "consent" ] ->
       result (fun () ->
           let* fields = object_fields [ "enabled"; "household_id" ] (Option.get parsed) in

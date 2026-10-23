@@ -17,7 +17,8 @@ type token = { epoch : int; generation : int }
 
 (* Rejected is an uncertain/protocol response; only Not_accepted proves a write was refused. *)
 type failure = Session_lost | Access_lost | Transport | Rejected | Not_accepted of W.error_code
-type status = { available : bool; consent : bool }
+type household_status = { household_id : string; enabled : bool; can_manage : bool }
+type status = { available : bool; consent : bool; household : household_status option }
 type metadata = { conversation_id : string; version : string; updated_at : string }
 type connection = Disconnected | Connecting | Connected | Reconnecting
 type pending = Submit of W.submit | Retry of W.retry
@@ -55,6 +56,7 @@ type action =
   | Delete
   | Delete_owned of string
   | Consent of bool * string option
+  | Refresh_status
   | Load_history of int
   | Accepted of token * (W.accepted, failure) result
   | Snapshot of token * (W.snapshot, failure) result
@@ -73,6 +75,12 @@ type action =
   | Follow of bool
 
 type view = {
+  selected_conversation : string option;
+  first_acceptance : string option;
+  context_scope : W.scope option;
+  authenticated : bool;
+  access_denied : bool;
+  denied_conversation : string option;
   snapshot : W.snapshot option;
   draft : string;
   connection : connection;
@@ -99,6 +107,7 @@ type t = {
   delete_target : string option;
   status_request : token option;
   consent_request : token option;
+  consent_enabling : bool;
   history_request : token option;
   suspended : token option;
   stream : (token * W.identities) option;
@@ -107,10 +116,17 @@ type t = {
   latest : bool;
   selected : string option;
   context : (string option * W.scope * W.currency * string) option;
+  drafts : (string * string) list;
 }
 
 let blank =
   {
+    selected_conversation = None;
+    first_acceptance = None;
+    context_scope = None;
+    authenticated = false;
+    access_denied = false;
+    denied_conversation = None;
     snapshot = None;
     draft = "";
     connection = Disconnected;
@@ -138,6 +154,7 @@ let empty =
     delete_target = None;
     status_request = None;
     consent_request = None;
+    consent_enabling = false;
     history_request = None;
     suspended = None;
     stream = None;
@@ -146,9 +163,10 @@ let empty =
     latest = false;
     selected = None;
     context = None;
+    drafts = [];
   }
 
-let view t = { t.v with can_reconnect = t.active && t.selected <> None && t.stream = None && t.snapshot_request = None }
+let view t = { t.v with authenticated = t.active; context_scope = (match t.v.snapshot, t.context with Some s, _ -> Some s.scope | _, Some (_, s, _, _) -> Some s | _ -> None); selected_conversation = t.selected; can_reconnect = t.active && t.selected <> None && t.stream = None && t.snapshot_request = None }
 
 let fresh t =
   let generation = t.serial + 1 in
@@ -241,7 +259,10 @@ let notice t message = ({ t with v = { t.v with notice = message } }, [ Announce
 
 let failure t = function
   | Session_lost -> ({ (clear t) with active = false }, clear_commands)
-  | Access_lost -> (clear t, clear_commands)
+  | Access_lost ->
+      let denied_conversation = Option.map (fun (s : W.snapshot) -> s.conversation_id) t.v.snapshot in
+      let t = clear t in
+      ({t with v = {t.v with access_denied = true; denied_conversation}}, clear_commands)
   | Transport -> notice t Interrupted
   | Rejected | Not_accepted _ -> notice t Request_failed
 
@@ -252,6 +273,11 @@ let request_pending t =
       let t, tok = fresh t in
       let t = { t with write_request = Some tok } in
       (t, [ (match p with Submit p -> Post_turn (tok, p) | Retry p -> Retry_turn (tok, p)) ])
+
+let remember_draft t =
+  match t.selected with
+  | None -> t
+  | Some id -> { t with drafts = (id, t.v.draft) :: List.remove_assoc id t.drafts }
 
 let reduce t action =
   match action with
@@ -268,6 +294,8 @@ let reduce t action =
   | Open_conversation id when t.active ->
       if t.selected = Some id && (t.snapshot_request <> None || t.v.snapshot <> None) then (t, [])
       else
+        let t = remember_draft t in
+        let draft = Option.value (List.assoc_opt id t.drafts) ~default:"" in
         let t =
           {
             t with
@@ -282,23 +310,26 @@ let reduce t action =
             stop_request = None;
             delete_request = None;
             history_request = None;
-            v = { blank with draft = t.v.draft; status = t.v.status };
+            v = { blank with draft; status = t.v.status };
           }
         in
         selection_status (fetch t id)
   | Open_empty (scope, currency, locale) when t.active ->
-      let status = t.v.status in
-      let t = clear t in
+      let t = remember_draft t in
+      let status = t.v.status and drafts = t.drafts in
+      let t = { (clear t) with drafts } in
       selection_status
         ({ t with context = Some (None, scope, currency, locale); v = { t.v with status } }, clear_commands)
   | Open_finding (key, scope, currency, locale) when t.active ->
-      let status = t.v.status in
-      let t = clear t in
+      let t = remember_draft t in
+      let status = t.v.status and drafts = t.drafts in
+      let t = { (clear t) with drafts } in
       selection_status
         ({ t with context = Some (Some key, scope, currency, locale); v = { t.v with status } }, clear_commands)
   | Open_latest when t.active ->
       let t, tok = fresh t in
       ({ t with latest = true; history_request = Some tok }, [ List_conversations (tok, 1, 0) ])
+  | Refresh_status when t.active -> selection_status (t, [])
   | Load_history offset when t.active && offset >= 0 ->
       let t, tok = fresh t in
       ({ t with latest = false; history_request = Some tok }, [ List_conversations (tok, 20, offset) ])
@@ -350,13 +381,16 @@ let reduce t action =
           else (t, commands)
       | Error e -> failure t e
       | Ok a ->
+          let first_acceptance = match t.v.pending with
+            | Some (Submit {conversation_id = None; _}) -> Some a.ids.conversation_id
+            | _ -> t.v.first_acceptance in
           let draft = match t.v.pending with Some (Submit p) when p.user_text = t.v.draft -> "" | _ -> t.v.draft in
           let t =
             {
               t with
               selected = Some a.ids.conversation_id;
               stop_request = None;
-              v = { t.v with pending = None; draft; stopping = false };
+              v = { t.v with pending = None; draft; stopping = false; first_acceptance };
             }
           in
           fetch t a.ids.conversation_id)
@@ -481,21 +515,35 @@ let reduce t action =
       match result with
       | Error Access_lost when t.selected <> target -> notice t Request_failed
       | Error e -> failure t e
-      | Ok () -> if t.selected = target then (clear t, clear_commands) else (t, []))
+      | Ok () -> if t.selected = target || t.v.denied_conversation = target then (clear t, clear_commands) else (t, []))
   | Consent (enabled, household) when t.active ->
       let t, tok = fresh t in
-      ({ t with consent_request = Some tok }, [ Set_consent (tok, enabled, household) ])
+      ({ t with consent_request = Some tok; consent_enabling = enabled }, [ Set_consent (tok, enabled, household) ])
   | Consent_result (tok, result) when current t t.consent_request tok -> (
       match result with
       | Error e -> failure { t with consent_request = None } e
       | Ok () ->
+          let status = t.v.status in
+          let context = if t.consent_enabling then t.context else None in
+          let access_denied = not t.consent_enabling in
+          let denied_conversation = if access_denied then Option.map (fun (s : W.snapshot) -> s.conversation_id) t.v.snapshot else None in
           let t = clear t in
           let t, tok = fresh t in
-          ({ t with status_request = Some tok }, clear_commands @ [ Get_status tok ]))
+          ({ t with context; status_request = Some tok; v = {t.v with status; access_denied; denied_conversation} }, clear_commands @ [ Get_status tok ]))
   | Status (tok, result) when current t t.status_request tok -> (
       match result with
       | Error e -> failure { t with status_request = None } e
-      | Ok status -> ({ t with status_request = None; v = { t.v with status = Some status } }, []))
+      | Ok status ->
+          let t = { t with status_request = None; v = { t.v with status = Some status } } in
+          (* Readiness never grants transcript authority. A revoked gate triggers the
+             existing authorized snapshot path, which clears contents on denial. *)
+          let recheck = match t.v.snapshot with
+            | None -> false
+            | Some s -> not status.consent || (match s.scope, status.household with
+                | W.Personal, _ -> false
+                | Household id, Some h -> not h.enabled || h.household_id <> id
+                | Household _, None -> true) in
+          if recheck then resync t else (t, []))
   | History (tok, result) when current t t.history_request tok -> (
       match result with
       | Error e -> failure { t with history_request = None } e
@@ -504,6 +552,8 @@ let reduce t action =
           let t = { t with latest = false; history_request = None; v = { t.v with history } } in
           match (latest, history) with
           | true, h :: _ ->
+              let t = remember_draft t in
+              let draft = Option.value (List.assoc_opt h.conversation_id t.drafts) ~default:"" in
               selection_status
                 (fetch
                    {
@@ -517,12 +567,13 @@ let reduce t action =
                      recovery_required = false;
                      context = None;
                      suspended = None;
-                     v = { blank with draft = t.v.draft; status = t.v.status; history };
+                     v = { blank with draft; status = t.v.status; history };
                    }
                    h.conversation_id)
           | true, [] ->
+              let context = t.context and status = t.v.status and drafts = t.drafts in
               let t = clear t in
-              selection_status ({ t with v = { t.v with notice = Choose_context } }, clear_commands)
+              selection_status ({ t with context; drafts; v = { t.v with status; notice = Choose_context } }, clear_commands)
           | _ -> (t, [])))
   | _ -> (t, [])
 

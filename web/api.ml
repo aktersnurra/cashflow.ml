@@ -25,14 +25,17 @@ let error_message body =
 
 type session = Signed_in of json | Signed_out | Unreachable of string
 
-let session () =
+let accept_session json =
+  match json with
+  | `Assoc fields -> (match List.Assoc.find fields ~equal:String.equal "csrf_token" with Some (`String t) -> csrf_token := t | _ -> ())
+  | _ -> ()
+
+let session ?(publish_csrf = true) () =
   match%map http ~meth:`Get ~url:"/api/session" () with
   | Ok (200, body) -> (
       match parse body with
       | Some json ->
-          (match json with
-          | `Assoc fields -> (match List.Assoc.find fields ~equal:String.equal "csrf_token" with Some (`String t) -> csrf_token := t | _ -> ())
-          | _ -> ());
+          if publish_csrf then accept_session json;
           Signed_in json
       | None -> Unreachable "the server sent something unexpected")
   | Ok (401, _) -> Signed_out
@@ -62,8 +65,9 @@ let command_effect = Bonsai_web.Effect.of_deferred_fun (fun (name, args) -> comm
 let run name args = command_effect (name, args)
 
 let sign_out () =
-  let%map _ = http ~meth:`Post ~url:"/auth/logout" ~body:"{}" () in
-  ()
+  match%map http ~meth:`Post ~url:"/auth/logout" ~body:"{}" () with
+  | Ok (200, _) -> true
+  | _ -> false
 
 (* Idempotency keys for writes made from the UI: random, so every click is one change, and a
    retry of the same request (the same key) is safe. *)

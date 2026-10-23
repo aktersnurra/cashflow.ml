@@ -78,7 +78,17 @@ let status () =
   request "status"
     (json (fun j ->
          match (bool (field "available" j), bool (field "consent" j)) with
-         | Some available, Some consent -> Some { C.available; consent }
+         | Some available, Some consent ->
+             let household = match field "household" j with
+               | None | Some `Null -> Some None
+               | Some (`Assoc fields as h) when List.length fields = 3 ->
+                   (match str (field "household_id" h), bool (field "enabled" h), bool (field "can_manage" h) with
+                    | Some household_id, Some enabled, Some can_manage
+                      when List.equal Int.equal (List.map (String.split household_id ~on:'-') ~f:String.length) [8;4;4;4;12]
+                        && List.for_all (String.split household_id ~on:'-') ~f:(String.for_all ~f:Char.is_hex_digit) -> Some (Some { C.household_id; enabled; can_manage })
+                    | _ -> None)
+               | _ -> None in
+             Option.map household ~f:(fun household -> { C.available; consent; household })
          | _ -> None))
 
 let history ~limit ~offset =

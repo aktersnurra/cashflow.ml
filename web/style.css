@@ -468,3 +468,25 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
   .logo-overlay { z-index: 40; }
   .sheet.logo-sheet { max-height: calc(100dvh - 32px); overflow-y: auto; padding-bottom: calc(18px + env(safe-area-inset-bottom)); }
 }
+
+/* A finding keeps its place; the conversation grows below its existing actions. */
+.shell [hidden] { display: none !important; }
+.finding-reply { margin: 8px 0 16px; }
+.advisor-outlet { min-width: 0; margin: 16px 0 24px; border-top: 1px solid var(--line); padding-top: 16px; overflow-wrap: anywhere; }
+.advisor-tools { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: start; gap: 12px; margin-bottom: 12px; }
+.advisor-tools details { max-width: 100%; }
+.advisor-tools details[open] { display: grid; gap: 8px; }
+.advisor-tools summary { cursor: pointer; }
+.advisor-tools select { max-width: 100%; }
+.advisor-consent { max-width: 65ch; }
+.advisor-conversation { max-height: 65vh; overflow-y: auto; overscroll-behavior: contain; min-width: 0; padding: 4px; }
+.advisor-conversation p { white-space: pre-wrap; }
+.advisor-conversation textarea { display: block; width: 100%; box-sizing: border-box; min-height: 90px; resize: vertical; margin: 16px 0 10px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: inherit; font: inherit; }
+.advisor-conversation button { margin: 0 8px 8px 0; }
+.advisor-conversation [role="status"]:empty { display: none; }
+.advisor-conversation :focus-visible, .advisor-tools :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+@media (max-width: 600px) { .advisor-tools { flex-direction: column; } }
+.advisor-mobile-link { display: none; }
+@media (max-width: 760px) { .advisor-mobile-link { display: inline-flex; } }
+.advisor-user-message { margin-left: auto; max-width: 85%; padding: 10px 14px; border-radius: 8px; background: var(--surface); }
+.advisor-answer { margin: 16px 0; }

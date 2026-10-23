@@ -64,10 +64,10 @@ let run_status locale = function
   | Cancel_requested -> Msg.advisor_cancel_requested locale
   | Queued | Running _ -> Msg.advisor_running locale
 
-let render ~locale ~(view : C.view) ~dispatch =
+let render_body ~show_source ~locale ~(view : C.view) ~dispatch =
   let text = Vdom.Node.text in
-  let button label a =
-    Vdom.Node.button ~attrs:[ Vdom.Attr.type_ "button"; Vdom.Attr.on_click (fun _ -> dispatch a) ] [ text label ]
+  let button ?(kind = "secondary") label a =
+    Vdom.Node.button ~attrs:[ Vdom.Attr.class_ ("button " ^ kind); Vdom.Attr.type_ "button"; Vdom.Attr.on_click (fun _ -> dispatch a) ] [ text label ]
   in
   let segment = function
     | W.Text_segment d ->
@@ -98,8 +98,9 @@ let render ~locale ~(view : C.view) ~dispatch =
           @ List.map e.assumptions ~f:text)
   in
   let attempt (a : W.attempt) =
-    Vdom.Node.div ~key:a.ids.attempt_id
-      (List.map a.segments ~f:segment @ [ Vdom.Node.p [ text (run_status locale a.state) ] ])
+    let foreground = match view.snapshot with Some s -> Option.equal String.equal s.active_run (Some a.ids.run_id) | None -> false in
+    Vdom.Node.div ~key:a.ids.attempt_id ~attrs:[Vdom.Attr.class_ "advisor-answer"]
+      (List.map a.segments ~f:segment @ if foreground then [] else [ Vdom.Node.p ~attrs:[Vdom.Attr.class_ "muted"] [ text (run_status locale a.state) ] ])
   in
   let turns =
     match view.snapshot with
@@ -107,7 +108,7 @@ let render ~locale ~(view : C.view) ~dispatch =
     | Some s ->
         List.map s.turns ~f:(fun (t : W.turn) ->
             Vdom.Node.div ~key:t.turn_id
-              (Vdom.Node.p ~key:t.user_message_id [ text t.user_text ] :: List.map t.attempts ~f:attempt))
+              (Vdom.Node.p ~key:t.user_message_id ~attrs:[Vdom.Attr.class_ "advisor-user-message"] [ text t.user_text ] :: List.map t.attempts ~f:attempt))
   in
   let retryable =
     match view.snapshot with
@@ -148,7 +149,8 @@ let render ~locale ~(view : C.view) ~dispatch =
       | Some s when not s.available -> [ Vdom.Node.p [ text (Msg.advisor_unavailable locale) ] ]
       | _ -> [])
     @ (match view.snapshot with
-      | Some { source_finding = Some f; _ } -> [ Vdom.Node.h2 [ text f.title ]; Vdom.Node.p [ text f.summary ] ]
+      | Some { source_finding = Some f; _ } when show_source -> [ Vdom.Node.h2 [ text f.title ]; Vdom.Node.p [ text f.summary ];
+          (if String.equal f.kind "shortfall" then Ui.muted (Msg.advisor_bills_estimate locale) else Vdom.Node.none) ]
       | _ -> [])
     @ turns
     @ [
@@ -160,7 +162,7 @@ let render ~locale ~(view : C.view) ~dispatch =
               Vdom.Attr.on_input (fun _ s -> dispatch (C.Draft_changed s));
             ]
           [];
-        button (Msg.advisor_send locale) (C.Submit_draft (Api.fresh_key "advisor"));
+        button ~kind:"primary" (Msg.advisor_send locale) (C.Submit_draft (Api.fresh_key "advisor"));
       ]
     @ (if
          view.can_reconnect
@@ -172,4 +174,33 @@ let render ~locale ~(view : C.view) ~dispatch =
        else [])
     @ (if Option.is_some view.pending then [ button (Msg.advisor_repeat locale) C.Repeat_pending ] else [])
     @ (if view.new_output then [ button (Msg.advisor_follow locale) (C.Follow true) ] else [])
-    @ if Option.is_some view.snapshot then [ button (Msg.advisor_delete locale) C.Delete ] else [])
+    @ if Option.is_some view.snapshot then
+      [Vdom.Node.button ~attrs:[Vdom.Attr.class_ "button secondary"; Vdom.Attr.type_ "button"; Vdom.Attr.on_click (fun _ ->
+        if Js.to_bool (Dom_html.window##confirm (Js.string (Msg.advisor_delete_confirm locale))) then dispatch C.Delete else Effect.Ignore)]
+        [text (Msg.advisor_delete locale)]] else [])
+
+let render ~locale ~view ~dispatch = render_body ~show_source:true ~locale ~view ~dispatch
+let render_inline ~locale ~view ~dispatch = render_body ~show_source:false ~locale ~view ~dispatch
+
+let consent ~locale ~(view : C.view) ~dispatch ~decline =
+  match view.status with
+  | None -> Ui.muted (Msg.advisor_choose_context locale)
+  | Some status when not status.available -> Ui.muted (Msg.advisor_unavailable locale)
+  | Some status ->
+      Ui.div ~cls:"advisor-consent"
+        [Ui.p (Msg.advisor_disclosure locale);
+         Ui.div ~cls:"actions"
+           (if status.consent then [Ui.button (Msg.advisor_disable locale) (dispatch (C.Consent (false, None)))]
+            else [Ui.button ~kind:"primary" (Msg.advisor_enable locale) (dispatch (C.Consent (true, None)));
+                  Ui.button (Msg.advisor_decline locale) decline])]
+
+let household_setting ~locale ~(view : C.view) ~dispatch =
+  match view.status with
+  | Some { household = Some h; _ } when h.can_manage ->
+      Ui.div ~cls:"panel"
+        [Ui.p (Msg.advisor_disclosure locale);
+         Vdom.Node.button ~attrs:[Vdom.Attr.type_ "button"; Vdom.Attr.class_ "button";
+           Vdom.Attr.create "role" "switch"; Vdom.Attr.create "aria-checked" (Bool.to_string h.enabled);
+           Vdom.Attr.on_click (fun _ -> dispatch (C.Consent (not h.enabled, Some h.household_id)))]
+           [Ui.text (if h.enabled then Msg.advisor_household_disable locale else Msg.advisor_household_enable locale)]]
+  | _ -> Vdom.Node.none

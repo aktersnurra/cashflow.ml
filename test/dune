@@ -191,8 +191,8 @@
 (executable
  (name advisor_fixture_server)
  (enabled_if (= %{context_name} default))
- (modules advisor_fixture_server)
- (libraries cashflow_advisor_protocol cashflow_core cashflow_io eio_main eio.unix httpun-eio gluten unix yojson ptime.clock.os mtime))
+ (modules advisor_fixture_server test_service_support)
+ (libraries alcotest cashflow_advisor_protocol cashflow_core cashflow_io eio_main eio.unix httpun-eio gluten unix yojson ptime.clock.os mtime))
 
 (test
  (name test_advisor_protocol)

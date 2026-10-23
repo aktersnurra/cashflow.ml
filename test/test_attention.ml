@@ -74,12 +74,20 @@ let test_unusual_spending () =
   post "ICA oct" ~from_account:checking ~to_account:groceries 1_000_00 "2026-10-01";
   Alcotest.(check bool) "as usual so far" false (List.mem "unusual_spend" (kinds service alice));
   post "ICA MAXI" ~from_account:checking ~to_account:groceries 1_500_00 "2026-10-10";
+  let command = List.find (fun (c : Cashflow_io.Commands.command) -> c.name = "get_attention_feed") Attention.commands in
+  ignore (ok_import (command.run service alice [ ("narrative", `Bool false) ]));
+  Alcotest.(check int) "deterministic command starts no narrative" 0 (List.length !prompts);
+  ignore (ok_import (command.run service alice []));
+  Alcotest.(check int) "omitted narrative preserves legacy generation" 1 (List.length !prompts);
   let json = Option.get (card service alice "unusual_spend") in
   Alcotest.(check string) "spent" "\"2500.00\"" (Yojson.Safe.to_string (field [ "data"; "spent" ] json));
   Alcotest.(check string) "usual" "\"1000.00\"" (Yojson.Safe.to_string (field [ "data"; "usual" ] json));
   Alcotest.(check string) "explained" "\"Mostly the 1 500 at ICA MAXI.\"" (Yojson.Safe.to_string (field [ "data"; "text" ] json));
   Alcotest.(check bool) "from this cycle's transactions" true (Str_compat.contains ~sub:"ICA MAXI" (List.hd !prompts));
   Alcotest.(check bool) "but no account names" false (Str_compat.contains ~sub:"Checking" (List.hd !prompts));
+  let command = List.find (fun (c : Cashflow_io.Commands.command) -> c.name = "get_attention_feed") Attention.commands in
+  ignore (ok_import (command.run service alice [ ("narrative", `Bool false) ]));
+  Alcotest.(check bool) "typed narrative flag" true (Result.is_error (command.run service alice [("narrative", `String "false")]));
   ignore (Attention.feed service alice);
   Alcotest.(check int) "written once" 1 (List.length !prompts);
   (* A budget takes over. *)

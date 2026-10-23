@@ -1,3 +1,5 @@
+(copy_files ../../web/remote.ml)
+(copy_files ../../web/ui.ml)
 (copy_files ../../web/advisor.ml)
 (copy_files ../../web/advisor_api.ml)
 (copy_files ../../web/advisor_view.ml)
@@ -13,5 +15,5 @@
  (name fixture)
  (enabled_if (= %{context_name} web))
  (modes js)
- (libraries bonsai.web async_js js_of_ocaml yojson cashflow_msg mf2_runtime cashflow_advisor_protocol cashflow_advisor_stream)
+ (libraries bonsai.web bonsai.feather_icon async_js js_of_ocaml yojson cashflow_msg mf2_runtime cashflow_advisor_protocol cashflow_advisor_stream)
  (preprocess (pps ppx_jane bonsai.ppx_bonsai js_of_ocaml-ppx)))

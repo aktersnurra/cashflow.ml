@@ -16,9 +16,11 @@ type controller = {
   open_latest : unit Effect.t;
   leave_surface : unit Effect.t;
   stop : unit Effect.t;
+  invalidate : unit Effect.t;
 }
 
 type resources = {
+  mutable invalidated : bool;
   mutable subscription : (C.token * T.subscription) option;
   mutable timer : (C.token * Dom_html.timeout_id_safe) option;
   mutable visibility : Dom.event_listener_id option;
@@ -162,6 +164,7 @@ let component ~ctx:_ graph =
     (* Allocated once per shell component instance, never at module scope. *)
     let r =
       {
+        invalidated = false;
         subscription = None;
         timer = None;
         visibility = None;
@@ -185,7 +188,9 @@ let component ~ctx:_ graph =
             resources.queued_events <- max 0 (resources.queued_events - 1);
             resources.queued_bytes <- max 0 (resources.queued_bytes - String.length (W.encode_event e))
         | _ -> ());
-        let state, commands = C.reduce state action in
+        let state, commands =
+          if resources.invalidated && not (Poly.equal action C.Auth_lost || Poly.equal action C.Deactivate)
+          then resources.current, [] else C.reduce state action in
         resources.current <- state;
         List.iter commands ~f:(fun command ->
             Bonsai.Apply_action_context.schedule_event context
@@ -236,4 +241,14 @@ let component ~ctx:_ graph =
     open_latest = dispatch C.Open_latest;
     leave_surface = dispatch C.Leave_surface;
     stop = dispatch C.Stop;
+    invalidate =
+      Effect.Many [Effect.of_thunk (fun () ->
+        resources.invalidated <- true;
+        resources.current <- fst (C.reduce resources.current C.Auth_lost);
+        Option.iter resources.subscription ~f:(fun (_, s) -> T.close s);
+        resources.subscription <- None;
+        Option.iter resources.timer ~f:(fun (_, id) -> Dom_html.clearTimeout id);
+        resources.timer <- None;
+        resources.visibility_source <- None);
+        dispatch C.Auth_lost];
   }

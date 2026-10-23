@@ -84,6 +84,8 @@ let admission () =
   fixture (fun _ service token calls req ->
       Alcotest.(check int) "missing cookie" 401 (status (req ~headers:[] "/api/advisor/status"));
       Alcotest.(check int) "status" 200 (status (req "/api/advisor/status"));
+      Alcotest.(check bool) "no membership readiness" true
+        (Yojson.Safe.Util.member "household" (Yojson.Safe.from_string (body (req "/api/advisor/status"))) = `Null);
       let expires () = (Option.get (Web_auth.inspect_session service ~now (Web_auth.session_ref token))).expires_at in
       Sql.run service.db Web_auth.touch_session now
         (Option.get (Ptime.add_span now (Ptime.Span.of_int_s 60)))
@@ -646,11 +648,58 @@ let stalled_delivery ~expiry () =
           Eio.Time.sleep env#clock 0.075;
           Alcotest.(check bool) "expiry cancels stalled flush within polling bound" true !finished))
 
+let household_readiness () =
+  fixture (fun _ service _ calls req ->
+    let open Yojson.Safe.Util in
+    let readiness () = member "household" (Yojson.Safe.from_string (body (req "/api/advisor/status"))) in
+    Alcotest.(check bool) "no household" true (readiness () = `Null);
+    let admin = Test_service_support.sign_in service ~admin:true "http" in
+    let h = Test_service_support.ok (Service.create_household service admin ~name:"Synthetic" ~default_currency:"SEK") in
+    let state = readiness () in
+    Alcotest.(check string) "current membership only" (Household_id.to_string h.id) (state |> member "household_id" |> to_string);
+    Alcotest.(check bool) "default household disabled" false (state |> member "enabled" |> to_bool);
+    Alcotest.(check bool) "admin can manage" true (state |> member "can_manage" |> to_bool);
+    ignore (req ~meth:POST ~body:(Printf.sprintf "{\"enabled\":true,\"household_id\":%S}" (Household_id.to_string h.id)) "/api/advisor/consent");
+    Alcotest.(check bool) "explicit enable reflected" true (readiness () |> member "enabled" |> to_bool);
+    let member_access = Test_service_support.sign_in service ~admin:false "http" in
+    Alcotest.(check bool) "ordinary member cannot manage" false (readiness () |> member "can_manage" |> to_bool);
+    Alcotest.(check int) "member cannot mutate" 403
+      (status (req ~meth:POST ~body:(Printf.sprintf "{\"enabled\":false,\"household_id\":%S}" (Household_id.to_string h.id)) "/api/advisor/consent"));
+    ignore (Test_service_support.ok (Service.leave_household service member_access));
+    Alcotest.(check bool) "removed membership not exposed" true (readiness () = `Null);
+    let admin = Test_service_support.sign_in service ~admin:true "http" in
+    let next = Test_service_support.ok (Service.create_household service admin ~name:"Other synthetic" ~default_currency:"SEK") in
+    let state = readiness () in
+    Alcotest.(check string) "changed membership revalidated" (Household_id.to_string next.id) (state |> member "household_id" |> to_string);
+    Alcotest.(check bool) "new household not enabled by old switch" false (state |> member "enabled" |> to_bool);
+    Alcotest.(check int) "status never calls provider" 0 !calls)
+
+let session_currency_metadata () =
+  fixture (fun _ service _ _ _ ->
+    let admin = Test_service_support.sign_in service ~admin:true "http" in
+    Sql.exec_script service.db "UPDATE currencies SET scale=0 WHERE code='SEK'; UPDATE currencies SET scale=4 WHERE code='EUR'";
+    let session () = Commands.session_json service (Service.access_for service (Access.user admin)) in
+    let open Yojson.Safe.Util in
+    let metadata () = session () |> member "currency_metadata" |> to_list in
+    let scale code = List.find (fun json -> json |> member "code" |> to_string = code) (metadata ()) |> member "scale" |> to_int in
+    Alcotest.(check int) "registry scale zero" 0 (scale "SEK");
+    Alcotest.(check string) "existing default string unchanged" "SEK" (session () |> member "user" |> member "default_currency" |> to_string);
+    ignore (Test_service_support.ok (Service.create_household service admin ~name:"Same currency" ~default_currency:"SEK"));
+    Alcotest.(check int) "same-code defaults deduplicated" 1 (List.length (metadata ()));
+    ignore (Test_service_support.ok (Service.leave_household service (Service.access_for service (Access.user admin))));
+    ignore (Test_service_support.ok (Service.create_household service (Service.access_for service (Access.user admin)) ~name:"Different currency" ~default_currency:"EUR"));
+    Alcotest.(check int) "different defaults" 2 (List.length (metadata ()));
+    Alcotest.(check int) "household registry scale four" 4 (scale "EUR");
+    ignore (Test_service_support.ok (Service.leave_household service (Service.access_for service (Access.user admin))));
+    Alcotest.(check int) "lost membership metadata removed" 1 (List.length (metadata ())))
+
 let () =
   Alcotest.run "advisor_http"
     [
       ( "adapter",
         [
+          Alcotest.test_case "authoritative session currency metadata" `Quick session_currency_metadata;
+          Alcotest.test_case "current household readiness" `Quick household_readiness;
           Alcotest.test_case "unavailable canonical repeats" `Quick readiness_repeats;
           Alcotest.test_case "compacted cursor resync" `Quick compacted_resync;
           Alcotest.test_case "household admin consent" `Quick household_wrappers;

@@ -64,4 +64,4 @@ let app graph =
 
 let () =
   Async_js.init ();
-  Bonsai_web.Start.start app
+  Bonsai_web.Start.start (if String.equal (Js_of_ocaml.Js.to_string Js_of_ocaml.Dom_html.window##.location##.search) "?remote" then Remote_fixture.app else app)

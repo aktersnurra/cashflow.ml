@@ -404,8 +404,11 @@ let commands =
          unconfirmed manual entries, accounts the bills due before payday would overdraw, the month \
          review, budget alerts, unusual spending in categories without a budget, contributions due, settle-up, goals off track and new or \
          changed subscriptions, ending with an overview of the current pay cycle."
-        []
-        (fun service access _ -> Ok (`Assoc [ ("cards", `List (List.map card_json (feed service access))) ]));
+        [ ("narrative", `Assoc [ ("type", `String "boolean"); ("description", `String "Include optional generated explanations; defaults to true.") ]) ]
+        (fun service access fields ->
+          let ( let* ) = Result.bind in
+          let* narrative = arg (Query.Args.bool "narrative" ~default:true fields) in
+          Ok (`Assoc [ ("cards", `List (List.map card_json (feed ~narrative service access))) ]));
       command ~mcp:false "act_on_card" Write "Snooze a card until a date, or mark it done." ~required:[ "key"; "action" ]
         [ string_prop "key" "The card's key."; string_prop "action" "snooze or resolve."; date_prop "until" "For snooze; defaults to three days from now." ]
         (fun service access fields ->
