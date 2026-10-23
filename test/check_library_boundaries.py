@@ -101,13 +101,24 @@ def check(root):
         module = source.stem[0].upper() + source.stem[1:]
         owners[module] = relative.parts[0]
         sources.setdefault(module, []).append(source)
+    # The portable protocol has its own source closure, including interfaces.
+    for source in sorted((root / 'shared' / 'advisor').rglob('*')):
+        if source.suffix not in ('.ml', '.mli'):
+            continue
+        module = source.stem[0].upper() + source.stem[1:]
+        if module in owners and owners[module] != 'protocol':
+            errors.append(f'ambiguous protocol module {module}')
+            continue
+        owners[module] = 'protocol'
+        sources.setdefault(module, []).append(source)
     edges = {}
     for module, files in sources.items():
         output = subprocess.check_output(['ocamldep', '-modules', *map(str, files)], text=True)
         edges[module] = set()
         for line in output.splitlines():
             edges[module].update(line.split(':', 1)[1].split())
-    namespaces = {'Cashflow_core': 'core', 'Cashflow_workflow': 'workflow', 'Cashflow_io': 'io'}
+    namespaces = {'Cashflow_core': 'core', 'Cashflow_workflow': 'workflow', 'Cashflow_io': 'io',
+                  'Cashflow_advisor_protocol': 'protocol'}
     concrete = {'Sqlite3', 'Eio', 'Eio_main', 'Eio_posix'}
     clock_json = {'Ptime_clock', 'Unix', 'Yojson', 'Json'}
     for start, owner in sorted(owners.items()):
@@ -123,8 +134,10 @@ def check(root):
             for dep in sorted(edges.get(module, ())):
                 target = namespaces.get(dep, owners.get(dep))
                 forbidden = (dep in concrete or dep.startswith('Eio_') or
-                             (owner == 'core' and (dep in clock_json or target in {'workflow', 'io'})) or
-                             (owner == 'workflow' and target == 'io'))
+                             (owner == 'core' and (dep in clock_json or target in {'workflow', 'io', 'protocol'})) or
+                             (owner == 'workflow' and target == 'io') or
+                             (owner == 'protocol' and
+                              (target in {'core', 'workflow', 'io'} or dep in {'Unix', 'Ptime_clock', 'Async', 'Async_js'})))
                 if forbidden:
                     errors.append('forbidden source closure ' + ' -> '.join(path + [dep]))
                 elif dep in edges:

@@ -161,6 +161,7 @@
  (alias check-library-boundaries)
  (enabled_if (= %{context_name} default))
  (deps check_library_boundaries.py test_check_library_boundaries.py (source_tree ../lib)
+  (source_tree ../shared/advisor)
   (glob_files_rec ../bin/dune) (glob_files_rec ../shared/dune)
   (glob_files_rec ../tools/dune) (glob_files_rec ../locales/dune)
   (glob_files_rec ../web/dune) (glob_files_rec dune))
@@ -192,3 +193,10 @@
  (enabled_if (= %{context_name} default))
  (modules advisor_fixture_server)
  (libraries cashflow_advisor_protocol cashflow_io eio_main httpun-eio gluten unix))
+
+(test
+ (name test_advisor_protocol)
+ (enabled_if (= %{context_name} default))
+ (modules test_advisor_protocol)
+ (libraries alcotest cashflow_core cashflow_io cashflow_advisor_protocol hegel yojson)
+ (preprocess (pps ppx_hegel_test)))

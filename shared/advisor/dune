@@ -1,2 +1,3 @@
 (library
- (name cashflow_advisor_protocol))
+ (name cashflow_advisor_protocol)
+ (libraries yojson))
