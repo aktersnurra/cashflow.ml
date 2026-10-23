@@ -536,6 +536,26 @@ let terminal_journal_reserve_boundary () =
   error_code A.Invalid_transition (Advisor_store.transition store ~run A.Finish);
   Alcotest.(check int) "repeated terminal rejection leaves journal unchanged" final_bytes (stored_bytes ())
 
+let queued_failure () =
+  let db, store, owner, _ = fixture () in
+  Fun.protect ~finally:(fun () -> Sql.close db) @@ fun () ->
+  let accepted = accept store owner (submit "queued-failure") in
+  let run = accepted.ids.run_id in
+  let failure = A.{ code = Provider_unavailable; context = No_context } in
+  Alcotest.(check bool) "queued failure commits" true
+    (Advisor_store.transition store ~run (A.Fail failure) = Ok (A.Failed failure));
+  let events = replay_events store run 0L in
+  Alcotest.(check bool) "only terminal failure, no start" true
+    (List.map (fun (e : A.event) -> e.payload) events = [A.Run_failed failure]);
+  let persisted = ok (Advisor_store.find_run store ~owner run) in
+  Alcotest.(check int) "no model rounds" 0 persisted.counters.model_rounds;
+  error_code A.Invalid_transition (Advisor_store.transition store ~run A.Start);
+  error_code A.Invalid_transition (Advisor_store.transition store ~run (A.Fail failure));
+  let cancelled = accept store owner (submit "queued-cancel") in
+  ignore (ok (Advisor_store.transition store ~run:cancelled.ids.run_id A.Request_cancel));
+  Alcotest.(check bool) "queued cancellation remains valid" true
+    (Advisor_store.transition store ~run:cancelled.ids.run_id A.Confirm_cancel = Ok A.Cancelled)
+
 let () =
   Alcotest.run "advisor_store"
     [
@@ -543,6 +563,7 @@ let () =
         List.map
           (fun (name, test) -> Alcotest.test_case name `Quick test)
           [
+            ("queued_failure", queued_failure);
             ("attempt_idempotency_and_replay", attempt_idempotency_and_replay);
             ("partials_replay_retention", partials_replay_retention);
             ("concurrent_retry", concurrent_retry);

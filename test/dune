@@ -224,3 +224,9 @@
  (enabled_if (= %{context_name} default))
  (modules test_advisor_provider)
  (libraries alcotest cashflow_io cashflow_core yojson eio eio_main))
+
+(test
+ (name test_advisor_workflow)
+ (enabled_if (= %{context_name} default))
+ (modules test_advisor_workflow)
+ (libraries alcotest cashflow_workflow cashflow_core ptime))

@@ -24,6 +24,7 @@ let terminal_transitions () =
         (fun transition -> check "terminal immutable" true (Result.is_error (A.step state transition)))
         transitions)
     [ A.Completed; Cancelled; Failed failure ];
+  check "queued failure" true (A.step Queued (Fail failure) = Ok (Failed failure));
   check "cancel before start" true (A.step Queued Request_cancel = Ok Cancel_requested);
   check "cannot start cancelled request" true (Result.is_error (A.step Cancel_requested Start));
   List.iter

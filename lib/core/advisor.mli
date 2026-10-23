@@ -201,5 +201,6 @@ val limits : limits
 val is_terminal : run_state -> bool
 
 val step : run_state -> transition -> (run_state, error) result
-(** All transitions out of a terminal state fail. Recovery fails every unfinished persisted state, including Queued,
+(** Queued runs may fail safely before generation starts.
+    All transitions out of a terminal state fail. Recovery fails every unfinished persisted state, including Queued,
     without starting a provider call. *)

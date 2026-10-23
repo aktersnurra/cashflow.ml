@@ -222,6 +222,6 @@ let step state transition =
     | Running _, Set_phase phase -> Ok (Running phase)
     | (Queued | Running _), Request_cancel -> Ok Cancel_requested
     | Running _, Finish -> Ok Completed
-    | (Running _ | Cancel_requested), Fail error -> Ok (Failed error)
+    | (Queued | Running _ | Cancel_requested), Fail error -> Ok (Failed error)
     | Cancel_requested, Confirm_cancel -> Ok Cancelled
     | _ -> Error { code = Invalid_transition; context = No_context }
