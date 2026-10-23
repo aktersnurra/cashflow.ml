@@ -165,15 +165,21 @@ let with_transaction begin_outer db f =
   in
   exec_script db begin_;
   db.depth <- db.depth + 1;
+  let rollback_and_raise exn backtrace =
+    (* Cleanup stays under the guard, including failures reported by COMMIT. *)
+    exec_script db rollback;
+    Printexc.raise_with_backtrace exn backtrace
+  in
   match f () with
   | value ->
       db.depth <- db.depth - 1;
-      exec_script db commit;
-      value
+      (match exec_script db commit with
+      | () -> value
+      | exception exn -> rollback_and_raise exn (Printexc.get_raw_backtrace ()))
   | exception exn ->
+      let backtrace = Printexc.get_raw_backtrace () in
       db.depth <- db.depth - 1;
-      (try exec_script db rollback with Sql_error _ -> ());
-      raise exn
+      rollback_and_raise exn backtrace
 
 let transaction db f = with_transaction "BEGIN IMMEDIATE" db f
 let read_snapshot db f = with_transaction "BEGIN DEFERRED" db f
