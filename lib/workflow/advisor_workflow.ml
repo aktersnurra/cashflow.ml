@@ -180,6 +180,7 @@ let execute ~run:(current_run : A.run) =
           (size.output_reserve_tokens > budget || tokens > budget - size.output_reserve_tokens)
           A.Context_bytes
       in
+      let used_segments = ref [ context.segment_id ] in
       let rec round first context =
         check_limit (!rounds >= A.limits.model_rounds) A.Model_rounds;
         check_limit (!output >= A.limits.output_bytes) A.Output_bytes;
@@ -188,6 +189,7 @@ let execute ~run:(current_run : A.run) =
         ignore (transition (if first then A.Start else A.Set_phase A.Awaiting_model));
         incr rounds;
         let text = Buffer.create 128 and calls = ref None in
+        let segment_id = ref context.segment_id in
         let read_round () =
           boundary ();
           require (perform (Begin_model_round context));
@@ -200,10 +202,16 @@ let execute ~run:(current_run : A.run) =
                 check_limit (String.length delta > A.limits.output_bytes - !output) A.Output_bytes;
                 output := !output + String.length delta;
                 if delta <> "" && Buffer.length text = 0 then (
+                  if not first then (
+                    boundary ();
+                    let fresh = require (perform Allocate_segment) in
+                    if List.exists (A.Segment_id.equal fresh) !used_segments then reject A.Invalid_request;
+                    used_segments := fresh :: !used_segments;
+                    segment_id := fresh);
                   boundary ();
                   ignore (transition (A.Set_phase A.Streaming_text)));
                 Buffer.add_string text delta;
-                if delta <> "" then append (A.Text_appended { segment_id = context.segment_id; text = delta });
+                if delta <> "" then append (A.Text_appended { segment_id = !segment_id; text = delta });
                 read ()
             | Some (Complete_calls all) ->
                 if !calls <> None || all = [] then reject A.Invalid_stream;
@@ -250,8 +258,8 @@ let execute ~run:(current_run : A.run) =
                   if not (List.exists (fun old -> old == evidence) !seen) then (
                     check_limit (selected.serialized_bytes > A.limits.evidence_bytes - !evidence_bytes) A.Evidence_bytes;
                     seen := evidence :: !seen;
-                    evidence_bytes := !evidence_bytes + selected.serialized_bytes);
-                  append (A.Evidence_added selected.display);
+                    evidence_bytes := !evidence_bytes + selected.serialized_bytes;
+                    append (A.Evidence_added selected.display));
                   append (A.Tool_finished { label = call.name; outcome = A.Succeeded });
                   {
                     ctx with

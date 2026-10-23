@@ -31,6 +31,7 @@ type _ operation =
   | Now : Ptime.t operation
   | Check_cancelled : bool operation
   | Load_context : (context, A.error) result operation
+  | Allocate_segment : (A.Segment_id.t, A.error) result operation
   | Measure_context : context -> (context_size, A.error) result operation
   | Begin_model_round : context -> (unit, A.error) result operation
   | Read_model_event : (model_event option, A.error) result operation

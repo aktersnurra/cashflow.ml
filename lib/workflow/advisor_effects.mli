@@ -25,7 +25,10 @@ type context = {
 }
 (** Load_context supplies detached, currently permitted data, no old tool results or messages. The workflow constructs
     ordered messages, adds its safety instructions, and bounds history. No session/owner identifiers belong in model
-    context. The reliable configured model limit must be present, never guessed. *)
+    context. The reliable configured model limit must be present, never guessed. segment_id is reserved for the first
+    round's text span. After each tool round, Allocate_segment supplies a fresh identity lazily when nonempty text
+    arrives. IDs must never be reused within an attempt, including the initial segment_id; allocation belongs to IO and
+    returns only a detached ID, not a native handle. *)
 
 type context_size = { serialized_bytes : int; conservative_tokens : int; output_reserve_tokens : int }
 
@@ -39,26 +42,30 @@ type context_size = { serialized_bytes : int; conservative_tokens : int; output_
 
     Select_evidence must pass the exact Read_tool object to model_json with the same attempt-local alias handle,
     serialize once outside guards, then display that same object. serialized_bytes = String.length model_content. No
-    display on error. Load_context must set omitted_turns to the number already omitted from successful history; execute
-    adds further whole-turn omissions. Map only model-facing messages/data, never internal turn/attempt/segment IDs, to
-    the provider. Measure_context measures the complete serialized request including tools/system, uses a conservative
-    tokenizer and reserves sufficient tokens for the entire permitted completion (including tool arguments/framing and
-    reasoning). Workflow enforces a one-token-per-remaining-visible-byte reserve floor, intentionally refusing smaller
-    contexts; this is not a complete completion-token bound. IO must establish the full reserve from reliable configured
-    limits and/or an explicitly bounded provider request, or refuse generation. It must reject unsupported
-    models/configuration. Begin/Read preserve the original total deadline (measured from run.started_at, never reset);
-    IO additionally supervises raw activity, cancellation and inactivity. Append_events persists before delivery,
-    rechecks authority, buffers at most 100ms/4KiB, and enforces journal/frame/backlog bounds. Despite its name,
-    Commit_terminal also applies Start/Set_phase through the same atomic store transition seam. Terminal cleanup remains
-    available after access loss; delivery is separately authorized. Commit_terminal flushes pending text and atomically
-    commits/publishes exactly one terminal event, resolving cancellation races (Finish can never complete
-    Cancel_requested). Close is safe after partial/failed Begin and on all exit paths. No raw content/error logging. *)
+    display on error. Workflow publishes Evidence_added only on the first selection of an exact evidence object;
+    repeated selections retain every Tool result and Tool_finished event. Append_events must persist all supplied
+    semantic events without silently dropping duplicates. Load_context must set omitted_turns to the number already
+    omitted from successful history; execute adds further whole-turn omissions. Map only model-facing messages/data,
+    never internal turn/attempt/segment IDs, to the provider. Measure_context measures the complete serialized request
+    including tools/system, uses a conservative tokenizer and reserves sufficient tokens for the entire permitted
+    completion (including tool arguments/framing and reasoning). Workflow enforces a
+    one-token-per-remaining-visible-byte reserve floor, intentionally refusing smaller contexts; this is not a complete
+    completion-token bound. IO must establish the full reserve from reliable configured limits and/or an explicitly
+    bounded provider request, or refuse generation. It must reject unsupported models/configuration. Begin/Read preserve
+    the original total deadline (measured from run.started_at, never reset); IO additionally supervises raw activity,
+    cancellation and inactivity. Append_events persists before delivery, rechecks authority, buffers at most 100ms/4KiB,
+    and enforces journal/frame/backlog bounds. Despite its name, Commit_terminal also applies Start/Set_phase through
+    the same atomic store transition seam. Terminal cleanup remains available after access loss; delivery is separately
+    authorized. Commit_terminal flushes pending text and atomically commits/publishes exactly one terminal event,
+    resolving cancellation races (Finish can never complete Cancel_requested). Close is safe after partial/failed Begin
+    and on all exit paths. No raw content/error logging. *)
 
 type _ operation =
   | Check_authority : (unit, A.error) result operation
   | Now : Ptime.t operation
   | Check_cancelled : bool operation
   | Load_context : (context, A.error) result operation
+  | Allocate_segment : (A.Segment_id.t, A.error) result operation
   | Measure_context : context -> (context_size, A.error) result operation
   | Begin_model_round : context -> (unit, A.error) result operation
   | Read_model_event : (model_event option, A.error) result operation

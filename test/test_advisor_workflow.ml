@@ -115,6 +115,8 @@ type fixture = {
   mutable fail_after_text : bool;
   mutable transitions : A.transition list;
   mutable keepalives : int;
+  mutable allocations : int;
+  mutable reuse_segment : bool;
 }
 
 let fixture rounds =
@@ -150,6 +152,8 @@ let fixture rounds =
     fail_after_text = false;
     transitions = [];
     keepalives = 0;
+    allocations = 0;
+    reuse_segment = false;
   }
 
 let record f name =
@@ -180,6 +184,13 @@ let handler f : E.handler =
             f.clock <- f.clock + f.tick;
             get (Ptime.of_float_s (float f.clock))
         | E.Load_context -> result f "load" f.ctx
+        | E.Allocate_segment ->
+            f.allocations <- f.allocations + 1;
+            let id =
+              if f.reuse_segment then f.ctx.segment_id
+              else get (A.Segment_id.of_string (Printf.sprintf "00000000-0000-4000-8000-%012d" (f.allocations + 1)))
+            in
+            result f "allocate" id
         | E.Measure_context c ->
             f.contexts <- f.contexts @ [ c ];
             if f.fail_second_measure && List.length f.contexts > 1 then Error (error A.Provider_unavailable)
@@ -674,6 +685,8 @@ let fresh_and_unique_evidence () =
   f.selected <- { f.selected with model_content = String.make 16384 'x'; serialized_bytes = 16384 };
   completed (execute f);
   check_int "unique object not double charged" 8 f.reads;
+  check_int "repeated object publishes one evidence card" 1 (count f "evidence");
+  check_int "repeated object keeps every tool completion" 8 (count f "tool_finished");
   let f = fixture [ tool_round [ call 0 ]; stop ] in
   f.fail_second_measure <- true;
   failed (execute f);
@@ -728,10 +741,43 @@ let completion_reserve () =
   failed (execute ~run:{ run with counters = { run.counters with output_bytes = 65536 } } f);
   check_int "exhausted output budget no model work" 0 (count f "begin")
 
+let ordered_text_spans () =
+  let rounds =
+    [
+      [ E.Text "A"; E.Text "a"; E.Complete_calls [ call 0 ]; E.Round_finished E.Tool_calls ];
+      [ E.Text "B"; E.Text "b"; E.Round_finished E.Stop ];
+    ]
+  in
+  let f = fixture rounds in
+  completed (execute f);
+  let spans = List.filter_map (function A.Text_appended d -> Some d.segment_id | _ -> None) f.payloads in
+  (match spans with
+  | [ a; a2; b; b2 ] -> check_bool "stable within-span, fresh after tools" true (a = a2 && b = b2 && a <> b)
+  | _ -> Alcotest.fail "expected four deltas");
+  check_int "one lazy followup allocation" 1 f.allocations;
+  let f = fixture rounds in
+  f.reuse_segment <- true;
+  failed (execute f);
+  check_int "reused id cannot append followup text" 2 (count f "text");
+  let f = fixture rounds in
+  f.fail_at <- Some "allocate";
+  failed (execute f);
+  check_int "allocation failure closes all streams" 2 f.closes;
+  List.iter
+    (fun revoke ->
+      let f = fixture rounds in
+      if revoke then f.revoke_at <- Some "allocate" else f.cancel_at <- Some "allocate";
+      let outcome = execute f in
+      if revoke then failed outcome else cancelled outcome;
+      check_int "no text after allocation revocation/cancellation" 2 (count f "text");
+      check_int "allocation boundary cleanup" 2 f.closes)
+    [ false; true ]
+
 let tests =
   [
     ("fresh unique evidence", fresh_and_unique_evidence);
     ("single terminal", every_terminal);
+    ("ordered text spans", ordered_text_spans);
     ("completion reserve", completion_reserve);
     ("streaming phase", streaming_phase);
     ("streams and completes", bounded_workflow_trace);

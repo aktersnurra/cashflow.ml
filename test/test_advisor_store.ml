@@ -556,6 +556,172 @@ let queued_failure () =
   Alcotest.(check bool) "queued cancellation remains valid" true
     (Advisor_store.transition store ~run:cancelled.ids.run_id A.Confirm_cancel = Ok A.Cancelled)
 
+module Workflow_effects = Cashflow_workflow.Advisor_effects
+module Workflow_tools = Cashflow_workflow.Advisor_tools
+
+let workflow_store_transcript ~repeated () =
+  let module E = Workflow_effects in
+  let module T = Workflow_tools in
+  let db, store, owner, _ = fixture () in
+  Fun.protect ~finally:(fun () -> Sql.close db) @@ fun () ->
+  let request = submit "workflow-transcript" in
+  let accepted = accept store owner request in
+  let run = ok (Advisor_store.find_run store ~owner accepted.ids.run_id) in
+  let evidence : T.evidence =
+    {
+      id = Option.get (A.Evidence_id.of_string "00000000-0000-4000-8000-000000000099");
+      scope = request.scope;
+      sampled_at = now;
+      currency = request.currency;
+      result = T.Goals_result [];
+      total_count = 0;
+      returned_count = 0;
+      has_more = false;
+      import_status = A.Current;
+      imported_through = None;
+      reconciled = true;
+      assumptions = [];
+      source_references = [];
+    }
+  in
+  let display : A.evidence =
+    {
+      id = evidence.id;
+      scope = evidence.scope;
+      currency = evidence.currency;
+      sampled_at = evidence.sampled_at;
+      title = "Synthetic goals";
+      facts = [];
+      source_references = [];
+      import_status = A.Current;
+      reconciled = true;
+      assumptions = [];
+    }
+  in
+  let context : E.context =
+    {
+      system_instructions = "Synthetic instructions";
+      history = [];
+      selection = { selected_turns = 0; omitted_turns = 0 };
+      user_text = request.user_text;
+      messages = [];
+      source_finding = None;
+      evidence = [];
+      locale = request.locale;
+      currency = request.currency;
+      model_aliases = [];
+      context_token_budget = Some 1000000;
+      segment_id = segment 1;
+    }
+  in
+  let call i : E.raw_call = { id = Printf.sprintf "call%d" i; name = "goals"; arguments = "{}"; index = i } in
+  let calls = if repeated then [ call 0; call 1 ] else [ call 0 ] in
+  let rounds =
+    ref
+      [
+        [ E.Text "A"; E.Text "a"; E.Complete_calls calls; E.Round_finished E.Tool_calls ];
+        [ E.Text "B"; E.Text "b"; E.Round_finished E.Stop ];
+      ]
+  in
+  let current = ref [] and contexts = ref [] and selections = ref 0 in
+  let handler : E.handler =
+    {
+      handle =
+        (fun (type a) (operation : a E.operation) : a ->
+          match operation with
+          | E.Check_authority -> Ok ()
+          | E.Check_cancelled -> false
+          | E.Now -> now
+          | E.Load_context -> Ok context
+          | E.Allocate_segment -> Ok (segment 2)
+          | E.Measure_context _ ->
+              Ok { serialized_bytes = 100; conservative_tokens = 100; output_reserve_tokens = 65536 }
+          | E.Begin_model_round context ->
+              contexts := !contexts @ [ context ];
+              (match !rounds with
+              | h :: t ->
+                  current := h;
+                  rounds := t
+              | [] -> Alcotest.fail "unexpected model round");
+              Ok ()
+          | E.Read_model_event ->
+              let event =
+                match !current with
+                | h :: t ->
+                    current := t;
+                    Some h
+                | [] -> None
+              in
+              Ok event
+          | E.Close_model_round -> ()
+          | E.Parse_tool _ -> Ok (T.Goals { currency = None })
+          | E.Read_tool _ -> Ok evidence
+          | E.Select_evidence exact ->
+              Alcotest.(check bool) "same exact selected object" true (exact == evidence);
+              incr selections;
+              Ok { model_content = "{}"; display; serialized_bytes = 2 }
+          | E.Append_events payloads ->
+              let persisted = ok (Advisor_store.find_run store ~owner run.ids.run_id) in
+              Result.map
+                (fun _ -> ())
+                (Advisor_store.append store ~run:run.ids.run_id ~expected_sequence:persisted.counters.last_sequence
+                   payloads)
+          | E.Commit_terminal transition -> Advisor_store.transition store ~run:run.ids.run_id transition
+          | _ -> Alcotest.fail "unexpected command effect");
+    }
+  in
+  let result = E.run handler (fun () -> Cashflow_workflow.Advisor_workflow.execute ~run) in
+  Alcotest.(check bool) "real store workflow completes" true (result = Ok A.Completed);
+  let events = replay_events store run.ids.run_id 0L in
+  let snapshot = ok (Advisor_store.snapshot store ~owner accepted.ids.conversation_id) in
+  let attempt = List.hd (List.hd snapshot.turns).attempts in
+  let replay_segments =
+    List.fold_left
+      (fun segments (event : A.event) ->
+        match (event.payload, segments) with
+        | A.Text_appended delta, A.Text_segment previous :: rest
+          when A.Segment_id.equal delta.segment_id previous.segment_id ->
+            A.Text_segment { previous with text = previous.text ^ delta.text } :: rest
+        | A.Text_appended delta, _ -> A.Text_segment delta :: segments
+        | A.Evidence_added evidence, _ -> A.Evidence_segment evidence :: segments
+        | _ -> segments)
+      [] events
+    |> List.rev
+  in
+  let labels = List.map (function A.Text_segment d -> "text:" ^ d.text | A.Evidence_segment _ -> "evidence") in
+  Alcotest.(check (list string))
+    "materialized text/evidence order" [ "text:Aa"; "evidence"; "text:Bb" ] (labels attempt.segments);
+  Alcotest.(check bool) "snapshot agrees with ordered replay spans" true (attempt.segments = replay_segments);
+  let text_ids = List.filter_map (function A.Text_segment d -> Some d.segment_id | _ -> None) attempt.segments in
+  Alcotest.(check int) "two distinct text span ids" 2 (List.sort_uniq A.Segment_id.compare text_ids |> List.length);
+  Alcotest.(check int)
+    "one evidence card" 1
+    (List.filter (fun (event : A.event) -> match event.payload with A.Evidence_added _ -> true | _ -> false) events
+    |> List.length);
+  Alcotest.(check int) "all tool selections" (List.length calls) !selections;
+  Alcotest.(check int)
+    "all tool completion events" (List.length calls)
+    (List.filter
+       (fun (event : A.event) ->
+         match event.payload with A.Tool_finished { outcome = A.Succeeded; _ } -> true | _ -> false)
+       events
+    |> List.length);
+  let next = List.nth !contexts 1 in
+  let results =
+    List.filter_map (function E.Tool { call_id; content } -> Some (call_id, content) | _ -> None) next.messages
+  in
+  Alcotest.(check (list (pair string string)))
+    "all original tool result ids/messages"
+    (List.map (fun (call : E.raw_call) -> (call.id, "{}")) calls)
+    results;
+  Alcotest.(check int)
+    "one terminal event" 1
+    (List.filter
+       (fun (event : A.event) ->
+         match event.payload with A.Run_completed | A.Run_failed _ | A.Run_cancelled -> true | _ -> false)
+       events
+    |> List.length)
+
 let () =
   Alcotest.run "advisor_store"
     [
@@ -563,6 +729,8 @@ let () =
         List.map
           (fun (name, test) -> Alcotest.test_case name `Quick test)
           [
+            ("workflow_text_evidence_order", workflow_store_transcript ~repeated:false);
+            ("workflow_repeated_evidence", workflow_store_transcript ~repeated:true);
             ("queued_failure", queued_failure);
             ("attempt_idempotency_and_replay", attempt_idempotency_and_replay);
             ("partials_replay_retention", partials_replay_retention);
