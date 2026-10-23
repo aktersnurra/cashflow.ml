@@ -1,9 +1,9 @@
 module Logo_fetch = Cashflow_io.Logo_fetch
 open Logo_fetch
 
-let fixture file =
-  let path = "test/fixtures/logo_64x48." ^ file in
-  let path = if Sys.file_exists path then path else "fixtures/logo_64x48." ^ file in
+let fixture ?(name = "logo_64x48") file =
+  let path = "test/fixtures/" ^ name ^ "." ^ file in
+  let path = if Sys.file_exists path then path else "fixtures/" ^ name ^ "." ^ file in
   let channel = open_in_bin path in
   Fun.protect ~finally:(fun () -> close_in channel) (fun () -> really_input_string channel (in_channel_length channel))
 
@@ -179,6 +179,40 @@ let real_images () =
     [ "png", "image/png"; "webp", "image/webp"; "jpg", "image/jpeg";
       "ico", "image/x-icon" ]
 
+let multi_size_ico () =
+  let body = fixture ~name:"logo_multi_size" "ico" in
+  Alcotest.(check int) "first directory entry is only 16px" 16 (Char.code body.[6]);
+  let run body =
+    let net = network (ref []) in
+    fetch {net with get=(fun ~uri:_ ~address:_ ~max_bytes:_ ->
+      Ok {status=200; headers=["content-type", "image/x-icon"]; body})} "https://example.org/favicon.ico" in
+  (match run body with
+   | Error error -> Alcotest.fail ("multi-size ICO rejected: " ^ error_message error)
+   | Ok image ->
+       Alcotest.(check string) "ICO type" "image/x-icon" (content_type image);
+       Alcotest.(check int) "largest usable width" 64 (width image);
+       Alcotest.(check int) "largest usable height" 64 (height image);
+       Alcotest.(check string) "complete ICO retained" body (bytes image));
+  let small = Bytes.of_string body in
+  Bytes.set small 4 '\001';
+  Bytes.set small 5 '\000';
+  Alcotest.(check bool) "only declared entries count toward the minimum" true
+    (match run (Bytes.to_string small) with Error Too_small_image -> true | _ -> false)
+
+let ico_directory_bounds () =
+  let body = fixture ~name:"logo_multi_size" "ico" in
+  let corrupt label edit =
+    let copy = Bytes.of_string body in
+    edit copy;
+    Alcotest.(check bool) label true (Option.is_none (dimensions (Bytes.to_string copy))) in
+  corrupt "empty directory" (fun b -> Bytes.fill b 4 2 '\000');
+  corrupt "directory exceeds body" (fun b -> Bytes.fill b 4 2 '\255');
+  corrupt "payload overlaps directory" (fun b -> Bytes.fill b 18 4 '\000');
+  corrupt "later entry has no payload" (fun b -> Bytes.fill b (6 + 3 * 16 + 8) 4 '\000');
+  corrupt "later entry points outside body" (fun b -> Bytes.fill b (6 + 3 * 16 + 12) 4 '\255');
+  Alcotest.(check bool) "truncated later payload" true
+    (Option.is_none (dimensions (String.sub body 0 (String.length body - 1))))
+
 let () = Alcotest.run "logo fetch" [
   "boundary", [ Alcotest.test_case "addresses" `Quick rejects_address;
                 Alcotest.test_case "links" `Quick rejects_links;
@@ -186,6 +220,8 @@ let () = Alcotest.run "logo fetch" [
                 Alcotest.test_case "per-request scope" `Quick request_scope ];
   "images", [ Alcotest.test_case "validation" `Quick image_boundaries;
               Alcotest.test_case "real fixture dimensions" `Quick real_images;
+              Alcotest.test_case "multi-size ICO" `Quick multi_size_ico;
+              Alcotest.test_case "ICO directory bounds" `Quick ico_directory_bounds;
               Alcotest.test_case "extensionless and redirected image" `Quick extensionless_image_and_redirect ];
   "icons", [ Alcotest.test_case "order" `Quick icon_order;
              Alcotest.test_case "quoted tokens" `Quick quoted_icon_attributes;

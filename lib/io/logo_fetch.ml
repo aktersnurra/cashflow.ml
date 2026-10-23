@@ -78,8 +78,23 @@ let dimensions s =
   let n = String.length s in
   if n >= 45 && String.starts_with ~prefix:"\137PNG\r\n\026\n\000\000\000\rIHDR" s && String.sub s (n-8) 4 = "IEND" then
     Some ("image/png", be32 s 16, be32 s 20)
-  else if n >= 22 && String.starts_with ~prefix:"\000\000\001\000" s && le16 s 4 > 0 && le32 s 14 > 0 && le32 s 18 <= n - le32 s 14 then
-    Some ("image/x-icon", (if u8 s 6 = 0 then 256 else u8 s 6), (if u8 s 7 = 0 then 256 else u8 s 7))
+  else if n >= 6 && String.starts_with ~prefix:"\000\000\001\000" s then
+    let count = le16 s 4 in
+    if count = 0 || count > (n - 6) / 16 then None else
+    let directory_end = 6 + count * 16 in
+    let rec entries index best =
+      if index = count then Option.map (fun (w, h) -> "image/x-icon", w, h) best else
+      let entry = 6 + index * 16 in
+      let size = le32 s (entry + 8) and offset = le32 s (entry + 12) in
+      if size = 0 || offset < directory_end || offset > n || size > n - offset then None else
+      let width = if u8 s entry = 0 then 256 else u8 s entry in
+      let height = if u8 s (entry + 1) = 0 then 256 else u8 s (entry + 1) in
+      (* A usable entry must beat every entry that is too small on either axis. *)
+      let best = match best with
+        | Some (w, h) when min w h >= min width height -> best
+        | _ -> Some (width, height) in
+      entries (index + 1) best
+    in entries 0 None
   else if n >= 30 && String.starts_with ~prefix:"RIFF" s && le32 s 4 = n - 8 && String.sub s 8 4 = "WEBP" then
     (match String.sub s 12 4 with
      | "VP8X" -> Some ("image/webp", 1 + le24 s 24, 1 + le24 s 27)
