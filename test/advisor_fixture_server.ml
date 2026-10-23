@@ -29,13 +29,32 @@ let () =
         if privacy_mode <> "restart" then failwith "persistent fixture requires restart mode";
         let marker = path ^ ".advisor-fixture" in
         let signature = "cashflow synthetic advisor fixture\n" ^ path in
-        let existing = Sys.file_exists path in
-        if existing then (
-          if not (Sys.file_exists marker) || In_channel.with_open_bin marker In_channel.input_all <> signature
-          then failwith "refusing unmarked/nonfixture database")
-        else (
-          let channel = open_out_gen [Open_wronly; Open_creat; Open_excl; Open_binary] 0o600 marker in
-          output_string channel signature; close_out channel);
+        let regular_entry name =
+          try
+            let stat = Unix.lstat name in
+            if stat.Unix.st_kind <> Unix.S_REG then failwith "refusing nonregular fixture path";
+            Some stat
+          with Unix.Unix_error (Unix.ENOENT, _, _) -> None in
+        (* Both entries must be absent or marked regular files, never symlinks.
+           The runner owns the containing temporary directory. *)
+        let existing = match regular_entry path, regular_entry marker with
+          | Some _, Some _ when In_channel.with_open_bin marker In_channel.input_all = signature -> true
+          | None, None ->
+              let fd = Unix.openfile path [Unix.O_WRONLY; Unix.O_CREAT; Unix.O_EXCL; Unix.O_CLOEXEC] 0o600 in
+              let created = Unix.fstat fd in
+              Unix.close fd;
+              let remove_created name stat =
+                match regular_entry name with
+                | Some current when current.Unix.st_dev = stat.Unix.st_dev && current.Unix.st_ino = stat.Unix.st_ino -> Unix.unlink name
+                | _ -> () in
+              (try
+                 let channel = open_out_gen [Open_wronly; Open_creat; Open_excl; Open_binary] 0o600 marker in
+                 let created_marker = Unix.fstat (Unix.descr_of_out_channel channel) in
+                 (try output_string channel signature; close_out channel
+                  with ex -> close_out_noerr channel; remove_created marker created_marker; raise ex)
+               with ex -> remove_created path created; raise ex);
+              false
+          | _ -> failwith "refusing unmarked/nonfixture database" in
         let db = Sql.open_db path in
         Schema.migrate db;
         existing, db in

@@ -37,14 +37,27 @@ stop_server() {
     SERVER_LOG=
   fi
 }
+stop_client() {
+  if [[ -n "$CLIENT" ]]; then
+    # The leader may already be reaped; retain its private group until descendants
+    # have exited or bounded TERM/KILL escalation has completed.
+    if ! kill -TERM -- "-$CLIENT" 2>/dev/null; then
+      # A signal can arrive before the launcher calls setsid. Only address a
+      # still-running shell-owned job here, never a recycled leader PID.
+      if jobs -pr | grep -qx "$CLIENT"; then kill "$CLIENT" 2>/dev/null || true; fi
+    fi
+    for _ in {1..50}; do kill -0 -- "-$CLIENT" 2>/dev/null || break; sleep .1; done
+    if kill -0 -- "-$CLIENT" 2>/dev/null; then
+      kill -KILL -- "-$CLIENT" 2>/dev/null || true
+      for _ in {1..10}; do kill -0 -- "-$CLIENT" 2>/dev/null || break; sleep .01; done
+    fi
+    wait "$CLIENT" 2>/dev/null || true
+    CLIENT=
+  fi
+}
 cleanup() {
   local status=$?
-  if [[ -n "$CLIENT" ]]; then
-    kill -TERM -- "-$CLIENT" 2>/dev/null || kill "$CLIENT" 2>/dev/null || true
-    for _ in {1..50}; do kill -0 "$CLIENT" 2>/dev/null || break; sleep .1; done
-    kill -KILL -- "-$CLIENT" 2>/dev/null || true
-    wait "$CLIENT" 2>/dev/null || true
-  fi
+  stop_client
   stop_server || status=1
   rm -rf -- "$WORK"
   exit "$status"
@@ -66,8 +79,7 @@ run() {
   python3 -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' "$@" >"$ADVISOR_EVIDENCE_DIR/$label.log" 2>&1 &
   CLIENT=$!
   wait "$CLIENT" || status=$?
-  kill -TERM -- "-$CLIENT" 2>/dev/null || true
-  CLIENT=
+  stop_client
   printf '%s exit=%s\n' "$label" "$status" >>"$ADVISOR_EVIDENCE_DIR/exits.txt"
   if [[ $status != 0 ]]; then cat "$ADVISOR_EVIDENCE_DIR/$label.log" >&2; return "$status"; fi
 }
@@ -92,6 +104,7 @@ product() {
 run native-fixture-build opam exec --switch="$SWITCH" -- dune build test/advisor_fixture_server.exe
 run web-build opam exec --switch="$SWITCH" -- dune build --workspace dune-workspace.web --profile release @web/default @test/advisor_browser/default
 run playwright node -e 'require("playwright")'
+run harness-safety python3 test/test_advisor_harness_safety.py
 run socket python3 test/test_advisor_http_socket.py
 run controller python3 test/test_advisor_browser.py
 product product advisor.js
