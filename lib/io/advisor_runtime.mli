@@ -22,7 +22,9 @@ val retry : t -> principal:Advisor_access.principal -> A.retry -> (A.accepted, A
 
 val start : t -> A.accepted -> unit
 (** Only starts canonical acceptances registered by this runtime's submit/retry. Unknown, foreign-runtime and duplicate
-    acceptances cannot create work or rebind the origin. *)
+    acceptances cannot create work or rebind the origin. Initial abandonment time includes the persisted acceptance
+    handoff; an already-abandoned unsubscribed run cancels before Start or provider work. Current authorized subscribers
+    and later reconnect grace retain their ordinary semantics. *)
 
 val cancel : t -> principal:Advisor_access.principal -> A.Run_id.t -> (A.run_state, A.error) result
 val signal_cancel : t -> A.Run_id.t list -> unit

@@ -260,6 +260,25 @@ let model_event = function
         | P.Length -> E.Length
         | P.Content_filter -> E.Content_filter)
 
+let authorized_subscribers t run =
+  List.exists
+    (fun (s : subscription) ->
+      if s.closed || s.overflow || s.run <> run then false
+      else match X.authorize_run t.service ~subscriber:s.principal ~run with Ok _ -> true | Error _ -> false)
+    t.subscribers
+
+let abandoned t r =
+  if authorized_subscribers t r.accepted.ids.run_id then (
+    r.absent_since <- None;
+    false)
+  else
+    let now = t.clock.monotonic_s () in
+    match r.absent_since with
+    | None ->
+        r.absent_since <- Some now;
+        false
+    | Some since -> now -. since >= 30.
+
 let begin_round t r sw =
   let* _ = checked t r (fun run -> Ok run) in
   match r.prepared with
@@ -284,6 +303,9 @@ let begin_round t r sw =
                  round.scope <- Some scope;
                  let result =
                    let* _ = checked t r (fun run -> Ok run) in
+                   if abandoned t r then (
+                     stop t r None;
+                     raise Round_closed);
                    P.stream_prepared t.provider prepared
                      ~on_activity:(fun () ->
                        let authorized = checked t r (fun _ -> Ok ()) in
@@ -498,13 +520,6 @@ let finish_stopped t r reason =
           in
           match transition t r change with Ok A.Cancel_requested -> ignore (transition t r A.Confirm_cancel) | _ -> ()))
 
-let authorized_subscribers t run =
-  List.exists
-    (fun (s : subscription) ->
-      if s.closed || s.overflow || s.run <> run then false
-      else match X.authorize_run t.service ~subscriber:s.principal ~run with Ok _ -> true | Error _ -> false)
-    t.subscribers
-
 let watchdog t r =
   let rec loop () =
     (* Re-read the real expiry: ordinary authenticated activity may extend it, but
@@ -527,12 +542,7 @@ let watchdog t r =
       if now >= r.deadline || Ptime.Span.to_float_s (Ptime.diff (t.clock.now ()) run.started_at) >= 120. then
         raise (Stopped (Some (limit A.Run_deadline)));
 
-      (if authorized_subscribers t run.ids.run_id then r.absent_since <- None
-       else
-         match r.absent_since with
-         | None -> r.absent_since <- Some now
-         | Some since when now -. since >= 30. -> raise (Stopped None)
-         | Some _ -> ());
+      if abandoned t r then raise (Stopped None);
 
       (match r.round with
       | Some round when now -. round.activity >= 30. -> raise (Stopped (Some (limit A.Upstream_inactivity)))
@@ -552,6 +562,7 @@ let start t (accepted : A.accepted) =
           (try
              Eio.Switch.run (fun sw ->
                  r.scope <- Some sw;
+                 if abandoned t r then raise (Stopped None);
                  Eio.Fiber.fork_daemon ~sw (fun () ->
                      (try watchdog t r with Stopped reason -> stop t r reason);
                      `Stop_daemon);
@@ -605,7 +616,10 @@ let register t principal (accepted : A.accepted) =
               deadline =
                 t.clock.monotonic_s ()
                 +. max 0. (120. -. Ptime.Span.to_float_s (Ptime.diff (t.clock.now ()) run.started_at));
-              absent_since = Some (t.clock.monotonic_s ());
+              (* The initial grace starts at acceptance, not this shielded handoff. *)
+              absent_since =
+                Some
+                  (t.clock.monotonic_s () -. max 0. (Ptime.Span.to_float_s (Ptime.diff (t.clock.now ()) run.started_at)));
               problem = None;
             }
           in

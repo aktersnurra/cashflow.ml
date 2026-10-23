@@ -584,7 +584,7 @@ let orphan_sweep () =
       drain ();
       R.close sub)
 
-let cancelled_handoff_and_sweep () =
+let cancelled_handoff_and_sweep ~delay ~connected () =
   let calls = ref 0 in
   fixture
     (fun db ~uri ~headers ~body ~on_chunk ->
@@ -622,19 +622,32 @@ let cancelled_handoff_and_sweep () =
           Eio.Cancel.protect (fun () -> Eio.Promise.resolve finished ()));
       Eio.Promise.await committed;
       let current () = List.hd (ok (Advisor_store.active_runs store)) in
-      advance f 31.;
-      check "in-flight handoff not swept" ((current ()).state = A.Queued);
+      let run = current () in
+      let subscription =
+        if connected then Some (ok (R.subscribe runtime ~principal:p ~run:run.ids.run_id ~after:0L)) else None
+      in
+      advance f delay;
+      let queued = (current ()).state = A.Queued in
       Eio.Cancel.cancel (Option.get !context) Exit;
       Eio.Promise.resolve release ();
       Eio.Promise.await done_;
       drain ();
-      let run = current () in
-      check "cancelled request does not strand committed acceptance"
-        (!calls = 1 && match run.state with A.Running _ -> true | _ -> false);
-      ignore (ok (R.cancel runtime ~principal:p run.ids.run_id));
-      drain ();
-      check "handoff cancellation cleanup terminal"
-        ((ok (Advisor_store.find_run store ~owner run.ids.run_id)).state = A.Cancelled))
+      check "in-flight handoff not swept" queued;
+      let persisted () = ok (Advisor_store.find_run store ~owner run.ids.run_id) in
+      if connected || delay < 30. then (
+        check "below-deadline or subscribed handoff survives request cancellation"
+          (!calls = 1 && match (persisted ()).state with A.Running _ -> true | _ -> false);
+        if connected then ignore (ok (R.cancel runtime ~principal:p run.ids.run_id)) else advance f (30. -. delay);
+        drain ();
+        check "handoff retains original abandonment deadline" ((persisted ()).state = A.Cancelled))
+      else (
+        check "expired unsubscribed handoff cancels before upstream" (!calls = 0 && (persisted ()).state = A.Cancelled);
+        check "expired handoff has no Start or model-round charge" ((persisted ()).counters.model_rounds = 0);
+        check "expired handoff only records cancellation"
+          (match ok (Advisor_store.replay store ~run:run.ids.run_id ~after:0L ~limit:100) with
+          | Events [ { payload = A.Run_cancelled; _ } ] -> true
+          | _ -> false));
+      Option.iter R.close subscription)
 
 let revoked_buffer_and_subscriber_denial () =
   let callback = ref (fun (_ : string) -> ()) in
@@ -885,7 +898,14 @@ let () =
           Alcotest.test_case "runtime journal reserve" `Quick runtime_journal_reserve;
           Alcotest.test_case "runtime reserve admission" `Quick runtime_reserve_admission;
           Alcotest.test_case "bounded orphan sweep" `Quick orphan_sweep;
-          Alcotest.test_case "cancelled in-flight handoff versus sweep" `Quick cancelled_handoff_and_sweep;
+          Alcotest.test_case "cancelled below-deadline handoff versus sweep" `Quick
+            (cancelled_handoff_and_sweep ~delay:29. ~connected:false);
+          Alcotest.test_case "unsubscribed handoff at abandonment boundary" `Quick
+            (cancelled_handoff_and_sweep ~delay:30. ~connected:false);
+          Alcotest.test_case "unsubscribed handoff beyond abandonment boundary" `Quick
+            (cancelled_handoff_and_sweep ~delay:31. ~connected:false);
+          Alcotest.test_case "subscribed delayed handoff versus sweep" `Quick
+            (cancelled_handoff_and_sweep ~delay:31. ~connected:true);
           Alcotest.test_case "revocation timer drain and typed subscriber denial" `Quick
             revoked_buffer_and_subscriber_denial;
           Alcotest.test_case "initial durable replay backlog limit" `Quick replay_backlog_limit;
