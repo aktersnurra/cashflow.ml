@@ -180,3 +180,15 @@
  (deps test_check_library_boundaries_dune.py check_library_boundaries.py
   test_check_library_boundaries.py dune)
  (action (run python3 test_check_library_boundaries_dune.py)))
+
+(test
+ (name test_advisor_stream)
+ (enabled_if (= %{context_name} default))
+ (modules test_advisor_stream)
+ (libraries alcotest cashflow_advisor_protocol cashflow_io eio_main))
+
+(executable
+ (name advisor_fixture_server)
+ (enabled_if (= %{context_name} default))
+ (modules advisor_fixture_server)
+ (libraries cashflow_advisor_protocol cashflow_io eio_main httpun-eio gluten unix))

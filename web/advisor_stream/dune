@@ -1,0 +1,5 @@
+(library
+ (name cashflow_advisor_stream)
+ (enabled_if (= %{context_name} web))
+ (libraries js_of_ocaml async_js cashflow_advisor_protocol)
+ (preprocess (pps js_of_ocaml-ppx)))

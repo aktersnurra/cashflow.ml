@@ -1,0 +1,2 @@
+(library
+ (name cashflow_advisor_protocol))

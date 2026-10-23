@@ -1,0 +1,10 @@
+(executable
+ (name main)
+ (enabled_if (= %{context_name} web))
+ (modes js)
+ (libraries bonsai.web async_js cashflow_advisor_stream)
+ (preprocess (pps ppx_jane bonsai.ppx_bonsai)))
+(alias
+ (name default)
+ (enabled_if (= %{context_name} web))
+ (deps main.bc.js index.html))
