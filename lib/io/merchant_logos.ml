@@ -92,23 +92,23 @@ let resolve service access ~owner names =
         let system = "Suggest a bare public website hostname for each merchant name. Reply JSON only: {\"merchants\":[{\"name\":\"name\",\"domain\":\"domain.tld\",\"confidence\":70}]}." in
         let reply = llm.Llm.complete ~system ~user in
         Service.log_llm_call service access ~purpose:"logos" ~items:(List.length batch) ~ok:(Result.is_ok reply);
-        (match Option.bind (Result.to_option reply) proposals with
-        | None -> ()
-        | Some entries -> List.iter (fun (key, name, prior) ->
-            let candidate = proposal name entries in
+        let entries = Option.bind (Result.to_option reply) proposals in
+        List.iter (fun (key, name, prior) ->
+            let candidate = Option.bind entries (proposal name) in
             let fetched = match candidate with
               | None -> None
               | Some (domain, confidence) -> Some (domain, confidence, Logo_fetch.fetch network domain) in
             Sql.transaction service.db (fun () ->
               if Merchant_logo_store.get service.db owner key = prior && current_access service access owner then (
                 let now = service.now () in
-                let status, website, confidence, logo_id = match fetched with
-                  | None -> Merchant_logo_store.Unknown, None, None, None
-                  | Some (domain, confidence, Error _) -> Failed, Some domain, Some confidence, None
-                  | Some (domain, confidence, Ok image) -> Resolved, Some domain, Some confidence,
+                let status, website, confidence, logo_id = match entries, fetched with
+                  | None, _ -> Merchant_logo_store.Failed, None, None, None
+                  | Some _, None -> Merchant_logo_store.Unknown, None, None, None
+                  | Some _, Some (domain, confidence, Error _) -> Failed, Some domain, Some confidence, None
+                  | Some _, Some (domain, confidence, Ok image) -> Resolved, Some domain, Some confidence,
                       Some (Merchant_logo_store.save_blob service.db now image) in
                 Merchant_logo_store.put service.db owner key
-                  {source=Llm; status; website; confidence; logo_id; resolved_at=now})) ) batch);
+                  {source=Llm; status; website; confidence; logo_id; resolved_at=now})) ) batch;
         batches rest
     in batches pending
   | _ -> ()
