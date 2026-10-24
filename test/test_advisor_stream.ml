@@ -100,6 +100,8 @@ let fake_reader () =
   Alcotest.(check int) "legacy byte count matches" (String.length payload) (Buffer.length received);
   Alcotest.(check bool) "installed adapter duplicates bytes" false (String.equal payload (Buffer.contents received))
 
+exception Callback_probe of string
+
 let tls_fixture_process () =
   let read path = let ch = open_in_bin path in Fun.protect ~finally:(fun () -> close_in ch) (fun () -> really_input_string ch (in_channel_length ch)) in
   let certificate = ok (X509.Certificate.decode_pem (read Sys.argv.(2))) in
@@ -108,7 +110,8 @@ let tls_fixture_process () =
   let large = bool_of_string Sys.argv.(4) and fixed = bool_of_string Sys.argv.(5)
   and truncated = bool_of_string Sys.argv.(6) and malformed = bool_of_string Sys.argv.(7)
   and chunk_extensions = bool_of_string Sys.argv.(8) and status = int_of_string Sys.argv.(9)
-  and cancel = bool_of_string Sys.argv.(10) in
+  and cancel = bool_of_string Sys.argv.(10)
+  and provider_decode = bool_of_string Sys.argv.(11) in
   Mirage_crypto_rng_unix.use_default ();
   Eio_main.run @@ fun env -> Eio.Switch.run @@ fun sw ->
   let listener = Eio.Net.listen ~sw ~reuse_addr:true ~backlog:1 env#net
@@ -125,7 +128,7 @@ let tls_fixture_process () =
       if String.length line = 0 then found
       else headers (found || String.equal (String.lowercase_ascii line) (Printf.sprintf "host: localhost:%d" port)) in
     Alcotest.(check bool) "authority with port" true (headers false);
-    let text = if large then payload else "first second" in
+    let text = if provider_decode then "data: PRIVATE-invalid-json\n\n" else if large then payload else "first second" in
     let head = if fixed then Printf.sprintf "Content-Length: %d" (String.length text) else "Transfer-Encoding: chunked" in
     Eio.Flow.copy_string (Printf.sprintf "HTTP/1.1 %d Test\r\n%s\r\nConnection: close\r\nX-Private-Probe: HS6advisor-financial-unique\r\n\r\n" status head) flow;
     if large then (
@@ -154,7 +157,7 @@ let tls_transport () =
     let authenticator = X509.Authenticator.chain_of_trust ~time:(fun () -> Ptime.of_float_s (Unix.gettimeofday ())) [certificate] in
     let trusted = ok (Tls.Config.client ~authenticator ()) in
     Eio_main.run @@ fun env ->
-    let run ?tls ?(large=false) ?(fixed=false) ?(truncated=false) ?(malformed=false) ?(chunk_extensions=false) ~status ~cancel () =
+    let run ?tls ?(large=false) ?(fixed=false) ?(truncated=false) ?(malformed=false) ?(chunk_extensions=false) ?(callback_failure=false) ?(provider_decode=false) ~status ~cancel () =
       Eio.Time.with_timeout_exn env#clock 5.0 @@ fun () ->
       Eio.Switch.run @@ fun sw ->
       let ready, ready_output = Eio.Process.pipe ~sw env#process_mgr in
@@ -162,28 +165,45 @@ let tls_transport () =
       let fixture = Eio.Process.spawn ~sw env#process_mgr ~stdin:gate_input ~stdout:ready_output
         [Sys.executable_name; "--tls-fixture"; cert; key;
          string_of_bool large; string_of_bool fixed; string_of_bool truncated;
-         string_of_bool malformed; string_of_bool chunk_extensions; string_of_int status; string_of_bool cancel] in
+         string_of_bool malformed; string_of_bool chunk_extensions; string_of_int status; string_of_bool cancel; string_of_bool provider_decode] in
       let port = int_of_string (Eio.Buf_read.line (Eio.Buf_read.of_flow ~max_size:32 ready)) in
       let released = ref false in
       let chunks = Buffer.create 32 in
       let result =
         try
-          let outcome = Cashflow_io.Https.stream_post ?tls env ~uri:(Printf.sprintf "https://localhost:%d/stream?probe=1" port) ~headers:["authorization", "Bearer AX9advisor-auth-unique"; "x-probe", "QZ7advisor-header-unique"] ~body:"RB8advisor-request-unique"
-            ~on_chunk:(fun chunk ->
-              Alcotest.(check bool) "bounded HTTP fragment" true (String.length chunk <= 32768);
-              Buffer.add_string chunks chunk;
-              if not large && Buffer.length chunks = 5 then (
-                Alcotest.(check bool) "gate still held on first chunk" false !released;
-                if cancel then raise (Eio.Cancel.Cancelled Exit);
-                released := true; Eio.Flow.copy_string "continue\n" release)) in
-          `Result outcome
-        with Eio.Cancel.Cancelled Exit -> `Cancelled in
+          let post = Cashflow_io.Https.stream_post ?tls env in
+          let uri = Printf.sprintf "https://localhost:%d/stream?probe=1" port in
+          if provider_decode then (
+            let post ~uri:_ ~headers ~body ~on_chunk = post ~uri ~headers ~body ~on_chunk in
+            let provider = Cashflow_io.Advisor_provider.create ~post ~api_key:"PRIVATE-dummy-key"
+              ~model:"anthropic/claude-sonnet-4.6" ~provider_only:["amazon-bedrock"] () in
+            `Provider_result (Cashflow_io.Advisor_provider.stream provider
+              { system = "PRIVATE-system"; messages = [] } ~on_event:(fun _ -> Alcotest.fail "unexpected provider event")))
+          else
+            let outcome = post ~uri ~headers:["authorization", "Bearer AX9advisor-auth-unique"; "x-probe", "QZ7advisor-header-unique"] ~body:"RB8advisor-request-unique"
+              ~on_chunk:(fun chunk ->
+                if callback_failure then raise (Callback_probe "PRIVATE-callback-exception");
+                Alcotest.(check bool) "bounded HTTP fragment" true (String.length chunk <= 32768);
+                Buffer.add_string chunks chunk;
+                if not large && Buffer.length chunks = 5 then (
+                  Alcotest.(check bool) "gate still held on first chunk" false !released;
+                  if cancel then raise (Eio.Cancel.Cancelled Exit);
+                  released := true; Eio.Flow.copy_string "continue\n" release)) in
+            `Result outcome
+        with Eio.Cancel.Cancelled Exit -> `Cancelled
+           | Callback_probe marker -> `Callback_failed marker in
       Eio.Process.await_exn fixture;
       result, Buffer.contents chunks
     in
     let result, text = run ~tls:trusted ~status:200 ~cancel:false () in
     (match result with `Result (Ok ()) -> () | _ -> Alcotest.fail "trusted TLS failed");
     Alcotest.(check string) "ordered upstream bytes" "first second" text;
+    let result, _ = run ~tls:trusted ~large:true ~callback_failure:true ~status:200 ~cancel:false () in
+    (match result with `Callback_failed "PRIVATE-callback-exception" -> ()
+     | _ -> Alcotest.fail "callback exception must cross native HTTPS unchanged");
+    let result, _ = run ~tls:trusted ~large:true ~provider_decode:true ~status:200 ~cancel:false () in
+    (match result with `Provider_result (Error { code = Cashflow_core.Advisor.Invalid_stream; _ }) -> ()
+     | _ -> Alcotest.fail "provider Decode must not become Transport/Provider_unavailable");
     let result, text = run ~tls:trusted ~status:403 ~cancel:false () in
     (match result with `Result (Error (Cashflow_io.Https.Http_status 403)) -> () | _ -> Alcotest.fail "status not rejected");
     Alcotest.(check string) "no failed response bytes" "" text;
@@ -264,23 +284,25 @@ let tls_transport_no_logs () =
         List.iter (fun diagnostic ->
           Alcotest.(check bool) (name ^ " safe framing diagnostic") true (contains logs diagnostic))
           ["cashflow.https:HTTPS stream failed: phase=response-body reason=invalid-chunk-size";
-           "cashflow.https:HTTPS stream failed: phase=response-body reason=end-of-file"];
+           "cashflow.https:HTTPS stream failed: phase=response-body reason=end-of-file";
+           "cashflow.https:HTTPS stream failed: phase=callback reason=exception"];
         let boundary_logs = String.split_on_char '\n' logs
           |> List.filter (String.starts_with ~prefix:"cashflow.https:HTTPS stream failed:") in
-        Alcotest.(check int) "only actual failures logged, not cancellation/success/status" 4 (List.length boundary_logs);
+        Alcotest.(check int) "only actual failures logged, not cancellation/success/status" 6 (List.length boundary_logs);
         List.iter (fun line ->
           Alcotest.(check bool) "closed boundary diagnostic only" true
             (List.mem line
               ["cashflow.https:HTTPS stream failed: phase=tls reason=tls-failure";
                "cashflow.https:HTTPS stream failed: phase=tls reason=tls-alert";
                "cashflow.https:HTTPS stream failed: phase=response-body reason=invalid-chunk-size";
-               "cashflow.https:HTTPS stream failed: phase=response-body reason=end-of-file"])) boundary_logs;
+               "cashflow.https:HTTPS stream failed: phase=response-body reason=end-of-file";
+               "cashflow.https:HTTPS stream failed: phase=callback reason=exception"])) boundary_logs;
         List.iter (fun marker ->
           Alcotest.(check bool) (name ^ " no plaintext: " ^ marker) false (contains logs marker);
           Alcotest.(check bool) (name ^ " no recoverable hex: " ^ marker) false (contains decoded marker))
           ["AX9"; "QZ7"; "RB8"; "HS6"; "bogus"; "first";
            "advisor-auth-unique"; "advisor-header-unique"; "advisor-request-unique";
-           "advisor-financial-unique"; String.sub payload 0 100];
+           "advisor-financial-unique"; "PRIVATE-callback-exception"; "PRIVATE-invalid-json"; "PRIVATE-dummy-key"; "PRIVATE-system"; String.sub payload 0 100];
         List.iter (fun diagnostic ->
           Alcotest.(check bool) (name ^ " preserves " ^ diagnostic) true (contains logs diagnostic))
           ["unrelated-debug-survives"; "tls-warning-survives"; "tls-error-survives"])

@@ -110,7 +110,7 @@ let stream_post ?tls env : stream_post =
           let phase = match !phase with
             | `Dns -> "dns" | `Connect -> "connect" | `Tls -> "tls"
             | `Request_write -> "request-write" | `Response_headers -> "response-headers"
-            | `Response_body -> "response-body" in
+            | `Response_body -> "response-body" | `Callback -> "callback" in
           let reason = if !invalid_chunk_size then "invalid-chunk-size" else match exn with
             | End_of_file -> "end-of-file"
             | Tls_eio.Tls_failure _ -> "tls-failure"
@@ -184,14 +184,24 @@ let stream_post ?tls env : stream_post =
                   | Cohttp.Transfer.Fixed _ ->
                     let reader = Stream_response.make_body_reader response input in
                     (fun () -> Stream_response.read_body_chunk reader) in
+                let deliver chunk =
+                  phase := `Callback;
+                  on_chunk chunk;
+                  phase := `Response_body
+                in
                 let rec read () = match next () with
                   | Cohttp.Transfer.Done -> Ok ()
-                  | Chunk chunk -> on_chunk chunk; read ()
-                  | Final_chunk chunk -> on_chunk chunk; Ok () in
+                  | Chunk chunk -> deliver chunk; read ()
+                  | Final_chunk chunk -> deliver chunk; Ok () in
                 if Cohttp.Response.has_body response = `No then Ok () else read ()
               | status -> Error (Http_status (Cohttp.Code.code_of_status status))
         with
         | Eio.Cancel.Cancelled _ as exn -> raise exn
+        (* Consumer exceptions (including Advisor's private Decode) belong to the
+           caller, not the transport. Never stringify or log their payloads. *)
+        | exn when !phase = `Callback ->
+            log_failure exn;
+            raise exn
         | exn ->
             log_failure exn;
             Error (Transport (Printexc.to_string exn))
