@@ -2,6 +2,10 @@ module Commands = Cashflow_io.Commands
 module Import = Cashflow_io.Import
 module Import_store = Cashflow_io.Import_store
 module Inbox = Cashflow_io.Inbox
+module Llm = Cashflow_io.Llm
+module Logo_fetch = Cashflow_io.Logo_fetch
+module Merchant_logos = Cashflow_io.Merchant_logos
+module Sql = Cashflow_io.Sql
 module Planning_store = Cashflow_io.Planning_store
 module Query = Cashflow_io.Query
 module Service = Cashflow_io.Service
@@ -180,6 +184,8 @@ let test_query_folds_triage () =
   let row text_id = List.find (fun r -> text [ "id" ] r = text_id) rows in
   let spotify = row (Transfer_id.to_string id) in
   Alcotest.(check string) "the latest category" "Entertainment" (text [ "category"; "name" ] spotify);
+  Alcotest.(check string) "import merchant key" "spotify" (text ["merchant"; "key"] spotify);
+  Alcotest.(check string) "visible owner" "personal" (text ["merchant"; "owner"] spotify);
   Alcotest.(check string) "triaged" "done" (text [ "triage" ] spotify);
   let salary = List.find (fun r -> text [ "description" ] r = "LÖN") rows in
   Alcotest.(check string) "still uncategorised" "Uncategorized income" (text [ "category"; "name" ] salary);
@@ -197,6 +203,61 @@ let test_fold_triage_limit () =
   with
   | `List [ row ] -> Alcotest.(check string) "the purchase" "COOP" (match field [ "description" ] row with `String s -> s | _ -> "")
   | other -> Alcotest.failf "expected the one purchase, got %s" (Yojson.Safe.to_string other)
+
+
+let test_manual_merchant_query () =
+  let db = Store_sqlite.open_memory () in
+  let calls = ref 0 in
+  let service = Service.make ~logo_network:Logo_fetch.{with_request=(fun f -> f ());
+    resolve=(fun ~host:_ -> Ok ["8.8.8.8"]);
+    get=(fun ~uri:_ ~address:_ ~max_bytes:_ -> incr calls; Ok {status=200; headers=[]; body=(let path = if Sys.file_exists "test/fixtures/logo_64x48.png" then "test/fixtures/logo_64x48.png" else "fixtures/logo_64x48.png" in In_channel.with_open_bin path In_channel.input_all)})} db in
+  let access = sign_in service "alice" in
+  let checking = open_checking service access "Checking" in
+  let groceries = account_named service access "Groceries" in
+  ignore (ok (Service.add_entry service access { (entry "ICA purchase" ~from_account:checking ~to_account:groceries 100) with
+    memo={Transfer.empty_memo with counterparty=Some "ICA"} }));
+  let logo = Result.get_ok (Merchant_logos.set service access ~owner:(Access.personal access) ~merchant_key:"ica" ~link:"shop.com/pic.png") in
+  let count = !calls in
+  let result = ok_import (Commands.execute service access ~scopes:["ledger:read"] Commands.query_transactions (`Assoc [])) in
+  let rows = match field ["transactions"] result with `List rows -> rows | _ -> Alcotest.fail "rows" in
+  let row = List.find (fun row -> field ["merchant";"key"] row = `String "ica") rows in
+  Alcotest.(check bool) "same-origin URL" true (field ["merchant";"logo"] row = `String (Option.get logo.logo));
+  Alcotest.(check string) "personal owner" {|"personal"|} (Yojson.Safe.to_string (field ["merchant";"owner"] row));
+  Alcotest.(check int) "query does not fetch" count !calls
+
+let test_logo_scheduling () =
+  let db = Store_sqlite.open_memory () in
+  let pending = ref [] and calls = ref 0 in
+  let assistant = Llm.{model="fake"; complete=(fun ~system ~user:_ -> if Str_compat.contains ~sub:"website hostname" system then incr calls; Ok {|{"merchants":[]}|})} in
+  let service = Service.make ~assistant ~logo_network:(Logo_fetch.{ with_request=(fun f -> f ());
+    resolve=(fun ~host:_ -> Alcotest.fail "unexpected DNS"); get=(fun ~uri:_ ~address:_ ~max_bytes:_ -> Alcotest.fail "unexpected fetch") })
+    ~schedule:(fun work -> Alcotest.(check bool) "after commit" false (Sql.in_transaction db); pending := work :: !pending) db in
+  let access = sign_in service "alice" in
+  let checking = open_checking service access "Checking" in
+  let ctx = Import.context service access in
+  ignore (Import.preview ctx (request checking october) |> ok_import);
+  Alcotest.(check int) "preview no schedule" 0 (List.length !pending);
+  let bad = request checking "Datum;Text;Belopp\nnot-a-date;INVALID;-100,00\n" in
+  Alcotest.(check bool) "failed confirmation" true (Result.is_error (Import.confirm ctx bad));
+  Alcotest.(check int) "failed confirmation no job" 0 (List.length !pending);
+  ignore (imported (Import.confirm ctx (request checking october)));
+  Alcotest.(check int) "one job" 1 (List.length !pending);
+  Alcotest.(check int) "not inline" 0 !calls;
+  List.iter (fun f -> f ()) !pending;
+  Alcotest.(check bool) "resolved later" true (!calls > 0);
+  pending := [];
+  ignore (Import.confirm ctx (request checking october));
+  Alcotest.(check int) "duplicate no schedule" 0 (List.length !pending);
+  let offline_jobs = ref 0 and offline_dns = ref 0 and offline_get = ref 0 in
+  let offline = Service.make ~logo_network:(Logo_fetch.{ with_request=(fun f -> f ());
+    resolve=(fun ~host:_ -> incr offline_dns; Ok ["8.8.8.8"]);
+    get=(fun ~uri:_ ~address:_ ~max_bytes:_ -> incr offline_get; Error Unreachable_site) })
+    ~schedule:(fun _ -> incr offline_jobs) db in
+  let fresh_checking = open_checking offline access "Offline checking" in
+  ignore (imported (Import.confirm (Import.context offline access) (request fresh_checking october)));
+  Alcotest.(check int) "fresh import schedules no logo job without assistant" 0 !offline_jobs;
+  Alcotest.(check int) "offline logo DNS" 0 !offline_dns;
+  Alcotest.(check int) "offline logo GET" 0 !offline_get
 
 let test_rules_auto_apply () =
   let service, alice, checking = setup () in
@@ -481,6 +542,9 @@ let () =
           Alcotest.test_case "categorise, learn and undo" `Quick test_categorize_learn_and_undo;
           Alcotest.test_case "query folds triage" `Quick test_query_folds_triage;
           Alcotest.test_case "fold triage counts visible rows" `Quick test_fold_triage_limit;
+
+          Alcotest.test_case "logo scheduling" `Quick test_logo_scheduling;
+          Alcotest.test_case "manual merchant query" `Quick test_manual_merchant_query;
           Alcotest.test_case "rules auto-apply" `Quick test_rules_auto_apply ] );
       ( "inbox",
         [ Alcotest.test_case "pair and share" `Quick test_pair_and_share; Alcotest.test_case "undo after share" `Quick test_undo_after_share;

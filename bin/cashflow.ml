@@ -7,6 +7,7 @@ module Json = Cashflow_io.Json
 module Ledger = Cashflow_io.Ledger
 module Llm = Cashflow_io.Llm
 module Logging = Cashflow_io.Logging
+module Logo_fetch = Cashflow_io.Logo_fetch
 module Oidc = Cashflow_io.Oidc
 module Schema = Cashflow_io.Schema
 module Service = Cashflow_io.Service
@@ -67,6 +68,7 @@ let void_expired path =
 let serve path =
   with_config path (fun config ->
       Eio_main.run @@ fun env ->
+      Eio.Switch.run @@ fun sw ->
       with_database config (fun db ->
           (* Request fibers share the connection; they take turns with it. *)
           Sql.set_guard db (Db_guard.make ());
@@ -77,7 +79,8 @@ let serve path =
                   ~provider_only:config.openrouter_provider_only)
               config.openrouter_api_key
           in
-          let service = Service.make ?assistant db in
+          let service = Service.make ?assistant ~logo_network:(Https.logo_network env)
+            ~schedule:(fun work -> Eio.Fiber.fork ~sw work) db in
           let client = Oidc.https_client env in
           let verify_bearer = Oidc.make ~issuer:config.oidc_issuer ~audience:config.oidc_audience ~client () in
           let web_auth =

@@ -7,4 +7,5 @@ _opam/
 *.install
 .DS_Store
 docs/
+.superpowers/brainstorm/
 

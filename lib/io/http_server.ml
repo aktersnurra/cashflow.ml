@@ -3,6 +3,7 @@
 
 module Access = Cashflow_core.Access
 module I18n_locale = Cashflow_core.I18n_locale
+module Owner = Cashflow_core.Owner
 
 let log_src = Logs.Src.create "cashflow.http" ~doc:"HTTP request handling"
 module Log = (val Logs.src_log log_src : Logs.LOG)
@@ -142,6 +143,7 @@ let api_status = function
   | `Not_found _ -> 404
   | `Storage_unavailable _ -> 500
   | `Invalid _ | `Unreadable _ -> 422
+  | `Logo (code, _) -> if code = "forbidden" then 403 else 422
 
 (* State-changing calls carry the session's CSRF token in a header, which another site can't read
    or set; SameSite=Lax cookies are the second line of defence. *)
@@ -159,6 +161,7 @@ let api_command deps (request : request) name =
             match Commands.execute deps.service access ~scopes:(web_scopes access) command args with
             | Ok value -> json 200 value
             | Error (`Storage_unavailable _) -> error_json 500 "internal error"
+            | Error (`Logo (code, message)) -> json (api_status (`Logo (code, message))) (`Assoc ["error", `String message; "code", `String code])
             | Error error -> error_json (api_status error) (Import.error_to_string error)
             | exception Sql.Sql_error message ->
                 Log.err (fun m -> m "command=%s storage error: %s" name message);
@@ -210,9 +213,34 @@ let static deps path =
   in
   match read_file file with
   | Some body ->
-      let cache = if String.starts_with ~prefix:"/assets/" path then "public, max-age=31536000, immutable" else "no-cache" in
-      respond ~headers:[ ("cache-control", cache) ] 200 (content_type file) body
+      respond ~headers:[ ("cache-control", "no-cache") ] 200 (content_type file) body
   | None -> if String.starts_with ~prefix:"/assets/" path then plain 404 "Not Found" else plain 503 "The web UI is not installed"
+
+let api_logo deps request id =
+  let access = match session deps request with
+    | Some (access, _) -> Some access
+    | None -> (match bearer_access deps request with
+      | Some (access, scopes) when List.mem "ledger:read" scopes || List.mem "ledger:write" scopes -> Some access
+      | _ -> None) in
+  let id = try let n = int_of_string id in
+    if n > 0 && string_of_int n = id then Some n else None with Failure _ -> None in
+  let blob = match access, id with
+    | Some access, Some id ->
+        let owners = Access.personal access :: (match Access.household access with
+          | None -> [] | Some h -> [Owner.Household h.id]) in
+        List.find_map (fun owner -> Merchant_logos.blob deps.service access ~owner ~id) owners
+    | _ -> None in
+  let response = match blob with
+  | None -> plain 404 "Not Found"
+  | Some (blob : Merchant_logo_store.blob) ->
+      (match Logo_fetch.dimensions blob.bytes with
+       | Some (content_type, width, height) when content_type = blob.content_type && width >= 32 && height >= 32
+           && String.length blob.bytes <= 256 * 1024 ->
+           respond ~headers:["content-length", string_of_int (String.length blob.bytes)] 200 content_type
+             (if request.meth = HEAD then "" else blob.bytes)
+       | _ -> plain 404 "Not Found") in
+  (* Every image request must check current session and ownership, including after logout. *)
+  {response with headers=("cache-control", "private, no-store") :: response.headers}
 
 let handle deps (request : request) =
   let uri = Uri.of_string request.target in
@@ -225,6 +253,7 @@ let handle deps (request : request) =
   | GET, "/auth/login" -> login deps request query
   | GET, "/auth/callback" -> callback deps request query
   | POST, "/auth/logout" -> logout deps request
+  | (GET | HEAD), p when String.starts_with ~prefix:"/api/logos/" p -> api_logo deps request (String.sub p 11 (String.length p - 11))
   | GET, "/api/session" -> api_session deps request
   | GET, "/api/commands" -> api_commands deps request
   | POST, p when String.starts_with ~prefix:"/api/commands/" p -> api_command deps request (String.sub p 14 (String.length p - 14))
@@ -248,7 +277,8 @@ let respond_with reqd response =
   let headers =
     List.fold_left (fun headers (key, value) -> Httpun.Headers.add_multi headers [ (key, [ value ]) ]) Httpun.Headers.empty response.headers
   in
-  let headers = Httpun.Headers.add (Httpun.Headers.remove headers "content-length") "content-length" (string_of_int (String.length response.body)) in
+  let headers = if Httpun.Headers.mem headers "content-length" then headers
+    else Httpun.Headers.add headers "content-length" (string_of_int (String.length response.body)) in
   Httpun.Reqd.respond_with_string reqd (Httpun.Response.create ~headers (status_of_int response.status)) response.body
 
 let serve_request deps reqd =

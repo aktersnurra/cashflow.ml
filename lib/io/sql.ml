@@ -4,6 +4,7 @@ type _ field =
   | Int : int field
   | Int64 : int64 field
   | Text : string field
+  | Blob : string field
   | Bool : bool field
   | Nullable : 'a field -> 'a option field
   | Map : { name : string; field : 'b field; to_db : 'a -> 'b; of_db : 'b -> 'a option } -> 'a field
@@ -13,6 +14,7 @@ type ('f, 'r) spec = Nil : ('r, 'r) spec | Cons : 'a field * ('f, 'r) spec -> ('
 let int = Int
 let int64 = Int64
 let text = Text
+let blob = Blob
 let bool = Bool
 let nullable field = Nullable field
 let map ~name field ~to_db ~of_db = Map { name; field; to_db; of_db }
@@ -75,6 +77,7 @@ let rec encode : type a. a field -> a -> Sqlite3.Data.t =
   | Int -> INT (Int64.of_int value)
   | Int64 -> INT value
   | Text -> TEXT value
+  | Blob -> BLOB value
   | Bool -> INT (if value then 1L else 0L)
   | Nullable field -> (match value with None -> NULL | Some value -> encode field value)
   | Map { field; to_db; _ } -> encode field (to_db value)
@@ -83,6 +86,7 @@ let rec field_name : type a. a field -> string = function
   | Int -> "int"
   | Int64 -> "int64"
   | Text -> "text"
+  | Blob -> "blob"
   | Bool -> "bool"
   | Nullable field -> field_name field ^ " option"
   | Map { name; _ } -> name
@@ -93,11 +97,12 @@ let rec decode : type a. a field -> Sqlite3.Data.t -> a option =
   | Int, INT value -> Some (Int64.to_int value)
   | Int64, INT value -> Some value
   | Text, TEXT value -> Some value
+  | Blob, BLOB value -> Some value
   | Bool, INT value -> Some (not (Int64.equal value 0L))
   | Nullable _, NULL -> Some None
   | Nullable field, data -> Option.map Option.some (decode field data)
   | Map { field; of_db; _ }, data -> Option.bind (decode field data) of_db
-  | (Int | Int64 | Text | Bool), _ -> None
+  | (Int | Int64 | Text | Blob | Bool), _ -> None
 
 let decode_row statement (Row (spec, make)) =
   let rec go : type make row. (make, row) spec -> make -> int -> row =

@@ -32,9 +32,10 @@ let error_to_string : [< error ] -> string = function
   | `Invalid reason -> reason
   | `Storage_unavailable _ -> "internal error"
 
-type t = { db : Sql.db; now : unit -> Ptime.t; assistant : Llm.t option  (** off unless an API key is configured *) }
+type t = { db : Sql.db; now : unit -> Ptime.t; assistant : Llm.t option; logo_network : Logo_fetch.network option; schedule : (unit -> unit) -> unit }
 
-let make ?(now = fun () -> Ptime_clock.now ()) ?assistant db = { db; now; assistant }
+let make ?(now = fun () -> Ptime_clock.now ()) ?assistant ?logo_network ?(schedule = fun _ -> ()) db =
+  { db; now; assistant; logo_network; schedule }
 
 (* Every LLM call is logged with its purpose and size, never its content, for the settings page. *)
 let log_llm_call service (access : Access.t) ~purpose ~items ~ok =

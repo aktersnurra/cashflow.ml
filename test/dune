@@ -33,13 +33,15 @@
  (name test_import)
  (enabled_if (= %{context_name} default))
  (modules test_import test_service_support)
- (libraries alcotest cashflow_io cashflow_core yojson zipc))
+ (libraries alcotest cashflow_io cashflow_core yojson zipc)
+ (deps fixtures/logo_64x48.png))
 
 (test
  (name test_http)
  (enabled_if (= %{context_name} default))
  (modules test_http test_service_support)
- (libraries alcotest cashflow_io cashflow_core yojson uri))
+ (libraries alcotest cashflow_io cashflow_core yojson uri)
+ (deps fixtures/logo_64x48.png))
 
 (test
  (name test_attention)
@@ -72,6 +74,26 @@
  (modules test_import_properties test_service_properties test_service_support)
  (libraries alcotest cashflow_io cashflow_core hegel)
  (preprocess (pps ppx_hegel_test)))
+
+(test
+ (name test_logo_fetch)
+ (enabled_if (= %{context_name} default))
+ (modules test_logo_fetch)
+ (libraries alcotest cashflow_io uri)
+ (deps fixtures/logo_64x48.png fixtures/logo_64x48.webp fixtures/logo_64x48.jpg fixtures/logo_64x48.ico fixtures/logo_multi_size.ico))
+
+(test
+ (name test_merchant_logos)
+ (enabled_if (= %{context_name} default))
+ (modules test_merchant_logos test_service_support)
+ (libraries alcotest cashflow_io cashflow_core yojson uri)
+ (deps fixtures/logo_64x48.png))
+
+(executable
+ (name logo_browser_server)
+ (enabled_if (= %{context_name} default))
+ (modules logo_browser_server)
+ (libraries cashflow_io eio eio_main uri))
 
 (test
  (name test_sql)

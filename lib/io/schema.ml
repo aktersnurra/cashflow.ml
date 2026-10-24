@@ -223,6 +223,25 @@ CREATE TABLE llm_calls (
   item_count INTEGER NOT NULL, model TEXT NOT NULL, ok INTEGER NOT NULL, created_at TEXT NOT NULL
 );
 |}
+    );
+    ( 6,
+      {|
+CREATE TABLE logos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, sha256 TEXT NOT NULL UNIQUE,
+  content_type TEXT NOT NULL, width INTEGER NOT NULL, height INTEGER NOT NULL,
+  bytes BLOB NOT NULL, source_url TEXT NOT NULL, fetched_at TEXT NOT NULL
+);
+CREATE TABLE merchant_logos (
+  owner_kind TEXT NOT NULL CHECK (owner_kind IN ('user', 'household')),
+  owner_id TEXT NOT NULL, merchant_key TEXT NOT NULL,
+  source TEXT NOT NULL CHECK (source IN ('user', 'llm', 'none')),
+  status TEXT NOT NULL CHECK (status IN ('resolved', 'unknown', 'failed')),
+  website TEXT, logo_id INTEGER REFERENCES logos(id), confidence INTEGER CHECK (confidence BETWEEN 0 AND 100),
+  resolved_at TEXT NOT NULL,
+  PRIMARY KEY (owner_kind, owner_id, merchant_key)
+);
+CREATE INDEX merchant_logos_logo_idx ON merchant_logos(logo_id);
+|}
     ) ]
 
 let latest_version = List.fold_left (fun latest (version, _) -> max latest version) 0 migrations

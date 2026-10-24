@@ -27,10 +27,11 @@ module Xlsx = Cashflow_core.Xlsx
 let ( let* ) = Result.bind
 let ( >=> ) f g x = Result.bind (f x) g
 
-type error = [ Service.error | `Unreadable of string ]
+type error = [ Service.error | `Unreadable of string | `Logo of string * string ]
 
 let error_to_string : [< error ] -> string = function
   | `Unreadable reason -> "the file couldn't be read: " ^ reason
+  | `Logo (_, reason) -> reason
   | #Service.error as e -> Service.error_to_string e
 
 (* What the user said about a row the data can't decide (§6.3). *)
@@ -380,7 +381,7 @@ let confirm ctx request =
   let* outside = preview ctx request in
   let answered = List.filter_map (fun p -> match p.suggestion with Some ({ Suggest.source = Llm; _ } as s) -> Some (p.index, s) | _ -> None) outside.rows in
   try
-    Sql.transaction db (fun () ->
+    let result = Sql.transaction db (fun () ->
         let fail e = raise (Abort e) in
         let p = match pipeline ~answered ctx request with Ok p -> p | Error e -> fail e in
         match p.already_imported with
@@ -479,7 +480,19 @@ let confirm ctx request =
                   { b with ledger_balance })
                 p.balance
             in
-            Ok (`Imported { batch; inbox_count = !inbox_count; balance }))
+            Ok (`Imported { batch; inbox_count = !inbox_count; balance })) in
+    (match result with
+     | Ok (`Imported _) when Option.is_some ctx.service.assistant && Option.is_some ctx.service.logo_network ->
+         let owner = outside.decoded_file.account.account.owner in
+         let names = List.map (fun (p : planned) ->
+           let name = match p.row.counterparty with Some s when String.trim s <> "" -> s | _ -> p.row.description in
+           Suggest.merchant_key p.row, name) outside.rows in
+         (try ctx.service.schedule (fun () ->
+           try Merchant_logos.resolve ctx.service ctx.access ~owner names
+           with exn -> Logs.err (fun m -> m "logo resolution failed: %s" (Printexc.to_string exn)))
+          with exn -> Logs.err (fun m -> m "logo scheduling failed: %s" (Printexc.to_string exn)))
+     | _ -> ());
+    result
   with Abort e -> Error e
 
 (* Undoing an import reverses everything it posted, and everything triage posted about its rows

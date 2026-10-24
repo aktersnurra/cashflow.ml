@@ -104,6 +104,9 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
   in
   (* Keyboard: ⌘K or / opens the palette; g then a letter goes to a page. Typing in a field is left alone. *)
   let on_key (event : Dom_html.keyboardEvent Js.t) =
+    (* A disabled Save can move focus off the sheet while its request is pending. The
+       dialog's presence, not just the event target, must suppress shell shortcuts. *)
+    let logo_dialog_open = Js.Opt.test (Dom_html.document##getElementById (Js.string "logo-dialog")) in
     let target_is_field =
       match Js.Opt.to_option event##.target with
       | Some el -> (match String.lowercase (Js.to_string el##.tagName) with "input" | "textarea" | "select" -> true | _ -> false)
@@ -111,7 +114,8 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
     in
     let key = Js.Optdef.case event##.key (fun () -> "") Js.to_string in
     let meta = Js.to_bool event##.metaKey || Js.to_bool event##.ctrlKey in
-    if meta && String.equal key "k" then Effect.Many [ Effect.Prevent_default; set_palette true ]
+    if logo_dialog_open then Effect.Ignore
+    else if meta && String.equal key "k" then Effect.Many [ Effect.Prevent_default; set_palette true ]
     else if target_is_field then Effect.Ignore
     else if String.equal key "/" then Effect.Many [ Effect.Prevent_default; set_palette true ]
     else if pending_g then Effect.Many ([ set_pending_g false ] @ match shortcut key with Some r -> [ navigate r ] | None -> [])
