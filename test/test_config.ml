@@ -79,23 +79,32 @@ let test_openrouter_cannot_disable_privacy () =
   ignore (error (with_openrouter "(data_collection allow)"))
 
 let test_advisor_limits () =
-  Alcotest.(check bool) "absent refuses" true ((ok (with_openrouter "")).advisor_limits = None);
-  let limits extra =
-    with_openrouter
-      ("(advisor_limits ((context_tokens 10000) (completion_tokens 1000) (whole_completion_cap_supported true) \
-        (request_tokens_per_byte 4) (request_token_overhead 100)" ^ extra ^ "))")
-  in
-  let c = ok (limits "") in
-  Alcotest.(check bool) "explicit only" true (Option.is_some c.advisor_limits);
-  List.iter
-    (fun (old, by) -> ignore (error (Str_compat.replace_all ~sub:old ~by (limits ""))))
-    [
-      ("context_tokens 10000", "context_tokens 0");
-      ("completion_tokens 1000", "completion_tokens 10001");
-      ("request_tokens_per_byte 4", "request_tokens_per_byte 0");
-      ("request_token_overhead 100", "request_token_overhead -1");
-    ];
-  ignore (error (limits " (zdr false)"))
+  Alcotest.(check bool) "legacy model remains usable, Advisor unavailable" true
+    ((ok (with_openrouter "")).advisor_limits = None);
+  let profile = "(model anthropic/claude-sonnet-4.6) (provider_only (amazon-bedrock))" in
+  let c = ok (with_openrouter profile) in
+  Alcotest.(check bool) "ordinary Sonnet+strict-provider config ready" true (Config.advisor_available c);
+  Alcotest.(check bool) "empty credential unavailable" false
+    (Config.advisor_available { c with openrouter_api_key = Some " " });
+  let l = Option.get c.advisor_limits in
+  Alcotest.(check int) "supported context policy" 200000 l.context_tokens;
+  Alcotest.(check int) "supported completion policy" 8192 l.completion_tokens;
+  let limits = "(advisor_limits ((context_tokens 10000) (completion_tokens 1000)))" in
+  let configured = with_openrouter (profile ^ " " ^ limits) in
+  Alcotest.(check int) "stricter override" 1000
+    (Option.get (ok configured).advisor_limits).completion_tokens;
+  List.iter (fun (old, by) -> ignore (error (Str_compat.replace_all ~sub:old ~by configured)))
+    ["context_tokens 10000", "context_tokens 0";
+     "context_tokens 10000", "context_tokens 200001";
+     "completion_tokens 1000", "completion_tokens 10001";
+     "completion_tokens 1000", "completion_tokens 0";
+     "anthropic/claude-sonnet-4.6", "unknown";
+     "provider_only (amazon-bedrock)", "provider_only (amazon-bedrock azure)"];
+  ignore (error (with_openrouter limits));
+  let unsupported = ok (with_openrouter "(model unknown) (provider_only (amazon-bedrock))") in
+  Alcotest.(check bool) "unknown model unavailable" true (unsupported.advisor_limits = None);
+  let wrong_route = ok (with_openrouter "(model anthropic/claude-sonnet-4.6) (provider_only (azure))") in
+  Alcotest.(check bool) "unsupported route unavailable" true (wrong_route.advisor_limits = None)
 
 let () =
   Alcotest.run "config"

@@ -112,14 +112,7 @@ let serve path =
                 }
               in
               let runtime = Cashflow_io.Advisor_runtime.create ~sw ~service ~provider ~clock in
-              let available =
-                Option.fold ~none:false ~some:(fun key -> String.trim key <> "") config.openrouter_api_key
-                && config.openrouter_model <> "" && config.openrouter_provider_only <> []
-                && Option.fold ~none:false
-                     ~some:(fun (l : Cashflow_io.Advisor_provider.generation_limits) ->
-                       l.whole_completion_cap_supported)
-                     config.advisor_limits
-              in
+              let available = Config.advisor_available config in
               let advisor =
                 Some
                   (Cashflow_io.Advisor_http.create ~service ~runtime ~public_origin:config.public_base_url ~available

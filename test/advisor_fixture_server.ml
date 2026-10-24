@@ -244,9 +244,6 @@ let () =
                 {
                   context_tokens = 262144;
                   completion_tokens = 16384;
-                  whole_completion_cap_supported = true;
-                  request_tokens_per_byte = 1;
-                  request_token_overhead = 0;
                 }
               ~post ~api_key:"SYNTHETIC_API_SECRET" ~model:"synthetic" ~provider_only:[ "synthetic" ] ()
           in

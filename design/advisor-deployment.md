@@ -1,29 +1,54 @@
 # Advisor: deployment and verification gates
 
-**Release status: BLOCKED.** Local synthetic success is not approval to enable a real
-provider. No eligible real model/route has been attested by this implementation.
+**Production release remains gated** on the deployment checks below (proxy, FreeBSD,
+storage/history and accessibility). Local real-provider testing is supported; it is
+not production sign-off and no live call is claimed by synthetic tests.
 
-## Operator prerequisites
+## Operator prerequisites and supported profile
 
-Advisor uses the existing optional OpenRouter configuration, separately from the
-legacy complete-response features. Inspect `cashflow.example.sexp` and
-`lib/io/advisor_provider.mli` before configuring it. Explicitly establish, for the
-exact model and **every eligible provider endpoint**:
+Advisor supports this ordinary OpenRouter configuration (supply credentials separately):
 
-- streaming and the eight application read tools work under the configured
-  `provider.only` allowlist, `zdr:true`, `data_collection:"deny"`, and
-  `require_parameters:true`, on every round;
-- trusted context and completion limits, whole-completion coverage (including tool
-  arguments/framing and ignored reasoning), and conservative request-token
-  factor/overhead bounds covering tokenizer and provider-added framing;
-- privacy/retention eligibility and failure behavior without policy relaxation.
+```sexp
+(openrouter
+ ((api_key (Env OPENROUTER_API_KEY))
+  (model anthropic/claude-sonnet-4.6)
+  (provider_only (amazon-bedrock))))
+```
 
-Positive integers or generic OpenRouter parameter support are not capability
-attestation. Missing/unsupported configuration must refuse generation. There is
-no automatic model/provider fallback. Do not enable a route by guessing a large
-context budget. No credentials, paid calls or real financial data are needed for
-local verification. A real-provider synthetic smoke requires separate operator
-approval for credentials and cost; it cannot substitute for these attestations.
+No manual attestation is required. Default policy is 200000 context tokens and
+8192 completion tokens. Optional `advisor_limits` accepts only `context_tokens`
+and `completion_tokens`, both positive, completion <= context, and no greater
+than these defaults. For a bounded smoke use context 100000, completion 2048.
+The old whole-completion boolean and tokenizer factor/overhead fields are removed;
+migrate them to this supported profile and the two numeric policy settings.
+Unsupported models/routes without overrides remain usable by legacy categorization
+and summaries, but Advisor stays unavailable. Explicit unsupported Advisor overrides
+fail configuration with the required model/provider profile named. No model fallback.
+
+Capability sources (public, checked during this change):
+
+- [OpenRouter Sonnet 4.6 endpoints](https://openrouter.ai/api/v1/models/anthropic/claude-sonnet-4.6/endpoints)
+  lists Amazon Bedrock endpoints with context 1000000, max completion 128000,
+  tools and max_tokens support. Our policy is deliberately smaller.
+- [AWS Claude Messages parameters](https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-anthropic-claude-messages-request-response.html)
+  documents max_tokens as the maximum tokens generated before stopping.
+  The adapter does not request extended thinking.
+- [OpenRouter ZDR](https://openrouter.ai/docs/guides/features/zdr) documents enforced
+  ZDR endpoint filtering. Every round retains provider.only, zdr:true,
+  data_collection:deny and require_parameters:true. No eligible route means safe
+  failure, not fallback to a privacy-weaker route.
+
+Admission measures the immutable serialized request (including eight read-only tool
+schemas), estimates one token per UTF-8 byte plus a 4096-token framing allowance,
+and reserves the configured max_tokens on every round. These are **estimates, not
+an externally proven tokenizer/all-framing bound**. Upstream context rejection and
+length termination are safe terminal outcomes, never relaxed retries. Local UTF-8
+output/tool/evidence/history/journal/deadline/capacity caps remain independent of
+token policy; smaller completion limits need not fill the local byte allowance.
+Prepared measured bytes are the exact transmitted bytes, with overflow checks.
+
+A real-provider synthetic smoke requires operator approval for credentials and cost.
+It does not establish deployment retention/accessibility or production readiness.
 
 ## User contract and data
 

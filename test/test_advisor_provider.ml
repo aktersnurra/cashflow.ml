@@ -2,7 +2,7 @@ module P = Cashflow_io.Advisor_provider
 module A = Cashflow_core.Advisor
 module Sql = Cashflow_io.Sql
 
-let limits : P.generation_limits = { context_tokens = 262144; completion_tokens = 32768; whole_completion_cap_supported = true; request_tokens_per_byte=1; request_token_overhead=0 }
+let limits : P.generation_limits = { context_tokens = 262144; completion_tokens = 32768 }
 let create ~post ~api_key ~model ~provider_only = P.create ~limits ~post ~api_key ~model ~provider_only ()
 let request : P.request = { system = "synthetic instructions"; messages = [ P.User "synthetic user" ] }
 let frame s = "data: " ^ s ^ "\r\n\r\n"
@@ -132,7 +132,7 @@ let multiline_and_failures () =
     | Error { A.code = A.Provider_unavailable; context = A.No_context } -> ()
     | _ -> Alcotest.fail "safe provider error");
     Alcotest.(check int) "no retry" 1 (List.length !captured); policy !captured)
-    [Cashflow_io.Https.Http_status 403; Cashflow_io.Https.Transport "PRIVATE BODY"];
+    [Cashflow_io.Https.Http_status 400; Cashflow_io.Https.Http_status 403; Cashflow_io.Https.Transport "PRIVATE BODY"];
   let exposed = ref false and captured = ref [] in
   let post ~uri:_ ~headers:_ ~body ~on_chunk =
     captured := [Yojson.Safe.from_string body];
@@ -197,23 +197,26 @@ let configured_bounds () =
     List.iter on_chunk [": ignored\n\n"; text "live"; finish "stop"; done_]; Ok () in
   let make ?limits () = P.create ?limits ~post ~api_key:"fake" ~model:"synthetic" ~provider_only:["amazon-bedrock"] () in
   List.iter (fun p -> failed (P.prepare p request); failed (P.stream p request ~on_event:(fun _ -> Alcotest.fail "unsupported event")))
-    [make (); make ~limits:{ limits with whole_completion_cap_supported = false } ();
+    [make ();
      make ~limits:{ limits with completion_tokens = 0 } ()];
   Alcotest.(check int) "unsupported sends nothing" 0 (List.length !sent);
   List.iter (fun l -> failed (P.prepare (make ~limits:l ()) request))
-    [{limits with request_tokens_per_byte=0}; {limits with request_token_overhead=(-1)};
-     {limits with request_tokens_per_byte=max_int}; {limits with request_token_overhead=max_int}];
+    [{ limits with context_tokens = 0 }; { limits with context_tokens = -1 };
+     { limits with completion_tokens = max_int };
+     { context_tokens = max_int; completion_tokens = max_int }];
+  let supported = P.create ~post ~api_key:"fake" ~model:"anthropic/claude-sonnet-4.6"
+    ~provider_only:["amazon-bedrock"] () in
+  (match P.prepare supported request with Ok _ -> () | Error _ -> Alcotest.fail "supported profile default admission");
   let p = make ~limits () in
   let prepared = match P.prepare p request with Ok p -> p | Error _ -> Alcotest.fail "prepare" in
   ok (P.stream_prepared p prepared ~on_activity:(fun () -> incr activity) ~on_event:(fun _ -> ()));
   Alcotest.(check int) "exact measured request" (String.length (List.hd !sent)) (P.serialized_bytes prepared);
   Alcotest.(check int) "raw ignored activity" 4 !activity;
   let bytes = P.serialized_bytes prepared in
-  Alcotest.(check int) "explicit synthetic token bound" bytes (P.conservative_tokens prepared);
-  let tight = {limits with request_tokens_per_byte=2;request_token_overhead=7;
-    context_tokens=bytes*2+7+limits.completion_tokens} in
-  let tight_prepared = match P.prepare (make ~limits:tight ()) request with Ok p -> p | Error _ -> Alcotest.fail "exact bound" in
-  Alcotest.(check int) "factor and overhead" (bytes*2+7) (P.conservative_tokens tight_prepared);
+  Alcotest.(check int) "byte estimate plus framing allowance" (bytes+4096) (P.conservative_tokens prepared);
+  let tight = {limits with context_tokens=bytes+4096+limits.completion_tokens} in
+  let tight_prepared = match P.prepare (make ~limits:tight ()) request with Ok p -> p | Error _ -> Alcotest.fail "exact estimate" in
+  Alcotest.(check int) "estimate" (bytes+4096) (P.conservative_tokens tight_prepared);
   failed (P.prepare (make ~limits:{tight with context_tokens=tight.context_tokens-1} ()) request);
   failed (P.stream_prepared (make ~limits ()) prepared ~on_activity:(fun () -> ()) ~on_event:(fun _ -> ()));
   let other = make ~limits:{ limits with completion_tokens = 12 } () in

@@ -21,6 +21,10 @@ type t = {
   log_level : Logs.level option;  (** [None] silences logging *)
 }
 
+let advisor_available config =
+  Option.fold ~none:false ~some:(fun key -> String.trim key <> "") config.openrouter_api_key
+  && Option.is_some config.advisor_limits
+
 module File = struct
   open Sexplib0.Sexp_conv
 
@@ -39,9 +43,6 @@ module File = struct
   type advisor_limits = {
     context_tokens : int;
     completion_tokens : int;
-    whole_completion_cap_supported : bool;
-    request_tokens_per_byte : int;
-    request_token_overhead : int;
   }
   [@@deriving sexp]
 
@@ -96,15 +97,20 @@ let resolve (file : File.t) =
     | Some o -> check (o.provider_only <> []) "openrouter.provider_only must not be empty"
     | None -> Ok ()
   in
-  let advisor_limits = Option.bind file.openrouter (fun o -> o.File.advisor_limits) in
-  let* () =
-    match advisor_limits with
-    | None -> Ok ()
-    | Some l ->
-        check
-          (l.context_tokens > 0 && l.completion_tokens > 0 && l.completion_tokens <= l.context_tokens
-           && l.request_tokens_per_byte > 0 && l.request_token_overhead >= 0)
-          "openrouter.advisor_limits requires positive context/completion/factor, nonnegative overhead, completion <= context"
+  let* advisor_limits =
+    match file.openrouter with
+    | None -> Ok None
+    | Some o ->
+        let supported = Advisor_provider.supported_limits ~model:o.model ~provider_only:o.provider_only in
+        match o.advisor_limits, supported with
+        | None, limits -> Ok limits
+        | Some _, None -> Error "openrouter.advisor_limits requires supported Advisor profile: anthropic/claude-sonnet-4.6 with provider_only (amazon-bedrock)"
+        | Some l, Some policy ->
+            let* () = check
+              (l.context_tokens > 0 && l.completion_tokens > 0 && l.completion_tokens <= l.context_tokens
+               && l.context_tokens <= policy.context_tokens && l.completion_tokens <= policy.completion_tokens)
+              "openrouter.advisor_limits requires positive context/completion, completion <= context, context <= 200000 and completion <= 8192" in
+            Ok (Some { Advisor_provider.context_tokens = l.context_tokens; completion_tokens = l.completion_tokens })
   in
   let* web_client_secret = match file.web with Some web -> Result.map Option.some (read_secret web.client_secret) | None -> Ok None in
   let* openrouter_api_key = match file.openrouter with Some o -> Result.map Option.some (read_secret o.api_key) | None -> Ok None in
@@ -115,12 +121,7 @@ let resolve (file : File.t) =
       static_dir = file.static_dir; openrouter_api_key;
       openrouter_model = Option.fold ~none:"anthropic/claude-haiku-5.5" ~some:(fun (o : File.openrouter) -> o.model) file.openrouter;
       openrouter_provider_only = Option.fold ~none:default_openrouter_provider_only ~some:(fun (o : File.openrouter) -> o.provider_only) file.openrouter;
-      advisor_limits = Option.map
-        (fun (l : File.advisor_limits) ->
-          { Advisor_provider.context_tokens = l.context_tokens; completion_tokens = l.completion_tokens;
-            whole_completion_cap_supported = l.whole_completion_cap_supported;
-            request_tokens_per_byte = l.request_tokens_per_byte; request_token_overhead = l.request_token_overhead })
-        advisor_limits;
+      advisor_limits;
       log_level = (match file.log_level with Quiet -> None | Error -> Some Logs.Error | Warning -> Some Warning | Info -> Some Info | Debug -> Some Debug) }
 
 (* "lib/config.ml.File.t_of_sexp: extra fields: statc_dir" reads as "unknown field statc_dir". *)

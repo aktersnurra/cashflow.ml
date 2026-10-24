@@ -169,12 +169,9 @@ let execute ~run:(current_run : A.run) =
         let size = require (perform (Measure_context context)) in
         if size.serialized_bytes < 0 || size.conservative_tokens < 0 || size.output_reserve_tokens <= 0 then
           reject A.Invalid_request;
-        (* A byte-per-token upper bound is intentionally conservative, including
-           schemas/envelopes/system/evidence, even with an unreliable estimator. *)
-        (* This floor covers visible text only. IO must additionally reserve for
-           tool arguments/framing and any provider reasoning, or refuse the model.
-           Smaller contexts are intentionally refused rather than guessed upward. *)
-        check_limit (size.output_reserve_tokens < A.limits.output_bytes - !output) A.Context_bytes;
+        (* Reserve the upstream max_tokens policy independently of the local
+           UTF-8 output cap. Byte-based input tokens remain an estimate; provider
+           context rejection/length termination never relaxes limits or routing. *)
         let tokens = max size.conservative_tokens size.serialized_bytes in
         check_limit
           (size.output_reserve_tokens > budget || tokens > budget - size.output_reserve_tokens)

@@ -26,17 +26,16 @@ let durable_delivery_and_runtime_deadlines () =
                   "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
                 Ok ()
               in
+              let config = Result.get_ok (Config.parse
+                {|((database /tmp/unused) (listen 127.0.0.1:8081) (public_url https://cashflow.example)
+                   (oidc ((issuer https://id.example) (audience https://cashflow.example)))
+                   (openrouter ((api_key (Inline fake)) (model anthropic/claude-sonnet-4.6)
+                                (provider_only (amazon-bedrock)))))|}) in
+              Alcotest.(check bool) "ordinary supported config ready" true (Config.advisor_available config);
               let provider =
-                Advisor_provider.create
-                  ~limits:
-                    {
-                      context_tokens = 262144;
-                      completion_tokens = 1024;
-                      whole_completion_cap_supported = true;
-                      request_tokens_per_byte = 1;
-                      request_token_overhead = 0;
-                    }
-                  ~post ~api_key:"fake" ~model:"synthetic" ~provider_only:[ "synthetic" ] ()
+                Advisor_provider.create ?limits:config.advisor_limits ~post
+                  ~api_key:(Option.get config.openrouter_api_key) ~model:config.openrouter_model
+                  ~provider_only:config.openrouter_provider_only ()
               in
               let clock : R.clock =
                 {
@@ -46,7 +45,7 @@ let durable_delivery_and_runtime_deadlines () =
                 }
               in
               let runtime = R.create ~sw ~service ~provider ~clock in
-              let a = ok (R.submit runtime ~principal (submit "runtime")) in
+              let a = ok (R.submit ~available:(Config.advisor_available config) runtime ~principal (submit "runtime")) in
               R.start runtime a;
               let sub = ok (R.subscribe runtime ~principal ~run:a.ids.run_id ~after:0L) in
               let seen = ref [] in
@@ -132,9 +131,6 @@ let fixture post test =
                     {
                       context_tokens = 262144;
                       completion_tokens = 1024;
-                      whole_completion_cap_supported = true;
-                      request_tokens_per_byte = 1;
-                      request_token_overhead = 0;
                     }
                   ~post:(post db) ~api_key:"fake" ~model:"synthetic" ~provider_only:[ "synthetic" ] ()
               in
@@ -503,32 +499,32 @@ let runtime_journal_reserve () =
       R.close sub)
 
 let runtime_reserve_admission () =
-  fixture silent (fun sw db service _runtime _ ->
+  List.iter (fun context_tokens ->
+    fixture silent (fun sw db service _runtime _ ->
       let owner, _, p = login service "reserve" in
       let _, clock = fake () in
       let calls = ref 0 in
-      let post ~uri:_ ~headers:_ ~body:_ ~on_chunk:_ =
+      let post ~uri:_ ~headers:_ ~body ~on_chunk =
         incr calls;
+        let open Yojson.Safe.Util in
+        Alcotest.(check int) "configured upstream completion" 1024
+          (Yojson.Safe.from_string body |> member "max_tokens" |> to_int);
+        on_chunk "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
         Ok ()
       in
-      let provider =
-        Advisor_provider.create
-          ~limits:
-            {
-              context_tokens = 16384;
-              completion_tokens = 1024;
-              whole_completion_cap_supported = true;
-              request_tokens_per_byte = 1;
-              request_token_overhead = 0;
-            }
-          ~post ~api_key:"fake" ~model:"synthetic" ~provider_only:[ "synthetic" ] ()
-      in
+      let provider = Advisor_provider.create
+          ~limits:{ context_tokens; completion_tokens = 1024 }
+          ~post ~api_key:"fake" ~model:"synthetic" ~provider_only:[ "synthetic" ] () in
       let runtime = R.create ~sw ~service ~provider ~clock in
       let a = ok (R.submit runtime ~principal:p (submit "reserve")) in
       drain ();
-      check "runtime visible floor stricter than provider cap"
-        (!calls = 0
-        && match state db owner a with A.Failed { context = A.Limit A.Context_bytes; _ } -> true | _ -> false))
+      if context_tokens = 16384 then
+        check "small completion independent of local byte cap" (!calls = 1 && state db owner a = A.Completed)
+      else
+        check "insufficient input plus completion context refuses without sending"
+          (!calls = 0 && match state db owner a with
+            A.Failed { context = A.Limit A.Context_bytes; _ } -> true | _ -> false)))
+    [16384; 2048]
 
 let orphan_sweep () =
   let callback = ref (fun (_ : string) -> ()) and calls = ref 0 in

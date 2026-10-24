@@ -9,8 +9,8 @@ val create : sw:Eio.Switch.t -> service:Service.t -> provider:Advisor_provider.t
 (** Exactly one authoritative supervisor per service database, on one Eio domain; multi-process/multi-supervisor
     ownership is unsupported. Recovery never generates and relies on the store's eight-active-run invariant. The service
     database must outlive [sw]. Cancelling [sw] seals/drains workers; normal scope exit joins them. Provider
-    configuration must independently attest context/input/whole-completion bounds for every route; no production route
-    is attested here.
+    configuration supplies a supported bounded context/completion policy; input token counts
+    are estimates, with terminal upstream context rejection and no relaxed retries.
 
     Maintenance fails unregistered Queued records after 30s, never registered or in-flight handoffs. It rechecks state
     and handoff bookkeeping atomically, samples at most eight active runs, and yields outside guards. Pruning uses

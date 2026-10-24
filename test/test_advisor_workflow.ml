@@ -718,9 +718,9 @@ let streaming_phase () =
 
 let completion_reserve () =
   let f = fixture [ stop ] in
-  f.size <- { f.size with output_reserve_tokens = 65535 };
-  failed (execute f);
-  check_int "undersized visible output reserve refuses generation" 0 (count f "begin");
+  f.size <- { f.size with output_reserve_tokens = 2048 };
+  completed (execute f);
+  check_int "bounded completion smaller than byte cap admits generation" 1 (count f "begin");
   let f = fixture [ stop ] in
   f.size <- { f.size with output_reserve_tokens = 65536 };
   completed (execute f);

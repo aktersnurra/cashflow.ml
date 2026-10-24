@@ -7,9 +7,18 @@ type request = { system : string; messages : message list }
 type finish_reason = Stop | Tool_calls | Length | Content_filter
 type usage = { prompt_tokens : int; completion_tokens : int; total_tokens : int }
 type provider_event = Text of string | Calls_ready of raw_call list | Round_finished of finish_reason
-type generation_limits = { context_tokens : int; completion_tokens : int; whole_completion_cap_supported : bool; request_tokens_per_byte : int; request_token_overhead : int }
+type generation_limits = { context_tokens : int; completion_tokens : int }
 type t = { limits : generation_limits option; identity : unit ref; post : Https.stream_post; api_key : string; model : string; provider_only : string list }
-let create ?limits ~post ~api_key ~model ~provider_only () = { limits; identity = ref (); post; api_key; model; provider_only }
+(* Policy below the documented Sonnet 4.6 Bedrock capabilities, not a
+   tokenizer/framing guarantee. See design/advisor-deployment.md for sources. *)
+let supported_limits ~model ~provider_only =
+  if model = "anthropic/claude-sonnet-4.6" && provider_only = ["amazon-bedrock"] then
+    Some { context_tokens = 200000; completion_tokens = 8192 }
+  else None
+
+let create ?limits ~post ~api_key ~model ~provider_only () =
+  let limits = match limits with Some _ -> limits | None -> supported_limits ~model ~provider_only in
+  { limits; identity = ref (); post; api_key; model; provider_only }
 let model t = t.model
 let limits t = t.limits
 type prepared_request = { identity : unit ref; body : string; conservative_tokens : int }
@@ -70,13 +79,14 @@ let append max buffer json = match json with
 let prepare (t : t) request =
   match t.limits with
   | Some l when l.context_tokens > 0 && l.completion_tokens > 0 &&
-      l.whole_completion_cap_supported && t.provider_only <> [] &&
-      l.request_tokens_per_byte > 0 && l.request_token_overhead >= 0 ->
+      t.provider_only <> [] ->
       let body = body t l.completion_tokens request in
       let bytes = String.length body in
-      if bytes > (max_int - l.request_token_overhead) / l.request_tokens_per_byte then
+      (* One token per serialized UTF-8 byte plus an estimated framing allowance.
+         Upstream context errors remain terminal; this is not a tokenizer proof. *)
+      if bytes > max_int - 4096 then
         Error { A.code = A.Invalid_request; context = A.No_context }
-      else let conservative_tokens = bytes * l.request_tokens_per_byte + l.request_token_overhead in
+      else let conservative_tokens = bytes + 4096 in
       if l.completion_tokens > l.context_tokens || conservative_tokens > l.context_tokens - l.completion_tokens then
         Error { A.code = A.Run_limit_reached; context = A.Limit A.Context_bytes }
       else Ok { identity = t.identity; body; conservative_tokens }

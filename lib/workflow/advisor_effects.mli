@@ -47,11 +47,10 @@ type context_size = { serialized_bytes : int; conservative_tokens : int; output_
     semantic events without silently dropping duplicates. Load_context must set omitted_turns to the number already
     omitted from successful history; execute adds further whole-turn omissions. Map only model-facing messages/data,
     never internal turn/attempt/segment IDs, to the provider. Measure_context measures the complete serialized request
-    including tools/system, uses a conservative tokenizer and reserves sufficient tokens for the entire permitted
-    completion (including tool arguments/framing and reasoning). Workflow enforces a
-    one-token-per-remaining-visible-byte reserve floor, intentionally refusing smaller contexts; this is not a complete
-    completion-token bound. IO must establish the full reserve from reliable configured limits and/or an explicitly
-    bounded provider request, or refuse generation. It must reject unsupported models/configuration. Begin/Read preserve
+    including tools/system, estimates input tokens and reserves the configured upstream
+    max_tokens completion policy. This estimate is not a proof of provider framing/tokenization.
+    The local UTF-8 output cap is independent; a smaller completion policy is allowed.
+    IO rejects unsupported models/configuration and upstream context failures without relaxed retry. Begin/Read preserve
     the original total deadline (measured from run.started_at, never reset); IO additionally supervises raw activity,
     cancellation and inactivity. Append_events persists before delivery, rechecks authority, buffers at most 100ms/4KiB,
     and enforces journal/frame/backlog bounds. Despite its name, Commit_terminal also applies Start/Set_phase through

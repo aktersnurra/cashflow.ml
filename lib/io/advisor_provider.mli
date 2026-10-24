@@ -11,23 +11,19 @@ type provider_event = Text of string | Calls_ready of raw_call list | Round_fini
 type generation_limits = {
   context_tokens : int;
   completion_tokens : int;
-  whole_completion_cap_supported : bool;
-  request_tokens_per_byte : int;
-  request_token_overhead : int;
 }
-(** Trusted deployment configuration for this exact model and EVERY eligible endpoint.
-    Support requires independently established evidence that max_tokens includes tool
-    arguments/framing and ignored reasoning. Generic OpenRouter support is not evidence.
-    The explicit factor/overhead bound must also cover all tokenizer and provider-added
-    request framing/system/tool overhead for every route, with external evidence.
-    Validated arithmetic alone does not substantiate model limits.
-    Missing/unsupported configuration refuses generation; no production route is attested here. *)
+(** Bounded context/completion policy. Request admission uses a byte-based token
+    estimate, not an externally attested upper bound on provider tokenization.
+    Upstream context rejection is terminal; no relaxed retry or route fallback. *)
+val supported_limits : model:string -> provider_only:string list -> generation_limits option
+(** Documented Sonnet 4.6/Bedrock profile, or None for unsupported configurations. *)
 type t
 type prepared_request
 val model : t -> string
 val limits : t -> generation_limits option
 val prepare : t -> request -> (prepared_request, A.error) result
 val serialized_bytes : prepared_request -> int
+(** Estimated request tokens including a framing allowance. *)
 val conservative_tokens : prepared_request -> int
 val stream_prepared : t -> prepared_request -> on_activity:(unit -> unit) ->
   on_event:(provider_event -> unit) -> (usage, A.error) result

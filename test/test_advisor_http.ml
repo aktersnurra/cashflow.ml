@@ -27,9 +27,6 @@ let fixture ?(available = false) ?(configured = false) test =
                     {
                       Advisor_provider.context_tokens = 262144;
                       completion_tokens = 1024;
-                      whole_completion_cap_supported = true;
-                      request_tokens_per_byte = 1;
-                      request_token_overhead = 0;
                     }
                 else None
               in

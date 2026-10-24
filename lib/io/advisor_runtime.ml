@@ -444,7 +444,7 @@ let run_handler t r sw : E.handler =
         | E.Load_context -> load_context t r
         | E.Allocate_segment -> checked t r (fun _ -> Ok (fresh_segment ()))
         | E.Measure_context c ->
-            let* current_run = checked t r (fun run -> Ok run) in
+            let* _ = checked t r (fun run -> Ok run) in
             let* prepared = P.prepare t.provider (request_of_context c) in
             let* limits = match P.limits t.provider with Some l -> Ok l | None -> Error (error A.Invalid_request) in
             r.prepared <- Some prepared;
@@ -453,8 +453,7 @@ let run_handler t r sw : E.handler =
                 {
                   serialized_bytes = P.serialized_bytes prepared;
                   conservative_tokens = P.conservative_tokens prepared;
-                  output_reserve_tokens =
-                    max limits.completion_tokens (A.limits.output_bytes - current_run.counters.output_bytes);
+                  output_reserve_tokens = limits.completion_tokens;
                 }
         | E.Begin_model_round _ -> begin_round t r sw
         | E.Read_model_event -> read_round t r
