@@ -103,6 +103,23 @@ let stream_post ?tls env : stream_post =
   | Ok tls ->
       Mirage_crypto_rng_unix.use_default ();
       fun ~uri ~headers ~body ~on_chunk ->
+        (* Closed diagnostic vocabulary only. Neither exception payloads nor any
+           URI/header/body data may reach this log, including parser failures. *)
+        let phase = ref `Dns and invalid_chunk_size = ref false in
+        let log_failure exn =
+          let phase = match !phase with
+            | `Dns -> "dns" | `Connect -> "connect" | `Tls -> "tls"
+            | `Request_write -> "request-write" | `Response_headers -> "response-headers"
+            | `Response_body -> "response-body" in
+          let reason = if !invalid_chunk_size then "invalid-chunk-size" else match exn with
+            | End_of_file -> "end-of-file"
+            | Tls_eio.Tls_failure _ -> "tls-failure"
+            | Tls_eio.Tls_alert _ -> "tls-alert"
+            | Invalid_argument _ -> "invalid-argument"
+            | Failure _ -> "failure"
+            | _ -> "exception" in
+          Log.warn (fun m -> m "HTTPS stream failed: phase=%s reason=%s" phase reason)
+        in
         try
           let uri = Uri.of_string uri in
           if Uri.scheme uri <> Some "https" then Error Invalid_scheme
@@ -111,13 +128,18 @@ let stream_post ?tls env : stream_post =
             let service = string_of_int (Option.value ~default:443 (Uri.port uri)) in
             let address = match Eio.Net.getaddrinfo_stream ~service env#net host with
               | address :: _ -> address | [] -> failwith "unresolved HTTPS host" in
-            let flow = connector tls uri (Eio.Net.connect ~sw env#net address) in
+            phase := `Connect;
+            let raw_flow = Eio.Net.connect ~sw env#net address in
+            phase := `Tls;
+            let flow = connector tls uri raw_flow in
+            phase := `Request_write;
             let request = Cohttp.Request.make_for_client
               ~headers:(Cohttp.Header.of_list headers) ~chunked:false
               ~body_length:(Int64.of_int (String.length body)) `POST uri in
             Eio.Buf_write.with_flow flow (fun output ->
               Stream_request.write ~flush:true
                 (fun writer -> Stream_request.write_body writer body) request output);
+            phase := `Response_headers;
             let input = Eio.Buf_read.of_flow ~max_size:65536 flow in
             match Stream_response.read input with
             | `Eof -> Error (Transport "missing response")
@@ -125,6 +147,7 @@ let stream_post ?tls env : stream_post =
             | `Ok response ->
               match Cohttp.Response.status response with
               | #Cohttp.Code.success_status ->
+                phase := `Response_body;
                 let next = match Cohttp.Response.encoding response with
                   | Cohttp.Transfer.Unknown ->
                     let reader = Lenient_response.make_body_reader response input in
@@ -149,7 +172,9 @@ let stream_post ?tls env : stream_post =
                           | Some line ->
                             (match Http.Private.Parser.parse_chunk_length (line ^ "\r\n") with
                              | Ok _ -> ()
-                             | Error _ -> failwith "invalid HTTP chunk size")
+                             | Error _ ->
+                               invalid_chunk_size := true;
+                               failwith "invalid HTTP chunk size")
                           | None -> raise End_of_file);
                         line
                     end in
@@ -167,7 +192,10 @@ let stream_post ?tls env : stream_post =
               | status -> Error (Http_status (Cohttp.Code.code_of_status status))
         with
         | Eio.Cancel.Cancelled _ as exn -> raise exn
-        | exn -> Error (Transport (Printexc.to_string exn))
+        | exn ->
+            log_failure exn;
+            Error (Transport (Printexc.to_string exn))
+
 (* The checked address is the only address passed to connect; the URI still supplies Host and SNI. *)
 let logo_network env : Logo_fetch.network =
   let with_request : type a. (unit -> (a, Logo_fetch.error) result) -> (a, Logo_fetch.error) result = fun f ->

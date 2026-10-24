@@ -261,6 +261,20 @@ let tls_transport_no_logs () =
         tls_transport ();
         let logs = Buffer.contents captured in
         let decoded = decode_trace_hex logs in
+        List.iter (fun diagnostic ->
+          Alcotest.(check bool) (name ^ " safe framing diagnostic") true (contains logs diagnostic))
+          ["cashflow.https:HTTPS stream failed: phase=response-body reason=invalid-chunk-size";
+           "cashflow.https:HTTPS stream failed: phase=response-body reason=end-of-file"];
+        let boundary_logs = String.split_on_char '\n' logs
+          |> List.filter (String.starts_with ~prefix:"cashflow.https:HTTPS stream failed:") in
+        Alcotest.(check int) "only actual failures logged, not cancellation/success/status" 4 (List.length boundary_logs);
+        List.iter (fun line ->
+          Alcotest.(check bool) "closed boundary diagnostic only" true
+            (List.mem line
+              ["cashflow.https:HTTPS stream failed: phase=tls reason=tls-failure";
+               "cashflow.https:HTTPS stream failed: phase=tls reason=tls-alert";
+               "cashflow.https:HTTPS stream failed: phase=response-body reason=invalid-chunk-size";
+               "cashflow.https:HTTPS stream failed: phase=response-body reason=end-of-file"])) boundary_logs;
         List.iter (fun marker ->
           Alcotest.(check bool) (name ^ " no plaintext: " ^ marker) false (contains logs marker);
           Alcotest.(check bool) (name ^ " no recoverable hex: " ^ marker) false (contains decoded marker))
