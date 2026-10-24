@@ -213,6 +213,47 @@ let ico_directory_bounds () =
   Alcotest.(check bool) "truncated later payload" true
     (Option.is_none (dimensions (String.sub body 0 (String.length body - 1))))
 
+let bounded_distinct_candidates () =
+  let calls = ref [] in
+  let repeated = List.init 1000 (fun i -> Printf.sprintf "<link rel='apple-touch-icon' sizes='512x512' href='%s'>"
+    (if i mod 2 = 0 then "/same.png" else "https://example.org/same.png")) in
+  let others = List.map (fun (size, name) -> Printf.sprintf "<link rel='apple-touch-icon' sizes='%dx%d' href='/%s.png'>" size size name)
+    [256, "next"; 128, "third"; 96, "fourth"; 64, "excluded"] in
+  let base = network ~page:(String.concat "" (repeated @ others)) calls in
+  let net = {base with get=(fun ~uri ~address ~max_bytes ->
+    let response = base.get ~uri ~address ~max_bytes in
+    if List.mem (Uri.path uri) [""; "/"; "/favicon.ico"] then response else Error Unreachable_site)} in
+  Alcotest.(check bool) "bounded attempts retain favicon fallback" true (Result.is_ok (fetch net "example.org"));
+  let paths = List.rev !calls |> List.map (fun (url, _, _) -> Uri.path (Uri.of_string url)) in
+  Alcotest.(check (list string)) "only distinct top candidates and fallback" ["/same.png"; "/next.png"; "/third.png"; "/fourth.png"; "/favicon.ico"]
+    (List.tl paths)
+
+let many_timed_out_candidates () =
+  let scopes = ref 0 and calls = ref [] in
+  let page = String.concat "" (List.init 1000 (fun i -> Printf.sprintf "<link rel='apple-touch-icon' href='/icon%d.png'>" i)) in
+  let base = network ~page calls in
+  let net = {base with with_request=(fun f -> incr scopes; if !scopes = 1 then f () else Error Unreachable_site)} in
+  Alcotest.(check bool) "timed-out candidates fail closed" true
+    (match fetch net "example.org" with Error Unreachable_site -> true | _ -> false);
+  Alcotest.(check int) "page plus at most five candidate timeouts" 6 !scopes
+
+let shared_request_budget () =
+  let calls = ref 0 in
+  let net = {with_request=(fun f -> f ()); resolve=(fun ~host:_ -> Ok ["8.8.8.8"]);
+    get=(fun ~uri ~address:_ ~max_bytes:_ ->
+      incr calls;
+      match Uri.path uri with
+      | "" | "/" -> Ok {status=302; headers=["location", "/landing"]; body=""}
+      | "/landing" -> Ok {status=302; headers=["location", "/page"]; body=""}
+      | "/page" -> Ok {status=200; headers=[]; body="<link rel='apple-touch-icon' href='/candidate.png'>"}
+      | _ -> Ok {status=302; headers=["location", "/loop"]; body=""})} in
+  for _ = 1 to 2 do
+    let before = !calls in
+    Alcotest.(check bool) "overall request budget stops redirecting candidates" true
+      (match fetch net "example.org" with Error Unreachable_site -> true | _ -> false);
+    Alcotest.(check int) "one budget includes page and candidate redirects, fresh for every fetch" 6 (!calls - before)
+  done
+
 let () = Alcotest.run "logo fetch" [
   "boundary", [ Alcotest.test_case "addresses" `Quick rejects_address;
                 Alcotest.test_case "links" `Quick rejects_links;
@@ -226,4 +267,7 @@ let () = Alcotest.run "logo fetch" [
   "icons", [ Alcotest.test_case "order" `Quick icon_order;
              Alcotest.test_case "quoted tokens" `Quick quoted_icon_attributes;
              Alcotest.test_case "bare image path" `Quick bare_image_path;
-             Alcotest.test_case "failed candidate" `Quick failed_icon_falls_back ] ]
+             Alcotest.test_case "failed candidate" `Quick failed_icon_falls_back;
+             Alcotest.test_case "bounded distinct candidates" `Quick bounded_distinct_candidates;
+             Alcotest.test_case "many timed-out candidates" `Quick many_timed_out_candidates;
+             Alcotest.test_case "shared request budget" `Quick shared_request_budget ] ]

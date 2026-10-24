@@ -156,12 +156,30 @@ let icons uri html =
     with Not_found -> acc
   in
   let ranked = List.sort (fun (a,b,_) (c,d,_) -> compare (a,b) (c,d)) (collect 0 []) in
-  List.map (fun (_,_,url) -> url) ranked @ [ Uri.with_path uri "/favicon.ico" ]
+  let seen = Hashtbl.create 8 in
+  let rec select remaining acc = function
+    | [] -> List.rev acc
+    | _ when remaining = 0 -> List.rev acc
+    | (_, _, url) :: rest ->
+        (match parse (Uri.to_string url) with
+         | Error _ -> select remaining acc rest
+         | Ok url ->
+             let key = Uri.to_string url in
+             if Hashtbl.mem seen key then select remaining acc rest else (
+               Hashtbl.add seen key ();
+               select (remaining - 1) (url :: acc) rest)) in
+  let selected = select 4 [] ranked in
+  let fallback = Uri.with_path uri "/favicon.ico" in
+  if Hashtbl.mem seen (Uri.to_string fallback) then selected else selected @ [fallback]
 
 let fetch network link =
   let ( let* ) result f = Result.bind result f in
   let* initial = parse link in
+  (* Share six bounded request scopes across the page, candidates and every redirect. *)
+  let requests_remaining = ref 6 in
   let rec request redirects max_bytes uri =
+    if !requests_remaining = 0 then Error Unreachable_site else
+    let () = decr requests_remaining in
     let* uri, response = network.with_request (fun () ->
       let* uri = parse (Uri.to_string uri) in
       let host = Option.get (Uri.host uri) in
