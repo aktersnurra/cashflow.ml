@@ -1,6 +1,16 @@
 module A = Cashflow_core.Advisor
 module Sse = Cashflow_advisor_protocol.Sse
 
+let log_src = Logs.Src.create "cashflow.advisor_provider" ~doc:"Advisor provider boundary"
+module Log = (val Logs.src_log log_src : Logs.LOG)
+
+(* Never log transport strings: they can contain credentials or request/response data. *)
+let log_stream_error = function
+  | Https.Tls_configuration -> Log.warn (fun m -> m "Advisor provider request failed: TLS_configuration")
+  | Https.Invalid_scheme -> Log.warn (fun m -> m "Advisor provider request failed: invalid_scheme")
+  | Https.Http_status status -> Log.warn (fun m -> m "Advisor provider request failed: http_status%d" status)
+  | Https.Transport _ -> Log.warn (fun m -> m "Advisor provider request failed: transport")
+
 type raw_call = { id : string; name : string; arguments : string; index : int }
 type message = User of string | Assistant of string * raw_call list | Tool of { call_id : string; content : string }
 type request = { system : string; messages : message list }
@@ -172,7 +182,9 @@ let stream_prepared (t : t) prepared ~on_activity ~on_event =
     match t.post ~uri:"https://openrouter.ai/api/v1/chat/completions"
       ~headers:["authorization", "Bearer " ^ t.api_key; "content-type", "application/json"; "x-title", "cashflow"]
       ~body:prepared.body ~on_chunk with
-    | Error _ -> Error { A.code = A.Provider_unavailable; context = A.No_context }
+    | Error error ->
+        log_stream_error error;
+        Error { A.code = A.Provider_unavailable; context = A.No_context }
     | Ok () ->
         (match Sse.finish parser with Error _ -> invalid () | Ok () -> ());
         if not !done_seen then invalid ();

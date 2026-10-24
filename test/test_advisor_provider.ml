@@ -226,6 +226,44 @@ let configured_bounds () =
   let body = Yojson.Safe.from_string (List.hd !sent) in
   Alcotest.(check int) "whole completion cap" limits.completion_tokens (body |> member "max_tokens" |> to_int);
   Alcotest.(check bool) "require cap support" true (body |> member "provider" |> member "require_parameters" = `Bool true)
+let safe_transport_diagnostics () =
+  let previous = Logs.reporter () and global_level = Logs.level () in
+  let levels = List.map (fun src -> src, Logs.Src.level src) (Logs.Src.list ()) in
+  let captured = ref [] in
+  let report src level ~over k msgf =
+    msgf (fun ?header:_ ?tags:_ format ->
+      Format.kasprintf (fun message ->
+        captured := (Logs.Src.name src, level, message) :: !captured;
+        over (); k ()) format) in
+  Fun.protect ~finally:(fun () ->
+    Logs.set_reporter previous;
+    Logs.set_level ~all:false global_level;
+    List.iter (fun (src, level) -> Logs.Src.set_level src level) levels)
+    (fun () ->
+      Logs.set_level (Some Logs.Debug);
+      Logs.set_reporter { Logs.report };
+      List.iter (fun (error, category) ->
+        captured := [];
+        let calls = ref 0 in
+        let post ~uri:_ ~headers:_ ~body:_ ~on_chunk:_ = incr calls; Error error in
+        let p = create ~post ~api_key:"SECRET-dummy-key" ~model:"PRIVATE-model"
+          ~provider_only:["PRIVATE-provider"] in
+        let request : P.request = { system = "PRIVATE-system"; messages = [P.User "PRIVATE-finances"] } in
+        (match P.stream p request ~on_event:(fun _ -> Alcotest.fail "no error events") with
+         | Error { A.code = A.Provider_unavailable; context = A.No_context } -> ()
+         | _ -> Alcotest.fail "unchanged safe error");
+        Alcotest.(check int) "no diagnostic retry" 1 !calls;
+        (* Exact allowlisted log equality excludes all synthetic secret/request/error data. *)
+        Alcotest.(check (list (triple string bool string))) "only safe boundary classification"
+          [("cashflow.advisor_provider", true, "Advisor provider request failed: " ^ category)]
+          (List.map (fun (source, level, message) -> source, level = Logs.Warning, message) !captured))
+        [Cashflow_io.Https.Tls_configuration, "TLS_configuration";
+         Cashflow_io.Https.Invalid_scheme, "invalid_scheme";
+         Cashflow_io.Https.Http_status 400, "http_status400";
+         Cashflow_io.Https.Http_status 403, "http_status403";
+         Cashflow_io.Https.Http_status 503, "http_status503";
+         Cashflow_io.Https.Transport "SECRET exception https://private/?key=SECRET header PRIVATE response body finances", "transport"])
+
 let () = Alcotest.run "advisor provider" ["synthetic", [
   Alcotest.test_case "fragmented_provider_rounds" `Quick fragmented_provider_rounds;
   Alcotest.test_case "interleaved_tools" `Quick interleaved_tools;
@@ -234,4 +272,5 @@ let () = Alcotest.run "advisor provider" ["synthetic", [
   Alcotest.test_case "follow-up policy and ordering" `Quick follow_up_policy;
   Alcotest.test_case "multiline, transport and live text" `Quick multiline_and_failures;
   Alcotest.test_case "configured completion bound and exact request" `Quick configured_bounds;
+  Alcotest.test_case "safe transport diagnostics" `Quick safe_transport_diagnostics;
   Alcotest.test_case "schemas" `Quick schemas]]
