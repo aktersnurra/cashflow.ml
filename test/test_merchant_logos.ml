@@ -251,10 +251,79 @@ let retry_projection () =
   ignore (Result.get_ok (Merchant_logos.clear failing_service alice ~owner ~merchant_key:"ica" ~mode:Merchant_logos.Automatic));
   Alcotest.(check bool) "failed fetch can retry" true (retry failing_service alice true)
 
+let failed_provider_replies =
+  ["provider error", Error "rate limited"; "malformed JSON", Ok "not JSON";
+   "malformed schema", Ok {|{"merchants":false}|}]
+
+let provider_failures_retry () =
+  List.iter (fun (label, reply) ->
+    let db = Store_sqlite.open_memory () and calls = ref 0 in
+    let assistant = Llm.{model="fake"; complete=(fun ~system:_ ~user:_ -> reply)} in
+    let service = Service.make ~now:(fun () -> now) ~assistant ~logo_network:(network calls) db in
+    let access = sign_in service "alice" in
+    let owner = Access.personal access in
+    let checking = open_checking service access "Checking" in
+    let groceries = account_named service access "Groceries" in
+    ignore (ok (Service.add_entry service access { (entry "ICA" ~from_account:checking ~to_account:groceries 100) with
+      memo={Transfer.empty_memo with description="ICA"} }));
+    Merchant_logos.resolve service access ~owner ["ica", "ICA"; "other", "OTHER"];
+    List.iter (fun key ->
+      Alcotest.(check bool) (label ^ " persists every failed key") true
+        (match Merchant_logo_store.get db owner key with
+         | Some {source=Llm; status=Failed; logo_id=None; website=None; confidence=None; _} -> true
+         | _ -> false);
+      Alcotest.(check bool) (label ^ " enables retry") true
+        (Merchant_logos.view service access ~owner ~merchant_key:key).can_retry) ["ica"; "other"];
+    List.iter (fun fold ->
+      let json = Result.get_ok (Commands.execute service access ~scopes:["ledger:read"] Commands.query_transactions
+        (`Assoc ["fold_triage", `Bool fold])) in
+      let rows = Yojson.Safe.Util.(member "transactions" json |> to_list) in
+      Alcotest.(check bool) (label ^ " query exposes retry") true
+        (List.exists (fun row -> Yojson.Safe.Util.(member "merchant" row |> member "can_retry") = `Bool true) rows)) [false; true];
+    Alcotest.(check int) (label ^ " does not fetch an image") 0 !calls;
+    ignore (Result.get_ok (Merchant_logos.set service access ~owner ~merchant_key:"ica" ~link:"shop.com/icon.png"));
+    let reset = Result.get_ok (Merchant_logos.clear service access ~owner ~merchant_key:"ica" ~mode:Merchant_logos.Automatic) in
+    Alcotest.(check bool) (label ^ " automatic reset can retry") true reset.can_retry)
+    failed_provider_replies
+
+let provider_failures_preserve_edits () =
+  List.iter (fun (label, reply) ->
+    let db = Store_sqlite.open_memory () and during = ref (fun () -> ()) in
+    let assistant = Llm.{model="fake"; complete=(fun ~system:_ ~user:_ -> !during (); reply)} in
+    let service = Service.make ~assistant ~logo_network:(network (ref 0)) db in
+    let access = sign_in service "alice" in
+    let owner = Access.personal access in
+    during := (fun () -> ignore (Result.get_ok (Merchant_logos.set service access ~owner ~merchant_key:"edit" ~link:"shop.com/icon.png")));
+    Merchant_logos.resolve service access ~owner ["edit", "EDIT"];
+    Alcotest.(check bool) (label ^ " preserves manual logo") true
+      (match Merchant_logo_store.get db owner "edit" with Some {source=User; status=Resolved; logo_id=Some _; _} -> true | _ -> false);
+    during := (fun () -> ignore (Result.get_ok (Merchant_logos.clear service access ~owner ~merchant_key:"none" ~mode:Merchant_logos.None_selected)));
+    Merchant_logos.resolve service access ~owner ["none", "NONE"];
+    Alcotest.(check bool) (label ^ " preserves explicit removal") true
+      (match Merchant_logo_store.get db owner "none" with Some {source=None_selected; status=Unknown; logo_id=None; _} -> true | _ -> false))
+    failed_provider_replies
+
+let provider_failures_check_membership () =
+  List.iter (fun (label, reply) ->
+    let db = Store_sqlite.open_memory () and during = ref (fun () -> ()) in
+    let assistant = Llm.{model="fake"; complete=(fun ~system:_ ~user:_ -> !during (); reply)} in
+    let service = Service.make ~assistant ~logo_network:(network (ref 0)) db in
+    let access = sign_in service ~admin:true "alice" in
+    let household = ok (Service.create_household service access ~name:"Home" ~default_currency:"SEK") in
+    let access = Service.access_for service (Access.user access) in
+    let owner = Owner.Household household.id in
+    during := (fun () -> ignore (Service.leave_household service access));
+    Merchant_logos.resolve service access ~owner ["ica", "ICA"];
+    Alcotest.(check bool) (label ^ " cannot write after membership ends") true
+      (Option.is_none (Merchant_logo_store.get db owner "ica"))) failed_provider_replies
+
 let () = Alcotest.run "merchant logos" ["store", [Alcotest.test_case "retry is an exception-only action" `Quick retry_projection; Alcotest.test_case "commands" `Quick commands; Alcotest.test_case "manual and isolation" `Quick manual;
  Alcotest.test_case "chain" `Quick chain;
  Alcotest.test_case "automatic uses original display name" `Quick automatic_uses_original_display_name;
  Alcotest.test_case "automatic without a display name" `Quick automatic_without_display_name;
  Alcotest.test_case "resolver cases" `Quick resolver_cases;
+ Alcotest.test_case "provider failures are retryable" `Quick provider_failures_retry;
+ Alcotest.test_case "provider failures preserve edits" `Quick provider_failures_preserve_edits;
+ Alcotest.test_case "provider failures check membership" `Quick provider_failures_check_membership;
  Alcotest.test_case "bounded batches" `Quick batching;
  Alcotest.test_case "owner blob association and membership loss" `Quick association]]
