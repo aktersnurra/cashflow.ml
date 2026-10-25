@@ -104,6 +104,7 @@ product() {
 run native-fixture-build opam exec --switch="$SWITCH" -- dune build test/advisor_fixture_server.exe
 run web-build opam exec --switch="$SWITCH" -- dune build --workspace dune-workspace.web --profile release @web/default @test/advisor_browser/default
 run playwright node -e 'require("playwright")'
+run asset-cache node web/e2e/asset_cache.js
 run harness-safety python3 test/test_advisor_harness_safety.py
 run socket python3 test/test_advisor_http_socket.py
 run controller python3 test/test_advisor_browser.py
