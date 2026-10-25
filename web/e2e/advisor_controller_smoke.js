@@ -166,7 +166,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
    assert.equal(posts,1);assert.deepEqual(errors,[]);
    console.log(JSON.stringify({result:'passed',actual401ClearsAndDeactivates:true,malformed200:true,networkFailure:true,real15sTimeout:true,duplicateSettlement:true,privateTextRetained:true}));return;
   }
-  assert.equal(await page.locator('.advisor-conversation img, .advisor-conversation svg, .advisor-conversation script, .advisor-conversation a').count(),0);
+  assert.equal(await page.locator('.advisor-conversation img, .advisor-conversation svg:not(.advisor-send-icon), .advisor-conversation script, .advisor-conversation a').count(),0);
   assert.equal(await page.evaluate(()=>window.fixtureXss),undefined);
   assert.ok((await page.locator('.advisor-conversation').innerText()).includes('Synthetic authorized evidence <img src=x onerror=window.fixtureXss=true>'));
   await page.locator('#advisor-evidence-00000000-0000-4000-8000-000000000010 summary').click();

@@ -103,7 +103,7 @@ const markdown = '# A plan for February\n\nSet aside **6,250.00 SEK** each month
   assert.equal(await page.getByRole('button',{name:'Send',exact:true}).isDisabled(),true);
   await composer.fill('');
   await page.waitForFunction(()=>document.querySelector('button[aria-label="Send"]')?.disabled===true);
-  assert.equal(await page.getByRole('button',{name:'Send',exact:true}).isDisabled(),true);
+  assert.equal(await page.getByRole('button',{name:'Send',exact:true}).isVisible(),false,'Send is hidden while the draft is empty');
   await composer.fill('A next draft, not sent');
   await composer.evaluate(el=>el.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',isComposing:true,bubbles:true,cancelable:true})));
   await composer.evaluate(el=>el.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',repeat:true,bubbles:true,cancelable:true})));

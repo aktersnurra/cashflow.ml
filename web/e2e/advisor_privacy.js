@@ -40,7 +40,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
    assert.ok(BigInt(s.turns[0].attempts[0].last_sequence)>BigInt(saved.sequence));
    assert.equal(s.turns[0].attempts[0].state.type,'Failed');
    assert.equal(s.turns[0].attempts[0].state.value.code.type,'Server_restarted');
-   await page.goto(base+'/advisor/'+saved.id);await page.getByText(saved.text,{exact:true}).waitFor();
+   await page.goto(base+'/advisor/'+saved.id);await page.locator('.advisor-user-message').getByText(saved.text,{exact:true}).waitFor();
    await page.getByText('first',{exact:true}).waitFor();
    assert.equal((await state()).provider_starts,0,'startup/history never regenerates');
    assert.equal((await state()).financial_digest,saved.digest);

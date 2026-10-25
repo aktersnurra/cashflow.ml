@@ -74,6 +74,11 @@ let retry (p : W.retry) =
 
 let snapshot id = request ("conversations/" ^ Js_of_ocaml.Url.urlencode id) (wire W.decode_snapshot)
 
+let is_uuid value =
+  String.length value = 36 &&
+  List.equal Int.equal (List.map (String.split value ~on:'-') ~f:String.length) [8;4;4;4;12]
+  && List.for_all (String.split value ~on:'-') ~f:(String.for_all ~f:Char.is_hex_digit)
+
 let status () =
   request "status"
     (json (fun j ->
@@ -84,28 +89,46 @@ let status () =
                | Some (`Assoc fields as h) when List.length fields = 3 ->
                    (match str (field "household_id" h), bool (field "enabled" h), bool (field "can_manage" h) with
                     | Some household_id, Some enabled, Some can_manage
-                      when List.equal Int.equal (List.map (String.split household_id ~on:'-') ~f:String.length) [8;4;4;4;12]
-                        && List.for_all (String.split household_id ~on:'-') ~f:(String.for_all ~f:Char.is_hex_digit) -> Some (Some { C.household_id; enabled; can_manage })
+                      when is_uuid household_id -> Some (Some { C.household_id; enabled; can_manage })
                     | _ -> None)
                | _ -> None in
              Option.map household ~f:(fun household -> { C.available; consent; household; household_known = Option.is_some (field "household" j) })
          | _ -> None))
 
+let history_scope j =
+  match field "scope" j with
+  | None | Some `Null -> Some None
+  | Some (`Assoc [("type", `String "Personal")]) -> Some (Some W.Personal)
+  | Some (`Assoc fields as scope) when List.length fields=2 ->
+      (match str (field "type" scope), str (field "value" scope) with
+       | Some "Household", Some id when is_uuid id -> Some (Some (W.Household id))
+       | _ -> None)
+  | _ -> None
+
 let history ~limit ~offset =
-  request
-    (sprintf "conversations?limit=%d&offset=%d" limit offset)
-    (json (fun j ->
-         match field "conversations" j with
-         | Some (`List xs) ->
-             let xs =
-               List.map xs ~f:(fun j ->
-                   match (str (field "conversation_id" j), str (field "version" j), str (field "updated_at" j)) with
-                   | Some conversation_id, Some version, Some updated_at ->
-                       Some { C.conversation_id; version; updated_at }
-                   | _ -> None)
-             in
-             Option.all xs
-         | _ -> None))
+  request (sprintf "conversations?limit=%d&offset=%d" limit offset)
+    (json (fun j -> match field "conversations" j with
+      | Some (`List xs) when List.length xs <= limit ->
+          let entries = List.map xs ~f:(fun j ->
+            let preview = match history_scope j, field "title" j with
+              | Some _, (None | Some `Null) -> Some None
+              | Some (Some scope), Some (`String title) when String.length title <= 512 &&
+                  String.equal title (Cashflow_advisor_protocol.Conversation_title.of_first_message title) ->
+                    Some (Some {C.title; scope})
+              | _ -> None in
+            match str (field "conversation_id" j), str (field "version" j), str (field "updated_at" j), preview with
+            | Some conversation_id, Some version, Some updated_at, Some preview ->
+                Some {C.conversation_id; version; updated_at; preview}
+            | _ -> None) |> Option.all in
+          let next = match field "next_offset" j with
+            | None -> Some (if List.length xs=limit && offset <= Int.max_value-limit then Some (offset+limit) else None)
+            | Some `Null -> Some None
+            | Some (`Int next) when next > offset && offset <= Int.max_value-limit && next=offset+limit -> Some (Some next)
+            | _ -> None in
+          (match entries, next with
+           | Some conversations, Some next_offset -> Some {C.conversations; next_offset}
+           | _ -> None)
+      | _ -> None))
 
 let cancel id =
   request ~body:"{}"

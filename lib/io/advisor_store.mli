@@ -14,6 +14,8 @@ type metadata = {
   active_run : A.Run_id.t option;
 }
 
+type history_entry = { conversation : metadata; title : string option }
+
 val create : ?clock:(unit -> Ptime.t) -> Sql.db -> t
 (** Inject the runtime's clock. Explicit [now] arguments override it; append and transition sample it once. Terminal
     timestamps are immutable. *)
@@ -66,7 +68,8 @@ val consent : t -> consent_scope -> (bool, A.error) result
 val set_consent : t -> consent_scope -> enabled:bool -> (unit, A.error) result
 (** Low-level scoped storage, disabled when absent. Authorization is the caller's responsibility. *)
 
-val list : t -> owner:Cashflow_core.User_id.t -> ?limit:int -> ?offset:int -> unit -> (metadata list, A.error) result
+val list : t -> owner:Cashflow_core.User_id.t -> ?limit:int -> ?offset:int -> unit -> (history_entry list, A.error) result
+(** Owner-bound preview projection. The caller must still authorize history before disclosure. *)
 val metadata : t -> owner:Cashflow_core.User_id.t -> A.Conversation_id.t -> (metadata, A.error) result
 val find_run : t -> owner:Cashflow_core.User_id.t -> A.Run_id.t -> (A.run, A.error) result
 (** Unknown and other-owner IDs both return [Not_found], including terminal runs. *)

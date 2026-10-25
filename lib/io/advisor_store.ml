@@ -16,6 +16,8 @@ type metadata = {
   active_run : A.Run_id.t option;
 }
 
+type history_entry = { conversation : metadata; title : string option }
+
 let create ?(clock = Ptime_clock.now) db = { db; clock }
 let error code = { A.code; context = A.No_context }
 
@@ -248,28 +250,26 @@ let metadata t ~owner id =
 let list t ~owner ?(limit = 20) ?(offset = 0) () =
   read t (fun () ->
       if limit < 1 || offset < 0 then reject A.Invalid_request;
-      let ids =
+      let entries =
         Sql.(
           run t.db
             (stmt
-               "SELECT id FROM advisor_conversations WHERE owner_id=? ORDER BY updated_at DESC,id DESC LIMIT ? OFFSET ?"
+               "SELECT c.id,(SELECT t.user_text FROM advisor_turns t WHERE t.conversation_id=c.id \
+                ORDER BY t.ordinal LIMIT 1) FROM advisor_conversations c WHERE c.owner_id=? \
+                ORDER BY c.updated_at DESC,c.id DESC LIMIT ? OFFSET ?"
                (text @-> int @-> int @-> nil)
-               (many (row (text @-> nil) (fun s -> require (A.Conversation_id.of_string s))))))
+               (many (row (text @-> nullable text @-> nil)
+                 (fun id text -> (require (A.Conversation_id.of_string id), text))))))
           (uid owner) (min 100 limit) offset
       in
       List.map
-        (fun id ->
+        (fun (id, first_message) ->
           let s, u = conversation t owner id in
-          {
-            conversation_id = id;
-            scope = s.scope;
-            currency = s.currency;
-            locale = s.locale;
-            version = s.version;
-            updated_at = u;
-            active_run = active_id t id;
-          })
-        ids)
+          { conversation = {
+              conversation_id = id; scope = s.scope; currency = s.currency;
+              locale = s.locale; version = s.version; updated_at = u; active_run = active_id t id };
+            title = Option.map Cashflow_advisor_protocol.Conversation_title.of_first_message first_message })
+        entries)
 
 (* The joined row is the immutable attempt identity plus the mutable runtime checkpoint. *)
 let run_query =

@@ -131,7 +131,6 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
   let selected_finding, set_selected_finding = Bonsai.state None graph in
   let selected_scope, set_selected_scope = Bonsai.state W.Personal graph in
   let declined, set_declined = Bonsai.state false graph in
-  let history_offset, set_history_offset = Bonsai.state 0 graph in
   let confirmed_membership, set_confirmed_membership = Bonsai.state None graph in
   let membership_reload, set_membership_reload = Bonsai.state None graph in
   let authenticated = let%arr advisor in advisor.view.authenticated in
@@ -181,38 +180,21 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
       (* Opening a finding keeps its viewport anchor. Page following resumes
          when the reader reaches the tail or explicitly asks to follow. *)
       advisor.dispatch (C.Follow false); focus_advisor] in
-  let outlet = let%arr advisor and advisor_turns and selected_finding and locale and session and notify and declined and set_declined and selected_scope and set_selected_scope and set_selected_finding and history_offset and set_history_offset and navigate in
+  let new_conversation = let%arr advisor and session and locale and notify and set_selected_scope and set_selected_finding and set_declined and navigate in
+    fun scope -> match advisor_currency session scope with
+    | None -> notify (Msg.advisor_currency_unavailable locale)
+    | Some currency -> Effect.Many [set_selected_scope scope; set_selected_finding None; set_declined false;
+        advisor.open_empty ~scope ~currency ~locale; navigate (Route.Advisor None)] in
+  let select_conversation = let%arr set_selected_finding and navigate in
+    fun id -> Effect.Many [set_selected_finding None; navigate (Route.Advisor (Some id))] in
+  let navigation = Advisor_navigation.component ~locale ~advisor ~route
+    ~on_select:select_conversation ~on_new:new_conversation graph in
+  let outlet = let%arr advisor and advisor_turns and navigation and selected_finding and locale and session and declined and set_declined and selected_scope and navigate in
     let view = advisor.view in
     let scope = Option.value view.context_scope ~default:selected_scope in
-    let new_conversation scope = match advisor_currency session scope with
-      | None -> notify (Msg.advisor_currency_unavailable locale)
-      | Some currency -> Effect.Many [set_selected_scope scope; set_selected_finding None; set_declined false;
-          advisor.open_empty ~scope ~currency ~locale; navigate (Route.Advisor None)] in
-    let controls = Ui.div ~cls:"advisor-tools"
-      [Ui.span ~cls:"eyebrow" [Ui.text ((match scope with W.Personal -> Msg.label_personal locale | Household _ -> Msg.label_household locale) ^ " · " ^ Msg.advisor_private locale)];
-       Vdom.Node.details [Vdom.Node.summary [Ui.text (Msg.advisor_history locale)];
-         Ui.button (Msg.advisor_history locale) (Effect.Many [set_history_offset 0; advisor.dispatch (C.Load_history 0)]);
-         Ui.div ~cls:"actions"
-           [Ui.button ~disabled:(history_offset = 0) (Msg.advisor_newer locale)
-              (Effect.Many [set_history_offset (max 0 (history_offset - 20)); advisor.dispatch (C.Load_history (max 0 (history_offset - 20)))]);
-            Ui.button (Msg.advisor_older locale)
-              (Effect.Many [set_history_offset (history_offset + 20); advisor.dispatch (C.Load_history (history_offset + 20))])];
-         Ui.field (Msg.advisor_history locale) (Ui.select ~value:(Option.value view.selected_conversation ~default:"")
-           ~options:(("", Msg.advisor_choose_history locale) :: List.map view.history ~f:(fun h -> h.conversation_id, h.updated_at))
-           ~on_change:(fun id -> if String.is_empty id then Effect.Ignore else Effect.Many [set_selected_finding None; navigate (Route.Advisor (Some id))]));
-         (match view.status with Some s when s.available && s.consent -> Ui.button (Msg.advisor_new_personal locale) (new_conversation W.Personal) | _ -> Vdom.Node.none);
-         (match view.status with Some {household=Some h; available=true; consent=true; _} when h.enabled ->
-            Ui.button (Msg.advisor_new_household locale) (new_conversation (W.Household h.household_id))
-          | Some {household=Some h; _} when h.enabled -> Vdom.Node.none
-          | _ -> if Ctx.has_household session then Ui.muted (Msg.advisor_household_off locale) else Vdom.Node.none)]] in
     Vdom.Node.div ~attrs:[Vdom.Attr.class_ "advisor-outlet"; Vdom.Attr.create "data-advisor-controller" ""]
-      ([controls] @
-       if view.access_denied then
-         [Ui.p (Msg.advisor_access_lost locale);
-          (match view.denied_conversation with Some id -> Ui.button (Msg.advisor_delete locale)
-            (Effect.of_thunk (fun () -> if Js.to_bool (Dom_html.window##confirm (Js.string (Msg.advisor_delete_confirm locale))) then
-              Effect.Expert.handle_non_dom_event_exn (advisor.dispatch (C.Delete_owned id))))
-           | None -> Vdom.Node.none)]
+      ([navigation] @
+       if view.access_denied then [Ui.p (Msg.advisor_access_lost locale)]
        else if Option.is_none view.snapshot && Option.is_none (advisor_currency session scope) then
          [Ui.muted (Msg.advisor_currency_unavailable locale)]
        else if declined then [Ui.button (Msg.advisor_ask locale) (set_declined false)]
@@ -265,9 +247,9 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
     | Some _ -> advisor.dispatch C.Refresh_status
     | None -> Effect.Ignore in
   Bonsai.Edge.on_change ~equal:Poly.equal (Bonsai.both membership_reload session_membership) ~callback:membership_loaded graph;
-  let invalidate_shell = let%arr advisor and reset_home and set_selected_finding and set_selected_scope and set_history_offset and set_toast and set_confirmed_membership and set_membership_reload in
+  let invalidate_shell = let%arr advisor and reset_home and set_selected_finding and set_selected_scope and set_toast and set_confirmed_membership and set_membership_reload in
     Effect.Many [advisor.invalidate; set_selected_finding None; set_selected_scope W.Personal;
-      set_history_offset 0; set_toast None; set_confirmed_membership None; set_membership_reload None;
+      set_toast None; set_confirmed_membership None; set_membership_reload None;
       reset_home; Effect.of_thunk (fun () -> scrolls := String.Map.empty)] in
   let authentication_changed = let%arr invalidate_shell and auth_lost in fun old current ->
     if Option.value old ~default:false && not current then Effect.Many [invalidate_shell; auth_lost] else Effect.Ignore in

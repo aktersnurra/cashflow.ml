@@ -24,7 +24,9 @@ type status = {
   household : household_status option;
   household_known : bool; (* Absent legacy metadata is unknown, not confirmed membership loss. *)
 }
-type metadata = { conversation_id : string; version : string; updated_at : string }
+type conversation_preview = { title : string; scope : W.scope }
+type metadata = { conversation_id : string; version : string; updated_at : string; preview : conversation_preview option }
+type history_page = { conversations : metadata list; next_offset : int option }
 type connection = Disconnected | Connecting | Connected | Reconnecting
 type pending = Submit of W.submit | Retry of W.retry
 
@@ -67,7 +69,7 @@ type action =
   | Accepted of token * (W.accepted, failure) result
   | Snapshot of token * (W.snapshot, failure) result
   | Status of token * (status, failure) result
-  | History of token * (metadata list, failure) result
+  | History of token * (history_page, failure) result
   | Consent_result of token * (unit, failure) result
   | Deleted of token * (unit, failure) result
   | Stopped of token * (string, failure) result
@@ -92,6 +94,9 @@ type view = {
   connection : connection;
   status : status option;
   history : metadata list;
+  history_loading : bool;
+  history_failed : bool;
+  history_next_offset : int option;
   pending : pending option;
   notice : notice;
   following : bool;
@@ -115,6 +120,8 @@ type t = {
   consent_request : token option;
   consent_change : (bool * string option) option;
   history_request : token option;
+  history_offset : int;
+  history_next_offset : int option;
   suspended : token option;
   stream : (token * W.identities) option;
   buffer : W.event list;
@@ -138,6 +145,9 @@ let blank =
     connection = Disconnected;
     status = None;
     history = [];
+    history_loading = false;
+    history_failed = false;
+    history_next_offset = None;
     pending = None;
     notice = Quiet;
     following = true;
@@ -162,6 +172,8 @@ let empty =
     consent_request = None;
     consent_change = None;
     history_request = None;
+    history_offset = 0;
+    history_next_offset = None;
     suspended = None;
     stream = None;
     buffer = [];
@@ -172,7 +184,7 @@ let empty =
     drafts = [];
   }
 
-let view t = { t.v with authenticated = t.active; context_scope = (match t.v.snapshot, t.context with Some s, _ -> Some s.scope | _, Some (_, s, _, _) -> Some s | _ -> None); selected_conversation = t.selected; can_reconnect = t.active && t.selected <> None && t.stream = None && t.snapshot_request = None }
+let view t = { t.v with history_loading = (t.history_request <> None); history_next_offset = t.history_next_offset; authenticated = t.active; context_scope = (match t.v.snapshot, t.context with Some s, _ -> Some s.scope | _, Some (_, s, _, _) -> Some s | _ -> None); selected_conversation = t.selected; can_reconnect = t.active && t.selected <> None && t.stream = None && t.snapshot_request = None }
 
 let fresh t =
   let generation = t.serial + 1 in
@@ -281,6 +293,33 @@ let scope_readiness (status : status) scope =
   | Household id, Some h -> Some (h.enabled && h.household_id = id)
   | Household _, None -> Some false
 
+let filter_history status history =
+  match status with
+  | None -> history
+  | Some status -> List.filter (fun (entry : metadata) -> status.consent &&
+      match entry.preview with None -> true | Some preview -> scope_readiness status preview.scope <> Some false) history
+
+let invalidate_history_request t =
+  {t with history_request=None; history_next_offset=None; latest=false; v={t.v with history_failed=false}}
+
+let drop_history_scope scope t =
+  let history = List.filter (fun entry -> match entry.preview with
+    | None -> true | Some preview -> preview.scope <> scope) t.v.history in
+  let t = invalidate_history_request t in
+  {t with v={t.v with history}}
+
+let history_boundary previous (status : status) =
+  let household (s : status) = Option.map (fun h -> h.household_id, h.enabled) s.household in
+  match previous with
+  | None -> not status.consent
+  | Some old -> old.consent <> status.consent ||
+      (status.household_known && (not old.household_known || household old <> household status))
+
+let append_history previous incoming =
+  List.fold_left (fun history entry ->
+    if List.exists (fun cached -> cached.conversation_id = entry.conversation_id) history then history
+    else history @ [entry]) previous incoming
+
 let failure t = function
   | Session_lost -> ({ (clear t) with active = false }, clear_commands)
   | Access_lost ->
@@ -342,6 +381,8 @@ let reduce t action =
             stop_request = None;
             delete_request = None;
             history_request = None;
+            history_offset = 0;
+            history_next_offset = None;
             v = { blank with draft; status = t.v.status };
           }
         in
@@ -360,11 +401,14 @@ let reduce t action =
         ({ t with context = Some (Some key, scope, currency, locale); v = { t.v with status } }, clear_commands)
   | Open_latest when t.active ->
       let t, tok = fresh t in
-      ({ t with latest = true; history_request = Some tok }, [ List_conversations (tok, 1, 0) ])
+      ({t with latest=true; history_request=Some tok; history_offset=0; history_next_offset=None;
+        v={t.v with history=[]; history_failed=false}}, [List_conversations (tok, 1, 0)])
   | Refresh_status when t.active -> request_status (t, [])
   | Load_history offset when t.active && offset >= 0 ->
-      let t, tok = fresh t in
-      ({ t with latest = false; history_request = Some tok }, [ List_conversations (tok, 20, offset) ])
+      if offset > 0 && (t.history_request <> None || t.history_next_offset <> Some offset) then (t, [])
+      else
+        let t, tok = fresh t in
+        ({t with latest=false; history_request=Some tok; history_offset=offset; v={t.v with history_failed=false}}, [List_conversations (tok, 20, offset)])
   | Submit_draft key
     when t.active && t.v.pending = None && t.v.draft <> "" && t.write_request = None && t.snapshot_request = None
          && not t.recovery_required -> (
@@ -566,6 +610,9 @@ let reduce t action =
             | false, None -> []
             | false, Some id -> without_scope (W.Household id) t.drafts in
           if not affected then
+            let t = match enabled, household with
+              | false, Some id -> drop_history_scope (W.Household id) t
+              | _ -> t in
             request_status ({t with drafts; v={t.v with denied_conversation=None}}, [])
           else
             let status = t.v.status in
@@ -581,7 +628,10 @@ let reduce t action =
             | Some scope, Some previous -> scope_readiness previous scope = Some true && scope_readiness status scope = Some false
             | _ -> false) in
           let drafts = List.filter (fun (_, (scope, _)) -> scope_readiness status scope <> Some false) t.drafts in
-          let t = { t with drafts; status_request = None; v = { t.v with status = Some status } } in
+          let changed = history_boundary t.v.status status in
+          let history = filter_history (Some status) t.v.history in
+          let t = {t with drafts; status_request=None; v={t.v with status=Some status; history}} in
+          let t = if changed then invalidate_history_request t else t in
           (* Known revocation also drops unaccepted private context/pending text. It
              cannot grant transcript authority: persisted snapshots recheck below. *)
           if context_lost then
@@ -594,12 +644,18 @@ let reduce t action =
             if recheck then resync t else (t, []))
   | History (tok, result) when current t t.history_request tok -> (
       match result with
-      | Error e -> failure { t with history_request = None } e
-      | Ok history -> (
+      | Error e -> failure {t with history_request=None; v={t.v with history_failed=true}} e
+      | Ok page -> (
+          let incoming = filter_history t.v.status page.conversations in
+          let history = append_history (if t.history_offset=0 then [] else t.v.history) incoming in
           let latest = t.latest in
-          let t = { t with latest = false; history_request = None; v = { t.v with history } } in
-          match (latest, history) with
-          | true, h :: _ ->
+          let next_offset = match page.next_offset with Some offset when offset > t.history_offset -> Some offset | _ -> None in
+          let t = {t with latest=false; history_request=None; history_next_offset=next_offset; v={t.v with history; history_failed=false}} in
+          match (latest, incoming, next_offset) with
+          | true, [], Some offset ->
+              let t, token = fresh t in
+              ({t with latest=true; history_request=Some token; history_offset=offset}, [List_conversations (token, 20, offset)])
+          | true, h :: _, _ ->
               let t = remember_draft t in
               let draft = restored_draft h.conversation_id t.drafts in
               selection_status
@@ -619,7 +675,7 @@ let reduce t action =
                      v = { blank with draft; status = t.v.status; history };
                    }
                    h.conversation_id)
-          | true, [] ->
+          | true, [], None ->
               let context = t.context and status = t.v.status and drafts = t.drafts in
               let t = clear t in
               selection_status ({ t with context; drafts; v = { t.v with status; notice = Choose_context } }, clear_commands)

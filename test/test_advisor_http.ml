@@ -690,11 +690,66 @@ let session_currency_metadata () =
     ignore (Test_service_support.ok (Service.leave_household service (Service.access_for service (Access.user admin))));
     Alcotest.(check int) "lost membership metadata removed" 1 (List.length (metadata ())))
 
+let history_titles () =
+  fixture (fun _ service token calls req ->
+      let open Yojson.Safe.Util in
+      ignore (req ~meth:POST ~body:"{\"enabled\":true}" "/api/advisor/consent");
+      let admin = Test_service_support.sign_in service ~admin:true "http" in
+      let owner = (Access.user admin).id in
+      let household = ok (Service.create_household service admin ~name:"Synthetic history" ~default_currency:"SEK") in
+      let consent enabled = Printf.sprintf "{\"enabled\":%b,\"household_id\":%S}" enabled (Household_id.to_string household.id) in
+      ignore (req ~meth:POST ~body:(consent true) "/api/advisor/consent");
+      let store = Advisor_store.create ~clock:service.now service.db in
+      let add owner session scope key text =
+        let accepted = ok (Advisor_store.accept store ~owner ~session ~now ~model:"synthetic" ~source_finding:None
+          {(submit key) with scope; user_text=text}) in
+        ignore (ok (Advisor_store.transition store ~run:accepted.ids.run_id
+          (Advisor.Fail {code=Provider_unavailable; context=No_context})));
+        accepted in
+      let reference = Web_auth.session_ref token in
+      let rocket n = String.concat "" (List.init n (fun _ -> "🚀")) in
+      let cases = ["  Plan\tmy\n holiday  ", "Plan my holiday";
+        rocket 81, rocket 80 ^ "…";
+        String.make 80 'a' ^ " \n\t", String.make 80 'a';
+        "<img src=x onerror=evil()>", "<img src=x onerror=evil()>";
+        "Budget för februari", "Budget för februari"] in
+      let expected = List.mapi (fun index (text, title) ->
+        let accepted = add owner reference Advisor.Personal ("history-" ^ string_of_int index) text in
+        (Advisor.Conversation_id.to_string accepted.ids.conversation_id, title)) cases in
+      let household_chat = add owner reference (Advisor.Household household.id) "household-history" "HOUSEHOLD_PRIVATE_TITLE" in
+      let other = Test_service_support.sign_in service "history-other" |> Access.user in
+      let other_token = Web_auth.create_session service.db ~now other in
+      ignore (add other.id (Web_auth.session_ref other_token) Advisor.Personal "other-history" "OTHER_OWNER_PRIVATE_TITLE");
+      let read path = Yojson.Safe.from_string (body (req path)) in
+      let rows = read "/api/advisor/conversations?limit=100" |> member "conversations" |> to_list in
+      Alcotest.(check int) "only owned authorized rows" (List.length cases + 1) (List.length rows);
+      List.iter (fun (id, title) ->
+        let row = List.find (fun row -> row |> member "conversation_id" |> to_string = id) rows in
+        Alcotest.(check string) "deterministic first-message title" (Yojson.Safe.to_string (`String title))
+          (Yojson.Safe.to_string (row |> member "title"));
+        Alcotest.(check string) "personal scope" "{\"type\":\"Personal\"}"
+          (Yojson.Safe.to_string (row |> member "scope"))) expected;
+      let household_id = Advisor.Conversation_id.to_string household_chat.ids.conversation_id in
+      let household_row = List.find (fun row -> row |> member "conversation_id" |> to_string = household_id) rows in
+      Alcotest.(check string) "authorized household title" "HOUSEHOLD_PRIVATE_TITLE" (household_row |> member "title" |> to_string);
+      Sql.(run service.db (stmt "UPDATE advisor_conversations SET updated_at=? WHERE id=?" (text @-> text @-> nil) exec))
+        (Ptime.to_rfc3339 ~frac_s:12 ~tz_offset_s:0 (Option.get (Ptime.add_span now (Ptime.Span.of_int_s 60)))) household_id;
+      ignore (req ~meth:POST ~body:(consent false) "/api/advisor/consent");
+      let page = read "/api/advisor/conversations?limit=1" in
+      Alcotest.(check int) "revoked title filtered" 0 (List.length (page |> member "conversations" |> to_list));
+      Alcotest.(check int) "cursor passes filtered owner row" 1 (page |> member "next_offset" |> to_int);
+      let page = read "/api/advisor/conversations?limit=100&offset=1" in
+      Alcotest.(check int) "remaining personal titles still available" (List.length cases)
+        (List.length (page |> member "conversations" |> to_list));
+      Alcotest.(check bool) "end cursor" true (page |> member "next_offset" = `Null);
+      Alcotest.(check int) "history titles do not call model" 0 !calls)
+
 let () =
   Alcotest.run "advisor_http"
     [
       ( "adapter",
         [
+          Alcotest.test_case "private first-question history titles" `Quick history_titles;
           Alcotest.test_case "authoritative session currency metadata" `Quick session_currency_metadata;
           Alcotest.test_case "current household readiness" `Quick household_readiness;
           Alcotest.test_case "unavailable canonical repeats" `Quick readiness_repeats;

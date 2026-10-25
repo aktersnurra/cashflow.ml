@@ -1,6 +1,8 @@
 module C = Cashflow_advisor_protocol.Client_state
 module W = Cashflow_advisor_protocol.Wire
 
+let history_page ?next_offset conversations : C.history_page = {conversations; next_offset}
+
 let ids : W.identities =
   {
     conversation_id = "c";
@@ -175,7 +177,7 @@ let concurrent_and_consent () =
   let s, cs = C.reduce s (C.Load_history 0) in
   let history = token_of (function C.List_conversations (t, _, _) -> Some t | _ -> None) cs in
   let s = apply s (C.Status (status, Ok { available = true; consent = true; household = None; household_known = true })) in
-  let s = apply s (C.History (history, Ok [])) in
+  let s = apply s (C.History (history, Ok (history_page []))) in
   Alcotest.(check bool) "concurrent request lanes coexist" true ((C.view s).status <> None);
   let s, cs = C.reduce s (C.Consent (true, Some "explicit-household")) in
   Alcotest.(check bool)
@@ -192,14 +194,14 @@ let list_races () =
   let s, cs = C.reduce s C.Open_latest in
   let old = token_of (function C.List_conversations (t, 1, 0) -> Some t | _ -> None) cs in
   let s = apply s (C.Open_empty (W.Personal, snapshot.currency, "en")) in
-  let s, cs = C.reduce s (C.History (old, Ok [ { conversation_id = "c"; version = "1"; updated_at = "now" } ])) in
+  let s, cs = C.reduce s (C.History (old, Ok (history_page [{conversation_id="c"; version="1"; updated_at="now"; preview=None}]))) in
   Alcotest.(check int) "stale latest cannot select" 0 (List.length cs);
   let s, cs = C.reduce s (C.Load_history 0) in
   let old = token_of (function C.List_conversations (t, _, _) -> Some t | _ -> None) cs in
-  let s, cs = C.reduce s (C.Load_history 20) in
+  let s, cs = C.reduce s (C.Load_history 0) in
   let newer = token_of (function C.List_conversations (t, _, _) -> Some t | _ -> None) cs in
-  let page : C.metadata list = [ { conversation_id = "current-page"; version = "2"; updated_at = "now" } ] in
-  let s = apply s (C.History (old, Error C.Access_lost)) |> fun s -> apply s (C.History (newer, Ok page)) in
+  let page : C.metadata list = [{conversation_id="current-page"; version="2"; updated_at="now"; preview=None}] in
+  let s = apply s (C.History (old, Error C.Access_lost)) |> fun s -> apply s (C.History (newer, Ok (history_page page))) in
   let s = apply s (C.Draft_changed "still active") in
   Alcotest.(check string) "stale page denial preserves active draft" "still active" (C.view s).draft;
   Alcotest.(check bool) "current page applied" true ((C.view s).history = page);
@@ -342,7 +344,7 @@ let delayed_readiness () =
                   (C.History
                      ( t,
                        Ok
-                         (if latest_empty then [] else [ { conversation_id = "c"; version = "1"; updated_at = "now" } ])
+                         (history_page (if latest_empty then [] else [{conversation_id="c"; version="1"; updated_at="now"; preview=None}]))
                      ))
             | _ -> (s, [])
           in
@@ -700,6 +702,61 @@ let revoked_pending_household_context () =
   let s = apply s (C.Open_conversation "c") in
   Alcotest.(check string) "unrelated authorized personal cache retained" "authorized personal cache" (C.view s).draft
 
+let history_append () =
+  let s = apply C.empty C.Activate |> fun s -> apply s (C.Open_empty (W.Personal, snapshot.currency, "en")) in
+  let entry id : C.metadata = {conversation_id=id; version="1"; updated_at="2026-10-25T12:00:00Z"; preview=None} in
+  let s, commands = C.reduce s (C.Load_history 0) in
+  let first = token_of (function C.List_conversations (token, _, _) -> Some token | _ -> None) commands in
+  let s = apply s (C.History (first, Ok (history_page ~next_offset:20 [entry "newest"]))) in
+  let s, commands = C.reduce s (C.Load_history 20) in
+  let older = token_of (function C.List_conversations (token, _, _) -> Some token | _ -> None) commands in
+  let _, duplicate = C.reduce s (C.Load_history 20) in
+  Alcotest.(check int) "one request per older page" 0 (List.length duplicate);
+  let s = apply s (C.History (older, Ok (history_page ~next_offset:40 [entry "newest"; entry "older"]))) in
+  Alcotest.(check (list string)) "older rows append without replacing newer history" ["newest"; "older"]
+    (List.map (fun (entry : C.metadata) -> entry.conversation_id) (C.view s).history);
+  let _, skipped = C.reduce s (C.Load_history 999) in
+  Alcotest.(check int) "cannot skip the known cursor" 0 (List.length skipped);
+  let s, commands = C.reduce s (C.Load_history 0) in
+  let refresh = token_of (function C.List_conversations (token, _, _) -> Some token | _ -> None) commands in
+  let s = apply s (C.History (refresh, Error C.Transport)) in
+  Alcotest.(check int) "failed refresh retains authorized history" 2 (List.length (C.view s).history);
+  Alcotest.(check bool) "history error remains attributable to its own read lane" true (C.view s).history_failed
+
+let history_preview_revocation () =
+  List.iter (fun boundary ->
+    let s, commands, readiness = cached_ready_snapshot snapshot in
+    let stream = token_of (function C.Subscribe (token, _, _) -> Some token | _ -> None) commands in
+    let s = apply s (C.Draft_changed "personal draft survives") in
+    let entry id scope : C.metadata = {conversation_id=id; version="1"; updated_at="2026-10-25T12:00:00Z";
+      preview=Some {C.title=id; scope}} in
+    let personal = entry "personal preview" W.Personal and household = entry "private household preview" (W.Household "h") in
+    let s, commands = C.reduce s (C.Load_history 0) in
+    let token = token_of (function C.List_conversations (token, _, _) -> Some token | _ -> None) commands in
+    let s = apply s (C.History (token, Ok (history_page ~next_offset:20 [personal; household]))) in
+    let s, commands = C.reduce s (C.Load_history 20) in
+    let late = token_of (function C.List_conversations (token, _, _) -> Some token | _ -> None) commands in
+    let s = if boundary = "consent" then (
+      let s, commands = C.reduce s (C.Consent (false, Some "h")) in
+      let token = token_of (function C.Set_consent (token, _, _) -> Some token | _ -> None) commands in
+      apply s (C.Consent_result (token, Ok ())))
+    else (
+      let s, commands = C.reduce s C.Refresh_status in
+      let token = token_of (function C.Get_status token -> Some token | _ -> None) commands in
+      apply s (C.Status (token, Ok {readiness with household=None; household_known=(boundary <> "legacy")}))) in
+    let ids s = List.map (fun (entry : C.metadata) -> entry.conversation_id) (C.view s).history in
+    if boundary = "legacy" then
+      Alcotest.(check (list string)) "unknown legacy readiness is not revocation" ["personal preview"; "private household preview"] (ids s)
+    else (
+      Alcotest.(check (list string)) "known loss removes household previews immediately" ["personal preview"] (ids s);
+      let s = apply s (C.History (late, Ok (history_page [household]))) in
+      Alcotest.(check (list string)) "late page cannot restore revoked private titles" ["personal preview"] (ids s);
+      Alcotest.(check bool) "revoked history cursor cleared" true ((C.view s).history_next_offset=None));
+    Alcotest.(check string) "personal draft preserved" "personal draft survives" (C.view s).draft;
+    let s = apply s (C.Event (stream, event 1 delta)) |> fun s -> apply s (C.Flush stream) in
+    Alcotest.(check string) "personal stream remains current" "héllo <img onerror=evil()>" (text s)
+  ) ["membership"; "consent"; "legacy"]
+
 let () =
   Alcotest.run "advisor client state"
     [
@@ -707,6 +764,8 @@ let () =
         List.map
           (fun (name, f) -> Alcotest.test_case name `Quick f)
           [
+            ("private history preview revocation", history_preview_revocation);
+            ("append older conversation history", history_append);
             ("revoked pending household context", revoked_pending_household_context);
             ("scoped cached draft revocation", scoped_cached_draft_revocation);
             ("pending acceptance consumption", pending_acceptance_consumption);

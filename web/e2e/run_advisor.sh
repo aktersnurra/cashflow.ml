@@ -109,6 +109,7 @@ run harness-safety python3 test/test_advisor_harness_safety.py
 run socket python3 test/test_advisor_http_socket.py
 run controller python3 test/test_advisor_browser.py
 product product advisor.js
+product navigation advisor_navigation.js
 product presentation advisor_presentation.js
 ADVISOR_CHAT_PAUSED=1 product presentation-paused advisor_presentation.js
 product smoothness advisor_smoothness.js

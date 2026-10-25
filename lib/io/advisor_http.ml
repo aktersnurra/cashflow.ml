@@ -244,29 +244,27 @@ let route t req p path query parsed =
           if limit = 0 then Error invalid
           else
             read t p (fun user store ->
-                let* items = Advisor_store.list store ~owner:user.id ~limit ~offset () in
-                let items =
-                  List.filter
-                    (fun (m : Advisor_store.metadata) ->
-                      Result.is_ok (X.authorize_history t.service p m.conversation_id))
-                    items
-                in
-                Ok
-                  (json 200
-                     (`Assoc
-                        [
-                          ( "conversations",
-                            `List
-                              (List.map
-                                 (fun (m : Advisor_store.metadata) ->
-                                   `Assoc
-                                     [
-                                       ("conversation_id", `String (A.Conversation_id.to_string m.conversation_id));
-                                       ("version", `String (Int64.to_string m.version));
-                                       ("updated_at", `String (Ptime.to_rfc3339 m.updated_at));
-                                     ])
-                                 items) );
-                        ]))))
+                let* entries = Advisor_store.list store ~owner:user.id ~limit ~offset () in
+                (* Advance over the owned page, including rows whose current scope
+                   is no longer readable. Their private previews are never emitted. *)
+                let next_offset = if List.length entries = limit && offset <= max_int - limit
+                  then `Int (offset + limit) else `Null in
+                let entries = List.filter (fun (entry : Advisor_store.history_entry) ->
+                  Result.is_ok (X.authorize_history t.service p entry.conversation.conversation_id)) entries in
+                Ok (json 200 (`Assoc [
+                  ("conversations", `List (List.map (fun (entry : Advisor_store.history_entry) ->
+                    let m = entry.conversation in
+                    `Assoc [
+                      ("conversation_id", `String (A.Conversation_id.to_string m.conversation_id));
+                      ("version", `String (Int64.to_string m.version));
+                      ("updated_at", `String (Ptime.to_rfc3339 m.updated_at));
+                      ("title", match entry.title with Some title -> `String title | None -> `Null);
+                      ("scope", match m.scope with
+                        | A.Personal -> `Assoc [("type", `String "Personal")]
+                        | Household id -> `Assoc [("type", `String "Household"); ("value", `String (Household_id.to_string id))]);
+                    ]) entries));
+                  ("next_offset", next_offset);
+                ]))))
   | GET, [ "conversations"; id ] ->
       result (fun () ->
           let* id = conversation_id id in

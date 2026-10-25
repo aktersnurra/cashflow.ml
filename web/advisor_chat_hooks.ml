@@ -128,6 +128,7 @@ module Grow = Vdom.Attr.Hooks.Make (struct
       mutable last_valid_input : string;
       mutable sized_draft : string option;
       mutable listeners : Dom.event_listener_id list;
+      mutable scroll_timer : Dom_html.timeout_id option;
     }
   end
 
@@ -140,7 +141,7 @@ module Grow = Vdom.Attr.Hooks.Make (struct
            and unrelated stream/follow updates. Rejected input is never cached. *)
           if force_size || not (Option.equal String.equal sized_draft state.State.sized_draft) then (
             element##.style##.height := Js.string "auto";
-            let height = Int.min 240 (Int.max 50 (element##.scrollHeight + 2)) in
+            let height = Int.min 240 (Int.max 42 (element##.scrollHeight + 2)) in
             element##.style##.height := Js.string (Int.to_string height ^ "px");
             state.sized_draft <- sized_draft);
           if state.oversized then (
@@ -166,7 +167,24 @@ module Grow = Vdom.Attr.Hooks.Make (struct
         last_valid_input = input.draft;
         sized_draft = None;
         listeners = [];
+        scroll_timer = None;
       }
+    in
+    (* The thin scrollbar is only visible while the draft is actually scrolling. *)
+    let scroll_listener =
+      Dom_html.addEventListener element Dom_html.Event.scroll
+        (Dom_html.handler (fun _ ->
+             Option.iter state.State.scroll_timer ~f:(fun id -> Dom_html.window##clearTimeout id);
+             element##setAttribute (Js.string "data-scrolling") (Js.string "");
+             state.scroll_timer <-
+               Some
+                 (Dom_html.window##setTimeout
+                    (Js.wrap_callback (fun () ->
+                         state.scroll_timer <- None;
+                         element##removeAttribute (Js.string "data-scrolling")))
+                    900.);
+             Js._true))
+        Js._false
     in
     let input_listener =
       Dom_html.addEventListener element Dom_html.Event.input
@@ -186,7 +204,7 @@ module Grow = Vdom.Attr.Hooks.Make (struct
              Js._true))
         Js._false
     in
-    state.listeners <- [ input_listener; resize_listener ];
+    state.listeners <- [ input_listener; resize_listener; scroll_listener ];
     state
 
   let on_mount = `Schedule_animation_frame (fun _ state element -> refresh ~force_size:true state element)
@@ -202,6 +220,8 @@ module Grow = Vdom.Attr.Hooks.Make (struct
 
   let destroy _ state _ =
     state.State.alive <- false;
+    Option.iter state.scroll_timer ~f:(fun id -> Dom_html.window##clearTimeout id);
+    state.scroll_timer <- None;
     List.iter state.State.listeners ~f:Dom_html.removeEventListener;
     state.listeners <- [];
     state.last_valid_input <- "";

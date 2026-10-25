@@ -62,7 +62,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   await page.getByText(/Access to this conversation has ended/).waitFor();
   assert.equal(await page.getByText('Explain the shortfall',{exact:true}).count(),0);
   assert.equal(await page.getByRole('textbox').count(),0);
-  assert.equal(await button('Delete conversation').count(),0,'unconfirmed denied ID is not deletion handoff');
+  assert.equal(await button('Conversation actions').count(),0,'unconfirmed denied ID is not deletion handoff');
   assert.equal((await state()).provider_starts,1);
   // Original owner still may delete after explicit individual consent revocation.
   const owner=await browser.newPage();await owner.context().addCookies([{name:'cashflow_session',value:sessions.a.token,url:base}]);
@@ -76,7 +76,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   assert.equal(await owner.getByText('Explain the shortfall',{exact:true}).count(),0);
   assert.equal(await owner.getByRole('textbox').count(),0);
   assert.equal(await owner.getByRole('heading',{name:'Bills may run short before payday',exact:true}).count(),0,'captured Home source is cleared');
-  const beforeDelete=snapshots;owner.once('dialog',d=>d.accept());await owner.getByRole('button',{name:'Delete conversation',exact:true}).click();
+  const beforeDelete=snapshots;await owner.getByRole('button',{name:'Conversation actions',exact:true}).click();owner.once('dialog',d=>d.accept());await owner.getByRole('menuitem',{name:'Delete conversation',exact:true}).click();
   await sleep(200);assert.equal(snapshots,beforeDelete,'ownership deletion does not refetch denied contents');
   await owner.request.post(base+'/api/advisor/consent',{headers:{'x-csrf-token':sessions.a.csrf,'origin':base},data:{enabled:true}});
   assert.equal((await owner.request.get(base+'/api/advisor/conversations/'+conversation.split('/').pop())).status(),404);

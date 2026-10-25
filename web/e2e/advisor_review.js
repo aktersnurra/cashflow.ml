@@ -14,7 +14,7 @@ assert.ok(['name','route','route-history','enable','enable-pending','mobile','re
  const composer=()=>page.getByRole('textbox',{name:'Message advisor',exact:true});
  const api=(path,data)=>page.request.post(base+path,{headers:{'x-csrf-token':sessions.a.csrf,origin:base},data});
  const state=async()=>(await fetch(base+'/state')).json();
- const history=async()=>{if(!await page.locator('.advisor-tools details').evaluate(e=>e.open))await page.locator('.advisor-tools summary').click();};
+ const history=async()=>{const trigger=page.locator('.advisor-title-button');if(await trigger.getAttribute('aria-expanded')!=='true')await trigger.click();};
  const send=async text=>{await composer().fill(text);await button('Send').click();};
  const geometry=async finding=>{const b=await finding.boundingBox();return [b.x,b.y,b.width,await page.evaluate(()=>scrollY)];};
  let posts=0,statuses=0,denials=0;const errors=[];
@@ -58,16 +58,17 @@ assert.ok(['name','route','route-history','enable','enable-pending','mobile','re
  } else {
   await page.locator('[data-finding-key]').filter({has:page.getByRole('heading',{name:'Bills may run short before payday',exact:true})}).getByRole('button',{name:'Ask advisor',exact:true}).click();await button('Enable Advisor').click();await composer().waitFor();
   if(kind==='name'){
-   await history();await page.getByRole('combobox',{name:'Conversation history',exact:true}).waitFor({timeout:4000});
+   await history();await page.getByRole('menu',{name:'Conversation history',exact:true}).waitFor({timeout:4000});
+   const panel=page.locator('.advisor-history-panel');assert.equal(await panel.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+20,r.y+20));}),true,'inline finding does not clip the fixed private menu');
   }else if(kind==='route-history'){
    await send('Original history conversation');await page.getByText('first',{exact:true}).waitFor();await fetch(base+'/release');await page.getByRole('status').filter({hasText:'Answer completed.'}).waitFor();const original=new URL(page.url()).pathname;
-   await history();await button('New personal conversation').click();await page.getByText('What would you like to understand about your money?',{exact:true}).waitFor();
+   await history();await page.getByRole('menuitem',{name:'New conversation',exact:true}).click();await page.getByText('What would you like to understand about your money?',{exact:true}).waitFor();
    let release,ready,id;const held=new Promise(r=>ready=r);
    await page.route('**/api/advisor/turns',async route=>{const response=await route.fetch();id=(await response.json()).data.ids.conversation_id;release=()=>route.fulfill({response});ready();});
    await send('Deferred different conversation');await until(held);await nav('Budgets').click();
    const loaded=page.waitForResponse(r=>r.url().includes('/api/advisor/conversations/'+id)&&r.status()===200);await release();await loaded;
    assert.equal(new URL(page.url()).pathname,'/budgets');await page.evaluate(()=>window.history.go(-2));await page.waitForURL(base+original);
-   await page.getByText('Original history conversation',{exact:true}).waitFor();assert.equal(new URL(page.url()).pathname,original,'explicit history selection supersedes pending acceptance');assert.equal(posts,2);assert.equal((await state()).provider_starts,2);
+   await page.locator('.advisor-user-message').getByText('Original history conversation',{exact:true}).waitFor();assert.equal(new URL(page.url()).pathname,original,'explicit history selection supersedes pending acceptance');assert.equal(posts,2);assert.equal((await state()).provider_starts,2);
   }else if(kind==='route'){
    let release,ready;const held=new Promise(r=>ready=r);
    await page.route('**/api/advisor/turns',async route=>{const response=await route.fetch();assert.equal(response.status(),202);release=()=>route.fulfill({response});ready();});

@@ -24,7 +24,9 @@ type status = {
   household : household_status option;
   household_known : bool; (* Absent legacy metadata is unknown, not confirmed membership loss. *)
 }
-type metadata = { conversation_id : string; version : string; updated_at : string }
+type conversation_preview = { title : string; scope : W.scope }
+type metadata = { conversation_id : string; version : string; updated_at : string; preview : conversation_preview option }
+type history_page = { conversations : metadata list; next_offset : int option }
 type connection = Disconnected | Connecting | Connected | Reconnecting
 type pending = Submit of W.submit | Retry of W.retry
 
@@ -67,7 +69,7 @@ type action =
   | Accepted of token * (W.accepted, failure) result
   | Snapshot of token * (W.snapshot, failure) result
   | Status of token * (status, failure) result
-  | History of token * (metadata list, failure) result
+  | History of token * (history_page, failure) result
   | Consent_result of token * (unit, failure) result
   | Deleted of token * (unit, failure) result
   | Stopped of token * (string, failure) result
@@ -92,6 +94,9 @@ type view = {
   connection : connection;
   status : status option;
   history : metadata list;
+  history_loading : bool;
+  history_failed : bool;
+  history_next_offset : int option;
   pending : pending option;
   notice : notice;
   following : bool;

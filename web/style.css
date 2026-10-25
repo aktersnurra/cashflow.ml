@@ -473,11 +473,46 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
 .shell [hidden] { display: none !important; }
 .finding-reply { margin: 8px 0 16px; }
 .advisor-outlet { min-width: 0; margin: 16px 0 24px; padding: 12px 0 0; overflow-wrap: anywhere; }
-.advisor-tools { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: start; gap: 12px; margin-bottom: 24px; font: 13px/20px var(--chat-ui); color: var(--chat-muted); }
-.advisor-tools details { max-width: 100%; }
-.advisor-tools details[open] { display: grid; gap: 8px; }
-.advisor-tools summary { cursor: pointer; }
-.advisor-tools select { max-width: 100%; }
+.advisor-navigation { position: relative; display: flex; align-items: center; gap: 12px; min-width: 0; margin: 0 0 20px; padding: 6px 0; background: var(--bg); z-index: 3; }
+.advisor-page .advisor-navigation { position: sticky; top: 0; }
+.advisor-navigation[data-menu-open] { z-index: 40; }
+.advisor-title-button, .advisor-actions-button, .advisor-sheet-close { border: 0; border-radius: 8px; background: transparent; color: var(--text); cursor: pointer; font: inherit; }
+.advisor-title-button { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 8px; margin-left: -8px; font: 600 16px/24px var(--font); text-align: left; }
+.advisor-title-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; unicode-bidi: plaintext; }
+.advisor-title-chevron { flex: none; display: block; margin-top: 2px; color: var(--muted); }
+.advisor-navigation-meta { flex: none; margin-left: auto; color: var(--chat-muted); font: 11px/18px var(--font); white-space: nowrap; }
+.advisor-actions-button { flex: none; width: 36px; height: 36px; font: 24px/1 var(--font); }
+.advisor-title-button:hover, .advisor-actions-button:hover, .advisor-sheet-close:hover { background: var(--surface); }
+.advisor-navigation :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+/* Fixed positioning escapes the finding list's clipping without moving private
+   nodes outside the controller's synchronous clearing boundary. */
+.advisor-menu-panel { position: fixed; width: 360px; max-width: calc(100vw - 24px); padding: 6px; margin: 0; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--panel); color: var(--text); box-shadow: var(--overlay-shadow); z-index: 2; overflow-y: auto; overscroll-behavior: contain; visibility: hidden; }
+.advisor-menu-panel[data-menu-placed] { visibility: visible; }
+.advisor-action-panel { width: 236px; }
+.advisor-menu-item { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 40px; padding: 9px 10px; border: 0; border-radius: 6px; background: transparent; color: inherit; text-align: left; cursor: pointer; font: 13px/20px var(--font); }
+.advisor-menu-item:hover, .advisor-menu-item:focus { background: var(--surface); }
+.advisor-menu-item[aria-current=page] { background: var(--surface); font-weight: 500; }
+.advisor-menu-item:disabled, .advisor-menu-item[aria-disabled=true] { color: var(--muted); cursor: default; }
+.advisor-menu-icon { flex: none; width: 16px; text-align: center; color: var(--chat-muted); }
+.advisor-history-list { border-top: 1px solid var(--line); margin-top: 6px; padding-top: 4px; }
+.advisor-history-caption { color: var(--chat-muted); padding: 8px 10px 4px; font: 11px/18px var(--font); margin: 0; }
+.advisor-history-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; unicode-bidi: plaintext; }
+.advisor-history-age, .advisor-history-scope { flex: none; color: var(--chat-muted); font: 11px/18px var(--font); white-space: nowrap; }
+.advisor-history-age { margin-left: auto; }
+.advisor-menu-delete { color: var(--negative); }
+.advisor-sheet-heading, .advisor-menu-backdrop { display: none; }
+@media (max-width: 600px) {
+  .advisor-navigation { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 8px; }
+  .advisor-title-button { grid-column: 1; grid-row: 1; font-size: 15px; }
+  .advisor-actions-button { grid-column: 2; grid-row: 1; }
+  .advisor-navigation-meta { grid-column: 1 / -1; grid-row: 2; margin: 0; font-size: 11px; }
+  .advisor-menu-backdrop { display: block; position: fixed; inset: 0; background: var(--scrim); z-index: 1; touch-action: none; }
+  .advisor-menu-panel { left: 0; right: 0; bottom: 0; top: auto; width: 100%; max-width: none; max-height: 80dvh; border-radius: 16px 16px 0 0; padding: 8px 10px calc(12px + env(safe-area-inset-bottom)); }
+  .advisor-sheet-heading { display: flex; align-items: center; justify-content: space-between; padding: 0 8px 8px; border-bottom: 1px solid var(--line); margin-bottom: 6px; }
+  .advisor-sheet-heading h2 { margin: 0; font: 600 15px/24px var(--font); }
+  .advisor-sheet-close { width: 40px; height: 40px; font-size: 24px; }
+  .advisor-menu-item { min-height: 44px; font-size: 14px; }
+}
 .advisor-consent { max-width: 65ch; }
 /* One reading surface, using the same neutral palette and type as the financial
    shell. The document remains the single vertical scroll surface. */
@@ -487,9 +522,8 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
   --chat-accent: var(--accent); --chat-ui: var(--font);
 }
 .advisor-page { max-width: 808px; }
-.advisor-page > h1 { font: 600 20px/28px var(--font); color: var(--text); margin-bottom: 20px; }
+.advisor-page > h1 { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .advisor-page > .advisor-outlet { margin-top: 0; }
-.advisor-tools .eyebrow { color: inherit; font-size: inherit; }
 .advisor-conversation { min-width: 0; color: var(--chat-ink); background: var(--chat-paper); }
 .advisor-source { margin-bottom: 24px; }
 .advisor-source p { margin-top: 8px; }
@@ -535,34 +569,36 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
 .advisor-caveats { display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--chat-muted); margin-top: 12px; }
 .advisor-evidence-body ul { color: var(--chat-muted); padding-left: 18px; margin: 8px 0 0; }
 .advisor-composer-area { position: sticky; bottom: 14px; z-index: 2; padding-top: 12px; background: var(--chat-paper); }
-.advisor-composer { border: 1px solid var(--line-strong); border-radius: 14px; padding: 8px; background: var(--chat-composer); }
+.advisor-composer { display: grid; grid-template-columns: 1fr auto; align-items: end; border: 1px solid var(--line-strong); border-radius: 18px; padding: 6px 8px 6px 6px; background: var(--chat-composer); }
 .advisor-composer:focus-within { border-color: var(--focus); }
-.advisor-conversation .advisor-input { display: block; width: 100%; min-height: 50px; max-height: 240px; resize: none; margin: 0;
-  padding: 10px 12px; border: 0; outline: none; box-shadow: none; background: none; color: var(--chat-ink); font: 15px/24px var(--chat-ui); scrollbar-width: thin; }
+.advisor-conversation .advisor-input { display: block; width: 100%; min-height: 42px; max-height: 240px; resize: none; margin: 0;
+  padding: 9px 12px; border: 0; outline: none; box-shadow: none; background: none; color: var(--chat-ink); font: 15px/24px var(--chat-ui);
+  scrollbar-width: thin; scrollbar-color: transparent transparent; }
+.advisor-conversation .advisor-input[data-scrolling] { scrollbar-color: var(--chat-muted) transparent; }
+.advisor-input::-webkit-scrollbar { width: 3px; }
+.advisor-input::-webkit-scrollbar-track { background: transparent; }
+.advisor-input::-webkit-scrollbar-thumb { background: transparent; border-radius: 2px; }
+.advisor-input[data-scrolling]::-webkit-scrollbar-thumb { background: var(--chat-muted); }
 .advisor-input::placeholder { color: var(--chat-muted); }
-.advisor-input-error { display: none; margin: 6px 12px 4px; color: var(--negative); font: 12px/18px var(--chat-ui); }
+.advisor-input-error { display: none; grid-column: 1 / -1; margin: 6px 12px 4px; color: var(--negative); font: 12px/18px var(--chat-ui); }
 .advisor-composer[data-over-limit] .advisor-input-error { display: block; }
 .advisor-composer[data-over-limit] { border-color: var(--negative); }
-.advisor-composer-bottom { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 4px 0 12px; }
-.advisor-input-hint { font: 11px/18px var(--chat-ui); color: var(--chat-muted); }
-.advisor-send { display: grid; place-items: center; flex: none; width: 40px; height: 40px; margin-left: auto; border: 0; border-radius: 10px;
-  background: var(--chat-accent); color: var(--on-accent); font: 23px/1 var(--chat-ui); cursor: pointer; }
-.advisor-send:disabled { background: var(--chat-bubble); color: var(--chat-muted); cursor: default; }
-.advisor-send:not(:disabled):hover { filter: brightness(.92); }
+.advisor-composer-bottom { display: flex; }
+.advisor-send { display: grid; place-items: center; flex: none; width: 32px; height: 42px; margin-left: auto; padding: 0; border: 0; background: none; color: var(--chat-ink); cursor: pointer; }
+.advisor-send:disabled { color: var(--chat-muted); cursor: default; }
+.advisor-composer:has(.advisor-input:placeholder-shown) .advisor-send[data-advisor-send] { visibility: hidden; }
+.advisor-send:not(:disabled):hover { color: var(--chat-accent); }
 .advisor-status, .advisor-attempt-status { font: 12px/20px var(--chat-ui); color: var(--chat-muted); margin: 8px 4px 0; }
 .advisor-status:empty { display: none; }
 .advisor-conversation-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; padding: 12px 0 4px; }
 .advisor-conversation-actions .button { font: 12px/18px var(--chat-ui); border-color: transparent; background: transparent; color: var(--chat-muted); }
-.advisor-conversation :focus-visible, .advisor-tools :focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+.advisor-conversation :focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
 .advisor-conversation .advisor-input:focus-visible { outline: none; }
 @media (max-width: 768px) {
   .advisor-outlet { padding: 8px 0 0; }
   .advisor-prose { font-size: 16px; }
   .advisor-composer-area { bottom: calc(66px + env(safe-area-inset-bottom)); }
   .advisor-user-message { max-width: 92%; padding: 10px 14px; }
-  .advisor-tools { gap: 10px; margin-bottom: 20px; }
 }
-@media (pointer: coarse) { .advisor-input-hint { visibility: hidden; } }
-@media (max-width: 600px) { .advisor-tools { flex-direction: column; } }
 .advisor-mobile-link { display: none; }
 @media (max-width: 760px) { .advisor-mobile-link { display: inline-flex; } }

@@ -216,7 +216,6 @@ let render_body ~turns ~show_source ~locale ~(view : C.view) ~dispatch =
             [];
           Vdom.Node.div ~attrs:(cls "advisor-composer-bottom")
             [
-              Vdom.Node.span ~attrs:(cls "advisor-input-hint") [ text (Msg.advisor_input_hint locale) ];
               (let label = if active then Msg.advisor_stop locale else Msg.advisor_send locale in
                Vdom.Node.button
                  ~attrs:
@@ -232,9 +231,32 @@ let render_body ~turns ~show_source ~locale ~(view : C.view) ~dispatch =
                          else submit (Advisor_chat_hooks.current_draft event ~fallback:view.draft));
                    ]
                  [
-                   Vdom.Node.span
-                     ~attrs:[ Vdom.Attr.create "aria-hidden" "true" ]
-                     [ text (if active then "■" else "↑") ];
+                   Vdom.Node.create_svg "svg"
+                     ~attrs:
+                       [
+                         Vdom.Attr.class_ "advisor-send-icon";
+                         Vdom.Attr.create "viewBox" "0 0 24 24";
+                         Vdom.Attr.create "width" "20";
+                         Vdom.Attr.create "height" "20";
+                         Vdom.Attr.create "fill" (if active then "currentColor" else "none");
+                         Vdom.Attr.create "stroke" "currentColor";
+                         Vdom.Attr.create "stroke-width" "1.5";
+                         Vdom.Attr.create "stroke-linecap" "round";
+                         Vdom.Attr.create "stroke-linejoin" "miter";
+                         Vdom.Attr.create "aria-hidden" "true";
+                       ]
+                     [
+                       (if active then
+                          Vdom.Node.create_svg "rect"
+                            ~attrs:
+                              [ Vdom.Attr.create "x" "6"; Vdom.Attr.create "y" "6"; Vdom.Attr.create "width" "12";
+                                Vdom.Attr.create "height" "12"; Vdom.Attr.create "rx" "2" ]
+                            []
+                        else
+                          Vdom.Node.create_svg "path"
+                            ~attrs:[ Vdom.Attr.create "d" "M9 6h8v8H4M8 10l-4 4 4 4" ]
+                            []);
+                     ];
                  ]);
             ];
           Vdom.Node.p
@@ -255,22 +277,7 @@ let render_body ~turns ~show_source ~locale ~(view : C.view) ~dispatch =
     @ (if generation_ready && Option.is_some view.pending then [ button (Msg.advisor_repeat locale) C.Repeat_pending ]
        else [])
     @ (if view.new_output then [ button (Msg.advisor_follow locale) (C.Follow true) ] else [])
-    @
-    if Option.is_some view.snapshot then
-      [
-        Vdom.Node.button
-          ~attrs:
-            [
-              Vdom.Attr.class_ "button secondary";
-              Vdom.Attr.type_ "button";
-              Vdom.Attr.on_click (fun _ ->
-                  if Js.to_bool (Dom_html.window##confirm (Js.string (Msg.advisor_delete_confirm locale))) then
-                    dispatch C.Delete
-                  else Effect.Ignore);
-            ]
-          [ text (Msg.advisor_delete locale) ];
-      ]
-    else []
+
   in
   Vdom.Node.div
     ~attrs:
