@@ -286,6 +286,10 @@ let tls_transport_no_logs () =
           ["cashflow.https:HTTPS stream failed: phase=response-body reason=invalid-chunk-size";
            "cashflow.https:HTTPS stream failed: phase=response-body reason=end-of-file";
            "cashflow.https:HTTPS stream failed: phase=callback reason=exception"];
+        let decode_logs = String.split_on_char '\n' logs
+          |> List.filter (String.starts_with ~prefix:"cashflow.advisor_provider:") in
+        Alcotest.(check (list string)) "native callback Decode has only fixed location"
+          ["cashflow.advisor_provider:Advisor provider invalid stream: location=json"] decode_logs;
         let boundary_logs = String.split_on_char '\n' logs
           |> List.filter (String.starts_with ~prefix:"cashflow.https:HTTPS stream failed:") in
         Alcotest.(check int) "only actual failures logged, not cancellation/success/status" 6 (List.length boundary_logs);

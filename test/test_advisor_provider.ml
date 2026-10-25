@@ -264,6 +264,56 @@ let safe_transport_diagnostics () =
          Cashflow_io.Https.Http_status 503, "http_status503";
          Cashflow_io.Https.Transport "SECRET exception https://private/?key=SECRET header PRIVATE response body finances", "transport"])
 
+let safe_decode_locations () =
+  let previous = Logs.reporter () and global_level = Logs.level () in
+  let levels = List.map (fun src -> src, Logs.Src.level src) (Logs.Src.list ()) in
+  let captured = ref [] in
+  let report src level ~over k msgf =
+    msgf (fun ?header:_ ?tags:_ format ->
+      Format.kasprintf (fun message ->
+        captured := (Logs.Src.name src, level = Logs.Warning, message) :: !captured;
+        over (); k ()) format) in
+  Fun.protect ~finally:(fun () ->
+    Logs.set_reporter previous;
+    Logs.set_level ~all:false global_level;
+    List.iter (fun (src, level) -> Logs.Src.set_level src level) levels)
+    (fun () ->
+      Logs.set_level (Some Logs.Debug);
+      Logs.set_reporter { Logs.report };
+      let choice fields = frame ("{\"choices\":[{" ^ fields ^ "}]}") in
+      List.iter (fun (wire, location) ->
+        captured := [];
+        let calls = ref 0 in
+        let post ~uri:_ ~headers:_ ~body:_ ~on_chunk = incr calls; on_chunk wire; Ok () in
+        let p = create ~post ~api_key:"PRIVATE-key" ~model:"PRIVATE-model" ~provider_only:["PRIVATE-route"] in
+        (match P.stream p { system = "PRIVATE-system"; messages = [P.User "PRIVATE-finances"] }
+          ~on_event:(fun _ -> ()) with
+         | Error { A.code = A.Invalid_stream; context = A.No_context } -> ()
+         | _ -> Alcotest.fail "unchanged invalid stream classification");
+        Alcotest.(check int) "no decode retry" 1 !calls;
+        Alcotest.(check (list (triple string bool string))) "only fixed location, no payload"
+          [("cashflow.advisor_provider", true, "Advisor provider invalid stream: location=" ^ location)]
+          !captured)
+        [frame "PRIVATE-invalid-json", "json";
+         frame "[]", "root";
+         frame "{\"usage\":{\"prompt_tokens\":\"PRIVATE-usage\"}}", "usage";
+         frame "{\"choices\":\"PRIVATE-choices\"}", "choices";
+         frame "{\"choices\":[\"PRIVATE-choice\"]}", "choice";
+         choice "\"index\":1", "index";
+         choice "\"index\":0,\"delta\":\"PRIVATE-delta\"", "delta";
+         finish "stop" ^ text "PRIVATE-late-content", "content-after-finish";
+         finish "stop" ^ text "", "content-after-finish";
+         choice "\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":8,\"id\":\"PRIVATE-call\"}]}", "tool-fragment";
+         finish "PRIVATE-finish-reason", "finish-reason";
+         choice "\"index\":0,\"delta\":{\"content\":42}", "content";
+         done_, "done-without-finish";
+         finish "stop" ^ done_ ^ frame "PRIVATE-after-DONE", "after-DONE"];
+      captured := [];
+      let post ~uri:_ ~headers:_ ~body:_ ~on_chunk = on_chunk (text "PRIVATE-success" ^ finish "stop" ^ done_); Ok () in
+      let p = create ~post ~api_key:"PRIVATE-key" ~model:"synthetic" ~provider_only:["synthetic"] in
+      ok (P.stream p request ~on_event:(fun _ -> ()));
+      Alcotest.(check int) "no successful-frame logs" 0 (List.length !captured))
+
 let () = Alcotest.run "advisor provider" ["synthetic", [
   Alcotest.test_case "fragmented_provider_rounds" `Quick fragmented_provider_rounds;
   Alcotest.test_case "interleaved_tools" `Quick interleaved_tools;
@@ -273,4 +323,5 @@ let () = Alcotest.run "advisor provider" ["synthetic", [
   Alcotest.test_case "multiline, transport and live text" `Quick multiline_and_failures;
   Alcotest.test_case "configured completion bound and exact request" `Quick configured_bounds;
   Alcotest.test_case "safe transport diagnostics" `Quick safe_transport_diagnostics;
+  Alcotest.test_case "safe decode locations" `Quick safe_decode_locations;
   Alcotest.test_case "schemas" `Quick schemas]]

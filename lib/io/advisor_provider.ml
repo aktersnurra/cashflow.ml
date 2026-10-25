@@ -109,14 +109,21 @@ let stream_prepared (t : t) prepared ~on_activity ~on_event =
   let fragments = Hashtbl.create 8 in
   let reason = ref None and done_seen = ref false and bytes = ref 0 and output = ref 0 in
   let usage = ref { prompt_tokens = 0; completion_tokens = 0; total_tokens = 0 } in
+  (* Only fixed local tags are assigned here, never provider-supplied values.
+     Record the active invariant without logging successful frames or payloads. *)
+  let location = ref "sse-framing" in
   let decode_frame (frame : Sse.frame) =
+    location := "after-DONE";
     if !done_seen then invalid ();
     if frame.event = Some "error" then reject A.Provider_unavailable;
-    if frame.data = "[DONE]" then (if !reason = None then invalid (); done_seen := true; [])
-    else
+    if frame.data = "[DONE]" then (location := "done-without-finish"; if !reason = None then invalid (); done_seen := true; [])
+    else (
+      location := "json";
       let json = try Yojson.Safe.from_string frame.data with Yojson.Json_error _ | Stack_overflow -> invalid () in
+      location := "root";
       let f = fields json in
       if List.mem_assoc "error" f then reject A.Provider_unavailable;
+      location := "usage";
       (match member "usage" f with
       | `Null -> ()
       | u -> let u = fields u in
@@ -124,14 +131,20 @@ let stream_prepared (t : t) prepared ~on_activity ~on_event =
           usage := { prompt_tokens = count "prompt_tokens" !usage.prompt_tokens;
             completion_tokens = count "completion_tokens" !usage.completion_tokens;
             total_tokens = count "total_tokens" !usage.total_tokens });
+      location := "choices";
       match member "choices" f with
       | `Null | `List [] -> []
       | `List [choice] ->
+          location := "choice";
           let c = fields choice in
+          location := "index";
           if member "index" c <> `Int 0 then invalid ();
+          location := "delta";
           let delta = match member "delta" c with `Null -> [] | d -> fields d in
           let content = member "content" delta and tools = member "tool_calls" delta in
+          location := "content-after-finish";
           if !reason <> None && (content <> `Null || tools <> `Null) then invalid ();
+          location := "tool-fragment";
           (match tools with
           | `Null -> ()
           | `List calls -> List.iter (fun call ->
@@ -155,27 +168,31 @@ let stream_prepared (t : t) prepared ~on_activity ~on_event =
                   append 128 fragment.name_buffer (member "name" fn);
                   append 8192 fragment.args (member "arguments" fn))) calls
           | _ -> invalid ());
+          location := "finish-reason";
           (match member "finish_reason" c with
           | `Null -> ()
           | r -> let r = match r with
               | `String "stop" -> Stop | `String "tool_calls" -> Tool_calls
               | `String "length" -> Length | `String "content_filter" -> Content_filter | _ -> invalid () in
               (match !reason with None -> reason := Some r | Some old when old = r -> () | _ -> invalid ()));
+          location := "content";
           (match content with
           | `Null | `String "" -> []
           | `String text -> output := !output + String.length text;
               if !output > 65536 then raise (Decode { A.code = A.Run_limit_reached; context = A.Limit A.Output_bytes });
               [Text text]
           | _ -> invalid ())
-      | _ -> invalid ()
+      | _ -> invalid ())
   in
   (* Only our private decoder exception is caught. Cancellation and callback
      exceptions must cross this boundary unchanged. No provider body is logged. *)
   try
     let on_chunk chunk =
       on_activity ();
+      location := "raw-byte-limit";
       bytes := !bytes + String.length chunk;
       if !bytes > 2 * 1024 * 1024 then invalid ();
+      location := "sse-framing";
       let frames = match Sse.feed parser chunk with Ok f -> f | Error _ -> invalid () in
       List.iter (fun frame -> List.iter on_event (decode_frame frame)) frames
     in
@@ -186,20 +203,27 @@ let stream_prepared (t : t) prepared ~on_activity ~on_event =
         log_stream_error error;
         Error { A.code = A.Provider_unavailable; context = A.No_context }
     | Ok () ->
+        location := "sse-finish";
         (match Sse.finish parser with Error _ -> invalid () | Ok () -> ());
+        location := "missing-DONE";
         if not !done_seen then invalid ();
+        location := "tool-finalization";
         let calls = Hashtbl.fold (fun index f calls ->
           let name = Buffer.contents f.name_buffer and arguments = Buffer.contents f.args in
           if f.call_id = "" then invalid ();
           (match Advisor_projection.parse_call ~name ~arguments with Ok _ -> () | Error e -> raise (Decode e));
           { id = f.call_id; name; arguments; index } :: calls) fragments []
           |> List.sort (fun a b -> Int.compare a.index b.index) in
+        location := "finish-consistency";
         let reason = match !reason with Some r -> r | None -> invalid () in
         if (calls <> []) <> (reason = Tool_calls) then invalid ();
         if calls <> [] then on_event (Calls_ready calls);
         on_event (Round_finished reason);
         Ok !usage
-  with Decode e -> Error e
+  with Decode e ->
+    if e.A.code = A.Invalid_stream then
+      Log.warn (fun m -> m "Advisor provider invalid stream: location=%s" !location);
+    Error e
 
 let stream t request ~on_event =
   match prepare t request with
