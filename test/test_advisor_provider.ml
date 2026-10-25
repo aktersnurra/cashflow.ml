@@ -64,6 +64,43 @@ let interleaved_tools () =
         Alcotest.(check string) "second id" "b" b.id
     | _ -> Alcotest.fail "partial or missing calls"
   done
+let trailing_noop_deltas () =
+  let accounting delta finish_reason = frame (Yojson.Safe.to_string (`Assoc [
+    "choices", `List [`Assoc ["index", `Int 0; "delta", `Assoc delta; "finish_reason", finish_reason]];
+    "usage", `Assoc ["prompt_tokens", `Int 3; "completion_tokens", `Int 2; "total_tokens", `Int 5]])) in
+  let noops = List.concat_map (fun content ->
+    List.map (fun calls -> content @ calls)
+      [[]; ["tool_calls", `Null]; ["tool_calls", `List []]])
+    [[]; ["content", `Null]; ["content", `String ""]] in
+  List.iter (fun (prefix, reason, expected) ->
+    let trailing = List.concat_map (fun delta ->
+      [accounting delta `Null; accounting delta (`String reason)]) noops in
+    let result, events, requests = run (prefix :: finish reason :: trailing @ [done_]) in
+    ok result; policy requests;
+    Alcotest.(check bool) "no no-op events or duplicate calls" true (events = expected);
+    (match result with
+     | Ok u -> Alcotest.(check (triple int int int)) "usage retained, not summed" (3,2,5)
+         (u.prompt_tokens,u.completion_tokens,u.total_tokens)
+     | Error _ -> Alcotest.fail "trailing no-op rejected");
+    List.iter (fun delta ->
+      let result, events, _ = run [prefix; finish reason; accounting delta `Null; done_] in
+      (match result with Error { A.code = A.Invalid_stream; _ } -> ()
+       | _ -> Alcotest.fail "semantic or malformed trailing delta accepted");
+      Alcotest.(check bool) "no failed round completion/calls" true
+        (List.for_all (function P.Text _ -> true | _ -> false) events))
+      [["content", `String "late"]; ["content", `Int 0]; ["content", `List []];
+       ["tool_calls", `List [full_call 0 "late" "goals" "{}"]];
+       ["tool_calls", `List [`Assoc []]]; ["tool_calls", `String ""]; ["tool_calls", `Assoc []]];
+    List.iter (fun suffix ->
+      let result, _, _ = run [prefix; finish reason; suffix] in
+      failed result)
+      [accounting ["content", `String ""; "tool_calls", `List []]
+         (`String (if reason = "stop" then "tool_calls" else "stop")) ^ done_;
+       done_ ^ accounting [] `Null])
+    [text "answer", "stop", [P.Text "answer"; P.Round_finished P.Stop];
+     tools [full_call 0 "a" "goals" "{}"], "tool_calls",
+       [P.Calls_ready [{ id = "a"; name = "goals"; arguments = "{}"; index = 0 }]; P.Round_finished P.Tool_calls]]
+
 let failures () =
   List.iter (fun wire -> let result, events, requests = run [wire] in failed result; policy requests;
     Alcotest.(check bool) "no calls/finish on failure" true (List.for_all (function P.Text _ -> true | _ -> false) events))
@@ -302,7 +339,6 @@ let safe_decode_locations () =
          choice "\"index\":1", "index";
          choice "\"index\":0,\"delta\":\"PRIVATE-delta\"", "delta";
          finish "stop" ^ text "PRIVATE-late-content", "content-after-finish";
-         finish "stop" ^ text "", "content-after-finish";
          choice "\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":8,\"id\":\"PRIVATE-call\"}]}", "tool-fragment";
          finish "PRIVATE-finish-reason", "finish-reason";
          choice "\"index\":0,\"delta\":{\"content\":42}", "content";
@@ -317,6 +353,7 @@ let safe_decode_locations () =
 let () = Alcotest.run "advisor provider" ["synthetic", [
   Alcotest.test_case "fragmented_provider_rounds" `Quick fragmented_provider_rounds;
   Alcotest.test_case "interleaved_tools" `Quick interleaved_tools;
+  Alcotest.test_case "trailing no-op deltas" `Quick trailing_noop_deltas;
   Alcotest.test_case "failures" `Quick failures;
   Alcotest.test_case "cancellation" `Quick cancellation;
   Alcotest.test_case "follow-up policy and ordering" `Quick follow_up_policy;

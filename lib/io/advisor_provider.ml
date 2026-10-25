@@ -143,7 +143,11 @@ let stream_prepared (t : t) prepared ~on_activity ~on_event =
           let delta = match member "delta" c with `Null -> [] | d -> fields d in
           let content = member "content" delta and tools = member "tool_calls" delta in
           location := "content-after-finish";
-          if !reason <> None && (content <> `Null || tools <> `Null) then invalid ();
+          (* Trailing usage envelopes may carry empty deltas, but never new
+             semantic output or malformed content/tool fields after finish. *)
+          if !reason <> None &&
+             (not (content = `Null || content = `String "") ||
+              not (tools = `Null || tools = `List [])) then invalid ();
           location := "tool-fragment";
           (match tools with
           | `Null -> ()
