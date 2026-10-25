@@ -213,11 +213,21 @@ let schemas () =
   Alcotest.(check (list int)) "forecast horizons" [1;3;6] (member "cycles" forecast |> member "enum" |> to_list |> List.map to_int);
   let scenario = member "scenario" forecast in
   Alcotest.(check (list string)) "scenario fields" ["follow_budgets"; "leave_out"; "one_off"] (properties scenario);
+  let forecast_description = member "cycles" forecast |> member "description" |> to_string in
+  Alcotest.(check bool) "documented actual default horizon" true
+    (Cashflow_core.Str_compat.contains ~sub:"default 3" forecast_description);
   let sp = member "properties" scenario in
   Alcotest.(check int) "series cap" 20 (member "leave_out" sp |> member "maxItems" |> to_int);
   Alcotest.(check int) "one-off cap" 10 (member "one_off" sp |> member "maxItems" |> to_int);
   let item = member "one_off" sp |> member "items" in
   Alcotest.(check (list string)) "one-off exact fields" ["amount"; "date"; "description"] (properties item);
+  let item_properties = member "properties" item in
+  List.iter (fun (field, fragment) ->
+    let description = member field item_properties |> member "description" |> to_string in
+    Alcotest.(check bool) (field ^ " semantic guidance") true
+      (Cashflow_core.Str_compat.contains ~sub:fragment description))
+    ["date", "current local date"; "date", "inclusive";
+     "amount", "Negative for expenses"; "amount", "pinned currency"; "amount", "Nonzero"];
   List.iter (fun (name,args) ->
     failed (Cashflow_io.Advisor_projection.parse_call ~name ~arguments:args);
     let result, events, _ = run [tools [full_call 0 "id" name args] ^ finish "tool_calls" ^ done_] in

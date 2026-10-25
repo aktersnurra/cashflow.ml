@@ -876,11 +876,81 @@ let stop_between_commit_and_registration () =
       check "cancelled handoff starts no provider or run event"
         (!calls = 0 && match journal db a with [ { payload = A.Run_cancelled; _ } ] -> true | _ -> false))
 
+let holiday_forecast_correction () =
+  List.iter (fun (date, amount) ->
+    let posts = ref 0 in
+    let scenario date amount = Printf.sprintf
+      {|{"cycles":6,"scenario":{"one_off":[{"date":%S,"amount":%S,"description":"holiday"}]}}|} date amount in
+    let send_calls on_chunk calls =
+      let calls = List.mapi (fun index (id,name,arguments) -> `Assoc [
+        "index", `Int index; "id", `String id; "type", `String "function";
+        "function", `Assoc ["name", `String name; "arguments", `String arguments]]) calls in
+      let data = `Assoc ["choices", `List [`Assoc ["index", `Int 0;
+        "delta", `Assoc ["tool_calls", `List calls]; "finish_reason", `String "tool_calls"]]] in
+      on_chunk ("data: " ^ Yojson.Safe.to_string data ^ "\n\ndata: [DONE]\n\n") in
+    fixture (fun _ ~uri:_ ~headers:_ ~body ~on_chunk ->
+      incr posts;
+      let open Yojson.Safe.Util in
+      let body = Yojson.Safe.from_string body in
+      let messages = member "messages" body |> to_list in
+      let system = List.hd messages |> member "content" |> to_string in
+      check "authoritative local day across UTC midnight"
+        (Str_compat.contains ~sub:"Current local date: 2026-10-25; timezone: Europe/Stockholm." system);
+      check "workflow safety preserves temporal context"
+        (Str_compat.contains ~sub:"no financial execution or write authority" system);
+      (match !posts with
+       | 1 -> send_calls on_chunk ["goals", "goals", "{}"; "bad-forecast", "forecast", scenario date amount]
+       | 2 ->
+           let feedback = List.find (fun m -> member "tool_call_id" m = `String "bad-forecast") messages
+             |> member "content" |> to_string in
+           check "bounded structured feedback" (String.length feedback <= 512);
+           Alcotest.(check string) "safe validation code" "invalid_forecast_arguments"
+             (Yojson.Safe.from_string feedback |> member "error" |> to_string);
+           check "no raw invalid arguments in feedback"
+             (not (Str_compat.contains ~sub:date feedback));
+           send_calls on_chunk ["corrected", "forecast", scenario "2027-02-15" "-25000"]
+       | 3 ->
+           let result = List.find (fun m -> member "tool_call_id" m = `String "corrected") messages
+             |> member "content" |> to_string |> Yojson.Safe.from_string in
+           check "correction is evidence, not another tool error" (member "error" result = `Null);
+           on_chunk "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Synthetic holiday explanation\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+       | _ -> Alcotest.fail "unexpected extra model round");
+      Ok ())
+      (fun _ db service runtime f ->
+        f.wall <- Option.get (Ptime.of_date_time ((2026,10,24), ((23,30,0),0)));
+        let owner, _, principal = login service "holiday" in
+        let access = ok (Advisor_access.access service principal) in
+        let user = Access.user access in
+        let access = Test_service_support.ok (Service.update_settings service access
+          { User.locale = user.locale; timezone = "Europe/Stockholm";
+            default_currency = user.default_currency; pay_cycle = user.pay_cycle }) in
+        ignore (Test_service_support.open_checking service access "Holiday cash");
+        let counts () = Sql.(run db (stmt
+          "SELECT (SELECT count(*) FROM transfers), (SELECT count(*) FROM savings_goals)"
+          nil (one (row (int @-> int @-> nil) (fun a b -> a,b))))) in
+        let before = counts () in
+        let a = ok (R.submit runtime ~principal { (submit "holiday") with
+          user_text = "I need to start saving for a holiday in February costing around 25k SEK" }) in
+        drain ();
+        check "one attempt completes after native validation correction" (state db owner a = A.Completed);
+        Alcotest.(check int) "three bounded rounds" 3 !posts;
+        let events = journal db a in
+        let payloads = List.map (fun e -> e.A.payload) events in
+        Alcotest.(check int) "only goals and valid forecast evidence" 2
+          (List.length (List.filter (function A.Evidence_added _ -> true | _ -> false) payloads));
+        Alcotest.(check int) "invalid forecast rejected once" 1
+          (List.length (List.filter (function A.Tool_finished { outcome = A.Rejected; _ } -> true | _ -> false) payloads));
+        let run = ok (Advisor_store.find_run (Advisor_store.create db) ~owner a.ids.run_id) in
+        Alcotest.(check int) "attempted invalid tool is charged" 3 run.counters.tool_calls;
+        check "no financial mutations or goal creation" (before = counts ())))
+    ["2026-02-15", "-25000"; "2027-06-01", "-25000"; "2027-02-15", "25k"; "2027-02-15", "0"]
+
 let () =
   Alcotest.run "advisor runtime"
     [
       ( "native",
         [
+          Alcotest.test_case "holiday forecast validation correction" `Quick holiday_forecast_correction;
           Alcotest.test_case "durable_delivery_and_runtime_deadlines" `Quick durable_delivery_and_runtime_deadlines;
           Alcotest.test_case "silent deadlines" `Quick silent_deadlines;
           Alcotest.test_case "sessions and reconnect" `Quick sessions_and_reconnect;

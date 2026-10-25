@@ -11,7 +11,8 @@ let safety_instructions =
    sampled evidence (each has its own sampled time) from assumptions. Reads need not share a snapshot; disclose \
    updates rather than combining inconsistent totals. Samples/truncation are not complete explanations. Only supplied \
    evidence is verified; unmatched evidence references are plain text, not authorized links. History selection \
-   metadata states which whole turns were omitted; never invent or silently summarize missing finances."
+   metadata states which whole turns were omitted; never invent or silently summarize missing finances. A tool error \
+   is not evidence: correct its arguments within the remaining limits or explain the limitation; never claim it succeeded."
 
 (* Six bytes per UTF-8 byte bounds JSON escaping; fixed overhead bounds the two
    message envelopes. Whole turns are dropped, never clipped or summarized. *)
@@ -27,8 +28,8 @@ let message_bytes = function
             bytes + 256 + (6 * (String.length call.id + String.length call.name + String.length call.arguments)))
           0 calls
   | E.Tool { call_id; content = _ } ->
-      (* Selected model content has its independent evidence budget; count the
-         message envelope here and the full request in Measure_context. *)
+      (* Selected content has its evidence budget; validation feedback is fixed
+         and bounded per attempted call. Measure_context counts the full request. *)
       128 + (6 * String.length call_id)
 
 let bound_history ~user_text history =
@@ -224,8 +225,8 @@ let execute ~run:(current_run : A.run) =
         | Stop, None -> transition A.Finish
         | Tool_calls, Some all ->
             check_limit (List.length all > A.limits.tool_calls - !tools) A.Tool_calls;
-            (* Charge attempted calls before parsing/reading; one invalid call
-               rejects the entire batch, including earlier valid calls. *)
+            (* Charge attempted calls before parsing/reading. Malformed calls
+               reject the batch; only forecast read validation is recoverable. *)
             tools := !tools + List.length all;
             let rec parse ids indices acc = function
               | [] -> List.rev acc
@@ -244,25 +245,37 @@ let execute ~run:(current_run : A.run) =
                   boundary ();
                   append (A.Tool_started call.name);
                   boundary ();
-                  let evidence = require (perform (Read_tool request)) in
+                  let result = perform (Read_tool request) in
                   boundary ();
-                  let selected = require (perform (Select_evidence evidence)) in
-                  if selected.serialized_bytes <> String.length selected.model_content || selected.serialized_bytes < 0
-                  then reject A.Invalid_request;
-                  check_limit (selected.serialized_bytes > A.limits.tool_result_bytes) A.Tool_result_bytes;
-                  (* Physical identity is intentional: projection selection is bound to
-                 the exact handle-issued object, not an equal fabricated record. *)
-                  if not (List.exists (fun old -> old == evidence) !seen) then (
-                    check_limit (selected.serialized_bytes > A.limits.evidence_bytes - !evidence_bytes) A.Evidence_bytes;
-                    seen := evidence :: !seen;
-                    evidence_bytes := !evidence_bytes + selected.serialized_bytes;
-                    append (A.Evidence_added selected.display));
-                  append (A.Tool_finished { label = call.name; outcome = A.Succeeded });
-                  {
-                    ctx with
-                    evidence = ctx.evidence @ [ selected ];
-                    messages = ctx.messages @ [ Tool { call_id = call.id; content = selected.model_content } ];
-                  })
+                  match request, result with
+                  | Advisor_tools.Forecast _, Error { A.code = A.Invalid_tool_arguments; context = A.No_context } ->
+                      (* Fixed, bounded feedback, never raw service errors or arguments.
+                         This is not verified evidence and does not start a new attempt. *)
+                      let content =
+                        {|{"error":"invalid_forecast_arguments","message":"Use ISO dates from the current local date through the selected horizon (1, 3 or 6 months), inclusive. Use nonzero signed decimal amounts in the pinned currency: negative for expenses, positive for income. Correct the call or explain the limitation."}|}
+                      in
+                      check_limit (String.length content > A.limits.tool_result_bytes) A.Tool_result_bytes;
+                      append (A.Tool_finished { label = call.name; outcome = A.Rejected });
+                      { ctx with messages = ctx.messages @ [ Tool { call_id = call.id; content } ] }
+                  | _, result ->
+                      let evidence = require result in
+                      let selected = require (perform (Select_evidence evidence)) in
+                      if selected.serialized_bytes <> String.length selected.model_content || selected.serialized_bytes < 0
+                      then reject A.Invalid_request;
+                      check_limit (selected.serialized_bytes > A.limits.tool_result_bytes) A.Tool_result_bytes;
+                      (* Physical identity is intentional: projection selection is bound to
+                         the exact handle-issued object, not an equal fabricated record. *)
+                      if not (List.exists (fun old -> old == evidence) !seen) then (
+                        check_limit (selected.serialized_bytes > A.limits.evidence_bytes - !evidence_bytes) A.Evidence_bytes;
+                        seen := evidence :: !seen;
+                        evidence_bytes := !evidence_bytes + selected.serialized_bytes;
+                        append (A.Evidence_added selected.display));
+                      append (A.Tool_finished { label = call.name; outcome = A.Succeeded });
+                      {
+                        ctx with
+                        evidence = ctx.evidence @ [ selected ];
+                        messages = ctx.messages @ [ Tool { call_id = call.id; content = selected.model_content } ];
+                      })
                 base parsed
             in
             round false next

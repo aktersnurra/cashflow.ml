@@ -208,6 +208,13 @@ let load_context t r =
         | None -> Error (error A.Not_found)
         | Some turn -> Ok (snapshot, history, turn.user_text))
   in
+  let* temporal_context =
+    checked t r (fun _ ->
+        let* access = Advisor_access.access t.service r.principal in
+        Ok (Printf.sprintf "Current local date: %s; timezone: %s. Resolve relative dates from this date; ask if the intended year is unclear."
+          (Cashflow_core.Date.to_string (Service.today t.service access))
+          (Cashflow_core.Access.user access).timezone))
+  in
   let* aliases =
     Advisor_projection.create_aliases t.service ~principal:r.principal ~scope:snapshot.scope
       ~conversation:snapshot.conversation_id
@@ -223,7 +230,7 @@ let load_context t r =
   Ok
     E.
       {
-        system_instructions = "";
+        system_instructions = temporal_context;
         history;
         selection = { selected_turns = List.length history; omitted_turns = successful - List.length history };
         user_text;

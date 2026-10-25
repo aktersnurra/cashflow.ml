@@ -550,11 +550,43 @@ let twenty_row_caps () =
       check "bounded model result" (String.length (json aliases e) <= 16384))
     [ "category_spending"; "recurring"; "budget_status"; "goals" ]
 
+let dated_forecast_validation () =
+  fixture (fun service access principal _h clock _ ->
+    clock := Option.get (Ptime.of_date_time ((2026,10,25), ((10,0,0),0)));
+    ignore (S.open_checking service access "Holiday cash");
+    let conversation = conversation service principal A.Personal "dated-forecast" in
+    let aliases = ok (P.create_aliases service ~principal ~scope:A.Personal ~conversation) in
+    let before = digest_tables service.db financial_tables in
+    let goals = read service principal aliases A.Personal "goals" "{}" in
+    check "goals remain truthful" (match goals.result with T.Goals_result [] -> true | _ -> false);
+    let arguments date amount = Printf.sprintf
+      {|{"cycles":6,"scenario":{"one_off":[{"date":%S,"amount":%S,"description":"holiday"}]}}|} date amount in
+    List.iter (fun (date, amount) ->
+      let request = ok (P.parse_call ~name:"forecast" ~arguments:(arguments date amount)) in
+      match P.read service ~principal ~scope:A.Personal ~aliases request with
+      | Error { A.code = A.Invalid_tool_arguments; context = A.No_context } -> ()
+      | _ -> Alcotest.fail "native invalid scenario must not produce evidence")
+      ["2026-02-15", "-25000"; "2027-06-01", "-25000";
+       "2027-02-15", "25k"; "2027-02-15", "0"];
+    let corrected = read service principal aliases A.Personal "forecast" (arguments "2027-02-15" "-25000") in
+    check "valid correction produces scenario evidence" (match corrected.result with
+      | T.Forecast_result f -> Option.is_some f.scenario
+      | _ -> false);
+    let scenario : Cashflow_workflow.Forecast_request.scenario_input =
+      { leave_out = []; one_off = [S.date "2027-02-15", "-25000", "holiday"]; follow_budgets = false } in
+    let forecast, _ = S.ok (Query.run service access (Query.Forecast ({ scope = Analytics.Me; currency = Some "SEK" }, 6, scenario))) in
+    let last xs = List.hd (List.rev xs) in
+    let baseline = last forecast.baseline and planned = last (Option.get forecast.scenario) in
+    Alcotest.(check int64) "existing deterministic holiday arithmetic" (-2500000L)
+      (Int64.sub planned.cash baseline.cash);
+    check "no financial, goal, consent or cache writes" (before = digest_tables service.db financial_tables))
+
 let () =
   Alcotest.run "Advisor tools"
     [
       ( "closed_allowlist_and_redacted_reads",
         [
+          Alcotest.test_case "dated forecast validation" `Quick dated_forecast_validation;
           Alcotest.test_case "strict arguments" `Quick strict_arguments;
           Alcotest.test_case "eight tools and redaction" `Quick redacted_eight_tools;
           Alcotest.test_case "resource isolation and import freshness" `Quick isolation_and_freshness;

@@ -40,6 +40,9 @@ type context_size = { serialized_bytes : int; conservative_tokens : int; output_
     outside storage. Internal run cleanup may request/confirm cancellation after authority loss without disclosing
     anything; command cancellation requires current authorization.
 
+    Only Read_tool Forecast validation (Invalid_tool_arguments with No_context) is
+    recoverable as fixed tool feedback, not evidence. Other errors and Parse_tool
+    failures remain terminal. Attempted calls and correction rounds retain all budgets.
     Select_evidence must pass the exact Read_tool object to model_json with the same attempt-local alias handle,
     serialize once outside guards, then display that same object. serialized_bytes = String.length model_content. No
     display on error. Workflow publishes Evidence_added only on the first selection of an exact evidence object;

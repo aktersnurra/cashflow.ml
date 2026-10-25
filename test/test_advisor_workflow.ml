@@ -100,6 +100,7 @@ type fixture = {
   mutable contexts : E.context list;
   mutable payloads : A.event_payload list;
   mutable reads : int;
+  mutable tool_error : A.error option;
   mutable parses : int;
   mutable closes : int;
   mutable terminals : int;
@@ -137,6 +138,7 @@ let fixture rounds =
     contexts = [];
     payloads = [];
     reads = 0;
+    tool_error = None;
     parses = 0;
     closes = 0;
     terminals = 0;
@@ -224,7 +226,10 @@ let handler f : E.handler =
         | E.Parse_tool call ->
             f.parses <- f.parses + 1;
             record f ("parse:" ^ call.id);
-            if call.name = "bad" then Error (error A.Tool_not_allowed) else Ok (T.Goals { currency = None })
+            if call.name = "bad" then Error (error A.Tool_not_allowed)
+            else if call.name = "forecast" then Ok (T.Forecast ({ currency = None }, 6,
+              { leave_out = []; input = Cashflow_workflow.Forecast_request.no_scenario }))
+            else Ok (T.Goals { currency = None })
         | E.Read_tool _ ->
             f.reads <- f.reads + 1;
             let ev =
@@ -233,7 +238,8 @@ let handler f : E.handler =
               | _ -> { evidence with sampled_at = get (Ptime.of_float_s (float f.reads)) }
             in
             f.last_evidence <- Some ev;
-            result f "tool" ev
+            let result = result f "tool" ev in
+            (match f.tool_error with Some e -> Error e | None -> result)
         | E.Select_evidence ev ->
             Alcotest.(check bool)
               "fresh exact read object" true
@@ -716,6 +722,58 @@ let streaming_phase () =
   completed (execute f);
   check_bool "streaming phase persisted" true (List.mem (A.Set_phase A.Streaming_text) f.transitions)
 
+let recoverable_forecast_validation () =
+  let forecast i = { (call i) with name = "forecast" } in
+  let round calls = [ E.Complete_calls calls; E.Round_finished E.Tool_calls ] in
+  let f = fixture [round [forecast 0]; stop] in
+  f.tool_error <- Some (error A.Invalid_tool_arguments);
+  completed (execute f);
+  check_int "validation is not evidence" 0 (count f "evidence");
+  check_int "no selection of rejected read" 0 (count f "select");
+  check_bool "rejected completion" true
+    (List.mem (A.Tool_finished { label = "forecast"; outcome = A.Rejected }) f.payloads);
+  let feedback = List.filter_map (function E.Tool t -> Some t.content | _ -> None)
+    (List.hd (List.rev f.contexts)).messages in
+  (match feedback with
+   | [content] -> check_bool "fixed bounded validation feedback" true
+       (String.length content <= 512 && String.starts_with ~prefix:"{\"error\":" content)
+   | _ -> Alcotest.fail "missing single validation feedback");
+  check_int "no new attempt" 0 f.attempts;
+  List.iter (fun e ->
+    let f = fixture [round [forecast 0]; stop] in
+    f.tool_error <- Some e;
+    failed (execute f);
+    check_int "non-validation errors cannot resume" 1 (count f "begin"))
+    [error A.Access_denied; error A.Scope_mismatch; error A.Consent_required;
+     error A.Not_found; error A.Storage_unavailable; error A.Tool_not_allowed;
+     error A.Invalid_stream; error A.Provider_unavailable;
+     { A.code = A.Run_limit_reached; context = A.Limit A.Tool_calls };
+     { A.code = A.Invalid_tool_arguments; context = A.Limit A.Context_bytes }];
+  let f = fixture [round [call 0]; stop] in
+  f.tool_error <- Some (error A.Invalid_tool_arguments);
+  failed (execute f);
+  check_int "other tools remain fail-closed" 1 (count f "begin");
+  List.iter (fun (calls, maximum) ->
+    let f = fixture (List.init 5 (fun _ -> round calls)) in
+    f.tool_error <- Some (error A.Invalid_tool_arguments);
+    failed (execute f);
+    check_bool "normal tool/round caps bound corrections" true (f.reads <= 8);
+    check_int "bounded provider rounds" maximum (count f "begin");
+    check_bool "ordinary limit, not implicit regeneration" true
+      (match f.state with
+       | A.Failed { code = A.Run_limit_reached; context = A.Limit kind } ->
+           kind = (if maximum = 4 then A.Model_rounds else A.Tool_calls)
+       | _ -> false);
+    check_int "correction never creates another attempt" 0 f.attempts)
+    [[forecast 0], 4; [forecast 0; forecast 1; forecast 2], 3];
+  List.iter (fun cancel ->
+    let f = fixture [round [forecast 0]; stop] in
+    f.tool_error <- Some (error A.Invalid_tool_arguments);
+    if cancel then f.cancel_at <- Some "tool" else f.revoke_at <- Some "tool";
+    ignore (execute f);
+    check_int "authority checked before feedback" 0 (count f "tool_finished");
+    check_int "no provider after cancellation/revocation" 1 (count f "begin")) [false; true]
+
 let completion_reserve () =
   let f = fixture [ stop ] in
   f.size <- { f.size with output_reserve_tokens = 2048 };
@@ -778,6 +836,7 @@ let tests =
     ("fresh unique evidence", fresh_and_unique_evidence);
     ("single terminal", every_terminal);
     ("ordered text spans", ordered_text_spans);
+    ("recoverable forecast validation", recoverable_forecast_validation);
     ("completion reserve", completion_reserve);
     ("streaming phase", streaming_phase);
     ("streams and completes", bounded_workflow_trace);

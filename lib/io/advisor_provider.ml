@@ -49,15 +49,19 @@ let tool_schemas =
   let category = "category", reference "account_" in
   let scenario = object_ [] ["leave_out", array 20 (reference "series_");
     "one_off", array 10 (object_ ["date"; "amount"] [
-      "date", `Assoc ["type", str "string"; "format", str "date"; "maxLength", `Int 512];
-      "amount", string 30; "description", string 512]); "follow_budgets", `Assoc ["type", str "boolean"]] in
+      "date", `Assoc ["type", str "string"; "format", str "date"; "maxLength", `Int 512;
+        "description", str "ISO YYYY-MM-DD, from the current local date through that date plus the selected cycles in months, inclusive. Choose a horizon covering the date; ask if the intended year is unclear."];
+      "amount", `Assoc ["type", str "string"; "maxLength", `Int 30;
+        "description", str "Nonzero signed decimal in the pinned currency (not minor units), within its decimal precision. Negative for expenses, positive for income; no currency symbols or thousands separators."];
+      "description", string 512]); "follow_budgets", `Assoc ["type", str "boolean"]] in
   List.map (fun (name, required, fields) -> `Assoc ["type", str "function";
     "function", `Assoc ["name", str name; "parameters", object_ required (("currency", currency) :: fields)]])
     ["cycle_summary", [], [cycles]; "category_spending", [], [offset];
      "category_trend", ["category"], [category; cycles];
      "relevant_transactions", [], [offset; category; "limit", integer 1 20];
      "recurring", [], []; "budget_status", [], [offset]; "goals", [], [];
-     "forecast", [], ["cycles", `Assoc ["type", str "integer"; "enum", `List [`Int 1; `Int 3; `Int 6]]; "scenario", scenario]]
+     "forecast", [], ["cycles", `Assoc ["type", str "integer"; "enum", `List [`Int 1; `Int 3; `Int 6];
+       "description", str "Forecast horizon in months from the current local date: 1, 3 or 6 (default 3). All one-off dates must fit this horizon."]; "scenario", scenario]]
 
 let call_json (c : raw_call) = `Assoc ["id", str c.id; "type", str "function";
   "function", `Assoc ["name", str c.name; "arguments", str c.arguments]]
