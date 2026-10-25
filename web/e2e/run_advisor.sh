@@ -111,6 +111,7 @@ run controller python3 test/test_advisor_browser.py
 product product advisor.js
 product presentation advisor_presentation.js
 ADVISOR_CHAT_PAUSED=1 product presentation-paused advisor_presentation.js
+product smoothness advisor_smoothness.js
 product boundaries advisor_boundaries.js --browser-text
 product session-race advisor_session_race.js
 product currency advisor_currency.js --currency-scales

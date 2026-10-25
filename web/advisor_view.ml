@@ -41,18 +41,13 @@ let sampled_time locale sampled =
   in
   Js.to_string formatted
 
-let render_body ~show_source ~locale ~(view : C.view) ~dispatch =
+let render_turns ~locale ~(snapshot : W.snapshot option) ~dispatch ~(markdown : Vdom.Node.t String.Map.t) =
   let text = Vdom.Node.text in
   let cls name = [ Vdom.Attr.class_ name ] in
-  let button label action =
-    Vdom.Node.button
-      ~attrs:
-        [ Vdom.Attr.class_ "button secondary"; Vdom.Attr.type_ "button"; Vdom.Attr.on_click (fun _ -> dispatch action) ]
-      [ text label ]
-  in
   let segment = function
     | W.Text_segment d ->
-        Vdom.Node.div ~key:d.segment_id ~attrs:(cls "advisor-prose") [ Advisor_markdown.render d.text ]
+        Vdom.Node.div ~key:d.segment_id ~attrs:(cls "advisor-prose")
+          [ Option.value_or_thunk (Map.find markdown d.segment_id) ~default:(fun () -> Advisor_markdown.render d.text) ]
     | W.Evidence_segment e ->
         let facts =
           List.map e.facts ~f:(fun (f : W.fact) ->
@@ -107,7 +102,7 @@ let render_body ~show_source ~locale ~(view : C.view) ~dispatch =
   in
   let attempt (a : W.attempt) =
     let foreground =
-      match view.snapshot with Some s -> Option.equal String.equal s.active_run (Some a.ids.run_id) | None -> false
+      match snapshot with Some s -> Option.equal String.equal s.active_run (Some a.ids.run_id) | None -> false
     in
     Vdom.Node.create "article" ~key:a.ids.attempt_id ~attrs:(cls "advisor-answer")
       ([
@@ -124,17 +119,25 @@ let render_body ~show_source ~locale ~(view : C.view) ~dispatch =
       if foreground || Poly.equal a.state W.Completed then []
       else [ Vdom.Node.p ~attrs:(cls "advisor-attempt-status") [ text (run_status locale a.state) ] ])
   in
-  let turns =
-    match view.snapshot with
-    | None -> []
-    | Some s ->
-        List.map s.turns ~f:(fun (t : W.turn) ->
-            Vdom.Node.div ~key:t.turn_id ~attrs:(cls "advisor-turn")
-              (Vdom.Node.p ~key:t.user_message_id
-                 ~attrs:
-                   [ Vdom.Attr.class_ "advisor-user-message"; Vdom.Attr.create "aria-label" (Msg.advisor_you locale) ]
-                 [ text t.user_text ]
-              :: List.map t.attempts ~f:attempt))
+  match snapshot with
+  | None -> []
+  | Some s ->
+      List.map s.turns ~f:(fun (t : W.turn) ->
+          Vdom.Node.div ~key:t.turn_id ~attrs:(cls "advisor-turn")
+            (Vdom.Node.p ~key:t.user_message_id
+               ~attrs:
+                 [ Vdom.Attr.class_ "advisor-user-message"; Vdom.Attr.create "aria-label" (Msg.advisor_you locale) ]
+               [ text t.user_text ]
+            :: List.map t.attempts ~f:attempt))
+
+let render_body ~turns ~show_source ~locale ~(view : C.view) ~dispatch =
+  let text = Vdom.Node.text in
+  let cls name = [ Vdom.Attr.class_ name ] in
+  let button label action =
+    Vdom.Node.button
+      ~attrs:
+        [ Vdom.Attr.class_ "button secondary"; Vdom.Attr.type_ "button"; Vdom.Attr.on_click (fun _ -> dispatch action) ]
+      [ text label ]
   in
   let retryable =
     match view.snapshot with
@@ -309,8 +312,15 @@ let render_body ~show_source ~locale ~(view : C.view) ~dispatch =
         Vdom.Node.div ~attrs:(cls "advisor-conversation-actions") actions;
       ])
 
-let render ~locale ~view ~dispatch = render_body ~show_source:true ~locale ~view ~dispatch
-let render_inline ~locale ~view ~dispatch = render_body ~show_source:false ~locale ~view ~dispatch
+let render ~locale ~(view : C.view) ~dispatch =
+  render_body
+    ~turns:(render_turns ~locale ~snapshot:view.snapshot ~dispatch ~markdown:String.Map.empty)
+    ~show_source:true ~locale ~view ~dispatch
+
+let render_inline ~locale ~(view : C.view) ~dispatch =
+  render_body
+    ~turns:(render_turns ~locale ~snapshot:view.snapshot ~dispatch ~markdown:String.Map.empty)
+    ~show_source:false ~locale ~view ~dispatch
 
 let consent ~locale ~(view : C.view) ~dispatch ~decline =
   match view.status with

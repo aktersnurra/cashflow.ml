@@ -133,7 +133,7 @@ const markdown = '# A plan for February\n\nSet aside **6,250.00 SEK** each month
   assert.equal(changed.status(),200);await page.reload();
   await page.getByRole('textbox',{name:'Meddelande till rådgivaren',exact:true}).waitFor();
   await page.evaluate(()=>document.documentElement.dataset.theme='dark');
-  assert.equal(await chat.evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(38, 38, 36)');
+  assert.equal(await chat.evaluate(el=>getComputedStyle(el).backgroundColor),await page.evaluate(()=>getComputedStyle(document.body).backgroundColor),'chat follows the shell dark palette');
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
   await page.evaluate(()=>window.scrollTo(0,0));
   await page.screenshot({path:output+'/claude-chat-mobile-swedish-dark.png'});

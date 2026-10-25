@@ -122,53 +122,74 @@ module Grow = Vdom.Attr.Hooks.Make (struct
 
   module State = struct
     type t = {
+      mutable alive : bool;
       mutable blocked : bool;
       mutable oversized : bool;
       mutable last_valid_input : string;
-      mutable listener : Dom.event_listener_id option;
+      mutable sized_draft : string option;
+      mutable listeners : Dom.event_listener_id list;
     }
   end
 
-  let resize ~blocked ~oversized (element : Dom_html.element Js.t) =
-    element##.style##.height := Js.string "auto";
-    let height = Int.min 240 (Int.max 50 (element##.scrollHeight + 2)) in
-    element##.style##.height := Js.string (Int.to_string height ^ "px");
-    Js.Opt.iter (Dom_html.CoerceTo.textarea element) (fun input ->
-        let draft = Js.to_string input##.value in
-        if oversized then (
-          element##setAttribute (Js.string "aria-invalid") (Js.string "true");
-          element##setAttribute (Js.string "aria-describedby") (Js.string "advisor-input-error"))
-        else (
-          element##removeAttribute (Js.string "aria-invalid");
-          element##removeAttribute (Js.string "aria-describedby"));
-        Js.Opt.iter (composer_of element) (fun composer ->
-            if oversized then composer##setAttribute (Js.string "data-over-limit") (Js.string "")
-            else composer##removeAttribute (Js.string "data-over-limit");
-            Js.Opt.iter
-              (composer##querySelector (Js.string "[data-advisor-send]"))
-              (fun send -> Js.Unsafe.set send "disabled" (Js.bool (blocked || oversized || not (valid_draft draft))))))
+  let refresh ~force_size state (element : Dom_html.element Js.t) =
+    if state.State.alive then
+      Js.Opt.iter (Dom_html.CoerceTo.textarea element) (fun input ->
+          let draft = Js.to_string input##.value in
+          let sized_draft = if String.length draft <= input_bytes_limit then Some draft else None in
+          (* Avoid height=auto/scrollHeight forced layout for model acknowledgements
+           and unrelated stream/follow updates. Rejected input is never cached. *)
+          if force_size || not (Option.equal String.equal sized_draft state.State.sized_draft) then (
+            element##.style##.height := Js.string "auto";
+            let height = Int.min 240 (Int.max 50 (element##.scrollHeight + 2)) in
+            element##.style##.height := Js.string (Int.to_string height ^ "px");
+            state.sized_draft <- sized_draft);
+          if state.oversized then (
+            element##setAttribute (Js.string "aria-invalid") (Js.string "true");
+            element##setAttribute (Js.string "aria-describedby") (Js.string "advisor-input-error"))
+          else (
+            element##removeAttribute (Js.string "aria-invalid");
+            element##removeAttribute (Js.string "aria-describedby"));
+          Js.Opt.iter (composer_of element) (fun composer ->
+              if state.oversized then composer##setAttribute (Js.string "data-over-limit") (Js.string "")
+              else composer##removeAttribute (Js.string "data-over-limit");
+              Js.Opt.iter
+                (composer##querySelector (Js.string "[data-advisor-send]"))
+                (fun send ->
+                  Js.Unsafe.set send "disabled" (Js.bool (state.blocked || state.oversized || not (valid_draft draft))))))
 
   let init input element =
     let state =
-      { State.blocked = input.Input.blocked; oversized = false; last_valid_input = input.draft; listener = None }
+      {
+        State.alive = true;
+        blocked = input.Input.blocked;
+        oversized = false;
+        last_valid_input = input.draft;
+        sized_draft = None;
+        listeners = [];
+      }
     in
-    let listener =
+    let input_listener =
       Dom_html.addEventListener element Dom_html.Event.input
         (Dom_html.handler (fun _ ->
              Js.Opt.iter (Dom_html.CoerceTo.textarea element) (fun input ->
                  let draft = Js.to_string input##.value in
                  state.oversized <- String.length draft > input_bytes_limit;
                  if not state.oversized then state.last_valid_input <- draft);
-             resize ~blocked:state.blocked ~oversized:state.oversized element;
+             refresh ~force_size:true state element;
              Js._true))
         Js._false
     in
-    state.listener <- Some listener;
+    let resize_listener =
+      Dom_html.addEventListener Dom_html.window Dom_html.Event.resize
+        (Dom_html.handler (fun _ ->
+             refresh ~force_size:true state element;
+             Js._true))
+        Js._false
+    in
+    state.listeners <- [ input_listener; resize_listener ];
     state
 
-  let on_mount =
-    `Schedule_animation_frame
-      (fun _ state element -> resize ~blocked:state.State.blocked ~oversized:state.oversized element)
+  let on_mount = `Schedule_animation_frame (fun _ state element -> refresh ~force_size:true state element)
 
   let update ~old_input:_ ~new_input state element =
     state.State.blocked <- new_input.Input.blocked;
@@ -177,10 +198,12 @@ module Grow = Vdom.Attr.Hooks.Make (struct
     if not (String.equal new_input.draft state.last_valid_input) then (
       state.oversized <- false;
       state.last_valid_input <- new_input.draft);
-    resize ~blocked:state.blocked ~oversized:state.oversized element
+    refresh ~force_size:false state element
 
   let destroy _ state _ =
-    Option.iter state.State.listener ~f:Dom_html.removeEventListener;
-    state.listener <- None;
-    state.last_valid_input <- ""
+    state.State.alive <- false;
+    List.iter state.State.listeners ~f:Dom_html.removeEventListener;
+    state.listeners <- [];
+    state.last_valid_input <- "";
+    state.sized_draft <- None
 end)

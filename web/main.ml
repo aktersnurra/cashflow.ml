@@ -109,6 +109,25 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
   (* The controller and Home host are above every route alternative. CSS hiding does not
      deactivate either the stream owner or the selected keyed finding. *)
   let advisor = Advisor.component ~ctx graph in
+  (* These projections live with the shell and the selected authorized snapshot.
+     Draft/follow changes do not reparse history; only changed text segments do.
+     Empty/revoked snapshots remove the derived nodes rather than keeping a global cache. *)
+  let advisor_snapshot = Bonsai.cutoff (let%arr advisor in advisor.view.snapshot) ~equal:phys_equal in
+  let advisor_dispatch = Bonsai.cutoff (let%arr advisor in advisor.dispatch) ~equal:phys_equal in
+  let advisor_locale = Bonsai.cutoff locale ~equal:String.equal in
+  let markdown_sources = let%arr advisor_snapshot in
+    List.fold (Option.value_map advisor_snapshot ~default:[] ~f:(fun s -> s.turns))
+      ~init:String.Map.empty ~f:(fun sources (turn : W.turn) ->
+        List.fold turn.attempts ~init:sources ~f:(fun sources (attempt : W.attempt) ->
+          List.fold attempt.segments ~init:sources ~f:(fun sources -> function
+            | W.Text_segment d -> Map.set sources ~key:d.segment_id ~data:d.text
+            | W.Evidence_segment _ -> sources))) in
+  let markdown_nodes = Bonsai.assoc (module String) markdown_sources ~f:(fun _ source _graph ->
+    let source = Bonsai.cutoff source ~equal:String.equal in
+    let%arr source in Advisor_markdown.render source) graph in
+  let advisor_turns = let%arr advisor_snapshot and advisor_dispatch and advisor_locale and markdown_nodes in
+    Advisor_view.render_turns ~locale:advisor_locale ~snapshot:advisor_snapshot
+      ~dispatch:advisor_dispatch ~markdown:markdown_nodes in
   let selected_finding, set_selected_finding = Bonsai.state None graph in
   let selected_scope, set_selected_scope = Bonsai.state W.Personal graph in
   let declined, set_declined = Bonsai.state false graph in
@@ -162,7 +181,7 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
       (* Opening a finding keeps its viewport anchor. Page following resumes
          when the reader reaches the tail or explicitly asks to follow. *)
       advisor.dispatch (C.Follow false); focus_advisor] in
-  let outlet = let%arr advisor and selected_finding and locale and session and notify and declined and set_declined and selected_scope and set_selected_scope and set_selected_finding and history_offset and set_history_offset and navigate in
+  let outlet = let%arr advisor and advisor_turns and selected_finding and locale and session and notify and declined and set_declined and selected_scope and set_selected_scope and set_selected_finding and history_offset and set_history_offset and navigate in
     let view = advisor.view in
     let scope = Option.value view.context_scope ~default:selected_scope in
     let new_conversation scope = match advisor_currency session scope with
@@ -202,8 +221,8 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
            [(if Option.is_some selected_finding then Ui.muted (Msg.advisor_historical locale) else Vdom.Node.none);
             (if Option.is_none view.snapshot then Ui.p (Msg.advisor_empty locale) else Vdom.Node.none);
             Ui.muted (Msg.advisor_readonly locale);
-            (if Option.is_some selected_finding then Advisor_view.render_inline ~locale ~view ~dispatch:advisor.dispatch
-             else Advisor_view.render ~locale ~view ~dispatch:advisor.dispatch)]
+            Advisor_view.render_body ~show_source:(Option.is_none selected_finding) ~turns:advisor_turns
+              ~locale ~view ~dispatch:advisor.dispatch]
        | Some s when s.consent && s.available -> [Ui.muted (Msg.advisor_household_off locale); Ui.button (Msg.nav_household locale) (navigate Route.Household)]
        | _ -> [Advisor_view.consent ~locale ~view ~dispatch:advisor.dispatch ~decline:(set_declined true)]) in
   let access_denied = let%arr advisor in advisor.view.access_denied in
