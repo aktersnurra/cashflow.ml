@@ -32,10 +32,10 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'long live output fits mobile');
   await area.scrollIntoViewIfNeeded();await page.screenshot({path:(process.env.ADVISOR_EVIDENCE_DIR||'/tmp/task11-evidence')+'/mobile-long-gated.png'});
   await page.setViewportSize({width:1440,height:1000});
-  await area.evaluate(el=>{el.scrollTop=0;el.dispatchEvent(new Event('scroll',{bubbles:true}));});await sleep(100);
-  const internal=await area.evaluate(el=>el.scrollTop);const stamp=await page.evaluate(()=>window.documentStamp);
+  await page.evaluate(()=>{window.scrollTo(0,0);window.dispatchEvent(new Event('scroll'));});await sleep(100);
+  const position=await page.evaluate(()=>window.scrollY);const stamp=await page.evaluate(()=>window.documentStamp);
   await nav('Budgets').click();await nav('Advisor').click();await sleep(100);
-  assert.equal(await area.evaluate(el=>el.scrollTop),internal,'scroll-away survives financial-page visits');
+  assert.equal(await page.evaluate(()=>window.scrollY),position,'document scroll-away survives financial-page visits');
   assert.equal(await page.evaluate(()=>window.documentStamp),stamp);
   assert.equal(await page.getByRole('textbox').inputValue(),'sensitive draft must die at session boundary');
   // Session A -> B (same user), then B -> C (different user). CSRF really differs.

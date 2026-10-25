@@ -263,5 +263,10 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
             Ui.div ~cls:"attention-list" items ]
   in
   let hosted = Map.exists visible_cards ~f:(fun card -> Option.equal String.equal selected_finding (Some (J.str (J.field "key" card)))) in
-  Vdom.Node.main ~attrs:[ Vdom.Attr.class_ "page" ]
-    ([ head; body; attention ] @ if not hosted && advisor_route then [outlet] else [])
+  let standalone = advisor_route && not hosted in
+  Vdom.Node.main ~attrs:[Vdom.Attr.class_ (if standalone then "page advisor-page" else "page")]
+    [(if standalone then Vdom.Node.h1 [Ui.text (Msg.nav_advisor locale)] else Vdom.Node.none);
+     (* Keep the financial surface mounted for Home continuity; an unanchored
+        Advisor conversation is not a second dashboard above the chat. *)
+     Vdom.Node.div ~attrs:(if standalone then [Vdom.Attr.create "hidden" ""] else []) [head; body; attention];
+     (if standalone then outlet else Vdom.Node.none)]

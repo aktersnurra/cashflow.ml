@@ -139,7 +139,7 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
           (match advisor_currency session selected_scope with
            | None -> Effect.Ignore
            | Some currency -> Effect.Many [(match selected_finding with
-               | Some key -> advisor.open_finding ~key ~scope:selected_scope ~currency ~locale
+               | Some key -> Effect.Many [advisor.open_finding ~key ~scope:selected_scope ~currency ~locale; advisor.dispatch (C.Follow false)]
                | None -> advisor.open_empty ~scope:selected_scope ~currency ~locale); focus_advisor])
       | _ -> Effect.Ignore in
   Bonsai.Edge.on_change' ~equal:Poly.equal consent_key ~callback:consent_changed graph;
@@ -158,7 +158,10 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
     fun ~finding_key ~scope -> match advisor_currency session scope with
     | None -> notify (Msg.advisor_currency_unavailable locale)
     | Some currency -> Effect.Many [set_selected_scope scope; set_selected_finding (Some finding_key); set_declined false;
-      advisor.open_finding ~key:finding_key ~scope ~currency ~locale; focus_advisor] in
+      advisor.open_finding ~key:finding_key ~scope ~currency ~locale;
+      (* Opening a finding keeps its viewport anchor. Page following resumes
+         when the reader reaches the tail or explicitly asks to follow. *)
+      advisor.dispatch (C.Follow false); focus_advisor] in
   let outlet = let%arr advisor and selected_finding and locale and session and notify and declined and set_declined and selected_scope and set_selected_scope and set_selected_finding and history_offset and set_history_offset and navigate in
     let view = advisor.view in
     let scope = Option.value view.context_scope ~default:selected_scope in

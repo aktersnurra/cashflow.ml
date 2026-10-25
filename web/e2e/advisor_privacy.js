@@ -64,8 +64,10 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
    }else if(mode==='input'){
     const tooLarge=await req(ca,'a','/api/advisor/turns',{version:1,data:{conversation_id:null,scope:{type:'Personal'},currency:{code:'SEK',scale:2},locale:'en',user_text:'é'.repeat(4097),idempotency_key:'oversized',expected_version:'0',source_finding_key:null}});
     assert.equal(tooLarge.status(),422);
-    await composer().fill('é'.repeat(4097));await button('Send').click();
-    await sleep(300);assert.equal((await state()).provider_starts,0);
+    await composer().fill('é'.repeat(4097));
+    await page.getByText('Your message is too long. Shorten it before sending.',{exact:true}).waitFor();
+    assert.equal(await button('Send').isDisabled(),true);
+    await composer().press('Enter');await sleep(300);assert.equal((await state()).provider_starts,0);
     await composer().fill('é'.repeat(4096));await button('Send').click();
     await wait(async()=> (await state()).provider_starts===1);await button('Stop').click();
    }else{
@@ -122,6 +124,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
      for(let i=0;i<2;i++){
       const card=cards.nth(i), wire=s.turns[0].attempts[0].segments.filter(x=>x.type==='Evidence_segment')[i].value;
       assert.ok((await card.innerText()).includes('Utgifter per kategori'));
+      await card.locator('summary').click();
       assert.match(await card.innerText(),/Returnerade rader/);
       assert.match(await card.innerText(),/Största returnerade kategori/);
       const money=wire.facts.find(f=>f.value.type==='Money').value.value;

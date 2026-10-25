@@ -61,7 +61,7 @@ The web UI needs Bonsai v0.17, which needs OCaml 5.1, so it builds in a second o
 
 ```sh
 opam switch create cashflow-web ocaml-base-compiler.5.1.1
-opam install --switch=cashflow-web bonsai.v0.17.0 js_of_ocaml-compiler js_of_ocaml-ppx ppx_jane yojson
+opam install --switch=cashflow-web bonsai.v0.17.0 js_of_ocaml-compiler js_of_ocaml-ppx ppx_jane yojson cmarkit.0.4.0
 dune build --workspace dune-workspace.web --profile release @web/default
 ```
 
