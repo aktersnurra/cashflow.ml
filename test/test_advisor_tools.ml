@@ -231,6 +231,10 @@ let redacted_eight_tools () =
       let wire = Advisor_codec.evidence_out (P.display e) in
       check "display mapping" (wire.title = T.name e.result))
     es;
+  (* Category names are the user's own labels and are shown; bank accounts stay opaque (no names, no numbers). *)
+  let spending = List.hd es in
+  check "category name is shown" (contains (json aliases spending) "\"name\":\"Groceries\"");
+  check "reference alias is still present" (contains (json aliases spending) "\"reference\":");
   let transactions =
     List.find (fun e -> match e.T.result with Relevant_transactions_result _ -> true | _ -> false) es
   in

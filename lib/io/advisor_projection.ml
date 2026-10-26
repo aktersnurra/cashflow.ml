@@ -148,7 +148,9 @@ let authorize service ~principal ~scope aliases =
     let* () = Advisor_access.authorize_scope service principal scope in
     Advisor_access.authorize_history service principal aliases.conversation
 
-let account (i : Account_info.t) : T.account = { id = i.account.id; kind = i.account.kind }
+let account (i : Account_info.t) : T.account =
+  let name = match i.account.kind with Account.Expense | Income -> Some i.account.name | Asset | Liability | Equity -> None in
+  { id = i.account.id; kind = i.account.kind; name }
 
 let scoped_book (ctx : Insights.ctx) =
   let book = Insights.book ctx in
@@ -543,7 +545,9 @@ let model_json ~aliases (e : T.evidence) =
         let opt f = function None -> `Null | Some x -> f x in
         let acct (a : T.account) =
           let alias = require (Hashtbl.find_opt aliases.accounts a.id) in
-          obj [ ("reference", str alias); ("role", str (Account.kind_to_string a.kind)) ]
+          obj
+            ([ ("reference", str alias); ("role", str (Account.kind_to_string a.kind)) ]
+            @ match a.name with Some name -> [ ("name", str name) ] | None -> [])
         in
         let series id =
           Hashtbl.fold (fun alias value acc -> if value = id then Some alias else acc) aliases.series None |> require

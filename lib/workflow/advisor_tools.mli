@@ -33,7 +33,9 @@ type request =
 
 val common : request -> common
 
-type account = { id : Account_id.t; kind : Account.kind }
+type account = { id : Account_id.t; kind : Account.kind; name : string option }
+(* [name] is the user's own label for an income or expense category. Bank and other balance-sheet
+   accounts have none: their names can carry account numbers, so the model sees only an alias. *)
 type category = { account : account; total : int64; previous : int64 option }
 
 type transaction = {
