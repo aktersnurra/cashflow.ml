@@ -19,6 +19,7 @@ val read :
   principal:Advisor_access.principal ->
   scope:A.scope ->
   aliases:aliases ->
+  currency:Cashflow_core.Currency.t ->
   T.request ->
   (T.evidence, A.error) result
 

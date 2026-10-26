@@ -93,9 +93,14 @@ let login service name =
   ignore (ok (Advisor_access.set_user_consent service principal ~enabled:true));
   (access, principal)
 
-let conversation service principal scope key =
+let conversation ?currency service principal scope key =
   let store = Advisor_store.create ~clock:service.Service.now service.db in
   let request = { (submit key) with scope } in
+  let request =
+    match currency with
+    | None -> request
+    | Some code -> { request with currency = Result.get_ok (Currency.make ~code ~scale:2) }
+  in
   let accepted =
     ok
       (Advisor_store.accept store ~owner:(ok (Advisor_access.user service principal)).id
@@ -171,9 +176,11 @@ let seed service access h =
           ()));
   (bank, category, shared, shared_category.account.id, injection)
 
-let read service principal aliases scope name arguments =
+let sek_pin = Result.get_ok (Currency.make ~code:"SEK" ~scale:2)
+
+let read ?(currency = sek_pin) service principal aliases scope name arguments =
   let before = digest_tables service.Service.db financial_tables in
-  let result = P.read service ~principal ~scope ~aliases (ok (P.parse_call ~name ~arguments)) in
+  let result = P.read service ~principal ~scope ~aliases ~currency (ok (P.parse_call ~name ~arguments)) in
   check "all financial and consent/cache facts unchanged" (before = digest_tables service.db financial_tables);
   ok result
 
@@ -235,7 +242,7 @@ let redacted_eight_tools () =
   check "forecast points explicitly truncated" forecast.has_more;
   check "no ninth tool execution"
     (Result.is_error
-       (P.read service ~principal ~scope:A.Personal ~aliases (ok (P.parse_call ~name:"goals" ~arguments:"{}"))));
+       (P.read service ~currency:sek_pin ~principal ~scope:A.Personal ~aliases (ok (P.parse_call ~name:"goals" ~arguments:"{}"))));
   Alcotest.(check int) "no narrative calls" 0 !calls
 
 let isolation_and_freshness () =
@@ -277,7 +284,7 @@ let isolation_and_freshness () =
     (fun alias ->
       check "wrong kind or scope"
         (Result.is_error
-           (P.read service ~principal ~scope:A.Personal ~aliases
+           (P.read service ~currency:sek_pin ~principal ~scope:A.Personal ~aliases
               (ok (P.parse_call ~name:"category_trend" ~arguments:(Printf.sprintf "{\"category\":%S}" alias))))))
     [ wrong_kind; wrong_scope; "account_9999" ];
   let category_request =
@@ -285,19 +292,19 @@ let isolation_and_freshness () =
   in
   check "currency isolation"
     (Result.is_error
-       (P.read service ~principal ~scope:A.Personal ~aliases
+       (P.read service ~currency:sek_pin ~principal ~scope:A.Personal ~aliases
           (T.Category_trend ({ currency = T.currency_code "USD" }, Option.get (T.account_reference alias), 1))));
   let _, other = login service "other-tool-owner" in
   check "other user cannot create handle"
     (Result.is_error (P.create_aliases service ~principal:other ~scope:A.Personal ~conversation:c));
   check "other user cannot reuse handle"
-    (Result.is_error (P.read service ~principal:other ~scope:A.Personal ~aliases category_request));
+    (Result.is_error (P.read service ~currency:sek_pin ~principal:other ~scope:A.Personal ~aliases category_request));
   check "scope cannot change"
-    (Result.is_error (P.read service ~principal ~scope:(A.Household h.id) ~aliases category_request));
+    (Result.is_error (P.read service ~currency:sek_pin ~principal ~scope:(A.Household h.id) ~aliases category_request));
   let other_conversation = conversation service principal A.Personal "other-conversation" in
   let other_handle = ok (P.create_aliases service ~principal ~scope:A.Personal ~conversation:other_conversation) in
   check "account alias does not cross conversations"
-    (Result.is_error (P.read service ~principal ~scope:A.Personal ~aliases:other_handle category_request));
+    (Result.is_error (P.read service ~currency:sek_pin ~principal ~scope:A.Personal ~aliases:other_handle category_request));
   check "conversation scope binding cannot change"
     (Result.is_error (P.create_aliases service ~principal ~scope:(A.Household h.id) ~conversation:c));
   let other_owner = (ok (Advisor_access.user service other)).id in
@@ -316,14 +323,14 @@ let isolation_and_freshness () =
   let income_alias = ok (Advisor_store.account_alias store ~conversation:c salary) in
   check "transaction category must be an expense"
     (Result.is_error
-       (P.read service ~principal ~scope:A.Personal ~aliases
+       (P.read service ~currency:sek_pin ~principal ~scope:A.Personal ~aliases
           (ok (P.parse_call ~name:"relevant_transactions" ~arguments:(Printf.sprintf "{\"category\":%S}" income_alias)))));
   let fresh_handle = ok (P.create_aliases service ~principal ~scope:A.Personal ~conversation:c) in
   check "evidence cannot cross handles" (Result.is_error (P.model_json ~aliases:fresh_handle first));
   ignore (ok (Advisor_access.set_user_consent service principal ~enabled:false));
   check "current consent rechecked at disclosure" (Result.is_error (P.model_json ~aliases first));
   check "current consent rechecked at read"
-    (Result.is_error (P.read service ~principal ~scope:A.Personal ~aliases category_request))
+    (Result.is_error (P.read service ~currency:sek_pin ~principal ~scope:A.Personal ~aliases category_request))
 
 let household_and_empty () =
   fixture @@ fun service access principal h _ _ ->
@@ -370,9 +377,34 @@ let series_aliases_and_staleness () =
   let fresh = ok (P.create_aliases service ~principal ~scope:A.Personal ~conversation:c) in
   ignore (read service principal fresh A.Personal "forecast" "{}");
   check "old attempt alias cannot rebind"
-    (Result.is_error (P.read service ~principal ~scope:A.Personal ~aliases:fresh request));
+    (Result.is_error (P.read service ~currency:sek_pin ~principal ~scope:A.Personal ~aliases:fresh request));
   clock := Option.get (Ptime.add_span !clock (Ptime.Span.of_int_s (86400 * 200)));
-  check "stopped series fail safely" (Result.is_error (P.read service ~principal ~scope:A.Personal ~aliases request))
+  check "stopped series fail safely" (Result.is_error (P.read service ~currency:sek_pin ~principal ~scope:A.Personal ~aliases request))
+
+let pinned_currency_is_the_default () =
+  fixture @@ fun service access principal h _ _ ->
+  let _ = seed service access h in
+  let open_usd kind name =
+    match
+      S.ok
+        (Service.open_account service access ~key:(S.key name) ~owner:(Access.personal access) ~kind ~name
+           ~currency:"USD" ~flags:Account.no_flags ~details:Account_info.no_details)
+    with
+    | `Created i | `Exists i -> i.account.id
+  in
+  let usd_bank = open_usd Account.Asset "PINNED USD BANK" in
+  let usd_category = open_usd Account.Expense "PINNED USD CATEGORY" in
+  ignore (S.ok (Service.add_entry service access (S.entry "USD purchase" ~from_account:usd_bank ~to_account:usd_category 1)));
+  let c = conversation ~currency:"USD" service principal A.Personal "pinned-usd" in
+  let aliases = ok (P.create_aliases service ~principal ~scope:A.Personal ~conversation:c) in
+  let usd = Result.get_ok (Currency.make ~code:"USD" ~scale:2) in
+  let read_pinned arguments =
+    P.read service ~principal ~scope:A.Personal ~aliases ~currency:usd
+      (ok (P.parse_call ~name:"cycle_summary" ~arguments))
+  in
+  let e = ok (read_pinned "{}") in
+  Alcotest.(check string) "omitted currency reads the pinned currency" "USD" (Currency.code e.T.currency);
+  check "explicit mismatch is a tool error before any read" (Result.is_error (read_pinned "{\"currency\":\"SEK\"}"))
 
 let exact_currency_and_masking () =
   fixture @@ fun service access principal h _ _ ->
@@ -397,17 +429,20 @@ let exact_currency_and_masking () =
   ignore (S.ok (Service.add_entry service access entry));
   let c = conversation service principal A.Personal "currency" in
   let aliases = ok (P.create_aliases service ~principal ~scope:A.Personal ~conversation:c) in
-  let usd = read service principal aliases A.Personal "category_spending" "{\"currency\":\"USD\"}" in
+  let usd_pin = Result.get_ok (Currency.make ~code:"USD" ~scale:2) in
+  let c_usd = conversation ~currency:"USD" service principal A.Personal "currency-usd" in
+  let usd_aliases = ok (P.create_aliases service ~principal ~scope:A.Personal ~conversation:c_usd) in
+  let usd = read ~currency:usd_pin service principal usd_aliases A.Personal "category_spending" "{\"currency\":\"USD\"}" in
   (match usd.result with
   | T.Category_spending_result [ x ] -> Alcotest.(check int64) "exact >2^53" large x.total
   | _ -> Alcotest.fail "USD category");
-  check "no float money" (contains (json aliases usd) "9007199254740993");
+  check "no float money" (contains (json usd_aliases usd) "9007199254740993");
   let sek = read service principal aliases A.Personal "category_spending" "{\"currency\":\"SEK\"}" in
   check "no mixed-currency aggregation" (not (contains (json aliases sek) "9007199254740993"));
   let alias = ok (Advisor_store.account_alias (Advisor_store.create service.db) ~conversation:c usd_category) in
   check "explicit mixed-currency resource rejection"
     (Result.is_error
-       (P.read service ~principal ~scope:A.Personal ~aliases
+       (P.read service ~currency:sek_pin ~principal ~scope:A.Personal ~aliases
           (ok
              (P.parse_call ~name:"category_trend"
                 ~arguments:(Printf.sprintf "{\"currency\":\"SEK\",\"category\":%S}" alias)))));
@@ -563,7 +598,7 @@ let dated_forecast_validation () =
       {|{"cycles":6,"scenario":{"one_off":[{"date":%S,"amount":%S,"description":"holiday"}]}}|} date amount in
     List.iter (fun (date, amount) ->
       let request = ok (P.parse_call ~name:"forecast" ~arguments:(arguments date amount)) in
-      match P.read service ~principal ~scope:A.Personal ~aliases request with
+      match P.read service ~currency:sek_pin ~principal ~scope:A.Personal ~aliases request with
       | Error { A.code = A.Invalid_tool_arguments; context = A.No_context } -> ()
       | _ -> Alcotest.fail "native invalid scenario must not produce evidence")
       ["2026-02-15", "-25000"; "2027-06-01", "-25000";
@@ -592,6 +627,7 @@ let () =
           Alcotest.test_case "resource isolation and import freshness" `Quick isolation_and_freshness;
           Alcotest.test_case "household and empty results" `Quick household_and_empty;
           Alcotest.test_case "series attempt binding and stale references" `Quick series_aliases_and_staleness;
+          Alcotest.test_case "pinned currency is the default" `Quick pinned_currency_is_the_default;
           Alcotest.test_case "exact currencies and masked counterpart" `Quick exact_currency_and_masking;
           Alcotest.test_case "bounded result and selected evidence" `Quick bounded_evidence;
           Alcotest.test_case "deterministic source without narrative" `Quick deterministic_source_no_narrative;

@@ -469,15 +469,15 @@ let run_handler t r sw : E.handler =
             let* _ = checked t r (fun run -> Ok run) in
             Advisor_projection.parse_call ~name:call.name ~arguments:call.arguments
         | E.Read_tool request -> (
-            let* scope =
+            let* scope, currency =
               checked t r (fun run ->
                   let* s = S.metadata t.store ~owner:r.owner run.ids.conversation_id in
-                  Ok s.scope)
+                  Ok (s.scope, s.currency))
             in
             match r.aliases with
             | None -> Error (error A.Invalid_request)
             | Some aliases ->
-                checked t r (fun _ -> Advisor_projection.read t.service ~principal:r.principal ~scope ~aliases request))
+                checked t r (fun _ -> Advisor_projection.read t.service ~principal:r.principal ~scope ~aliases ~currency request))
         | E.Select_evidence evidence -> (
             let* _ = checked t r (fun run -> Ok run) in
             match r.aliases with

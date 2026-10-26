@@ -203,7 +203,7 @@ let assumptions (f : Forecast.t) =
       | Seasonal { month; year; percent } -> Printf.sprintf "seasonal: %d-%02d %d percent" year month percent)
     f.assumptions
 
-let read (service : Service.t) ~principal ~scope ~aliases request =
+let read (service : Service.t) ~principal ~scope ~aliases ~currency:pinned request =
   try
     let* detached =
       Sql.read_snapshot service.db (fun () ->
@@ -211,7 +211,13 @@ let read (service : Service.t) ~principal ~scope ~aliases request =
           let* () = if Hashtbl.length aliases.evidence >= A.limits.tool_calls then limit A.Tool_calls else Ok () in
           let* access = Advisor_access.access service principal in
           let common = T.common request in
-          let currency = Option.map T.currency_code_text common.currency in
+          (* A conversation is pinned to one currency for its whole life: an omitted argument means the
+             pinned one, never the user's current default, and any other currency is rejected before reading. *)
+          let* currency =
+            match Option.map T.currency_code_text common.currency with
+            | Some code when not (String.equal code (Currency.code pinned)) -> error A.Invalid_tool_arguments
+            | _ -> Ok (Some (Currency.code pinned))
+          in
           let query_scope = match scope with A.Personal -> Analytics.Me | Household _ -> Analytics.Household in
           let qc = { Query.scope = query_scope; currency } in
           let* ctx = service_result (Insights.context service access ~scope:query_scope ?currency ()) in
