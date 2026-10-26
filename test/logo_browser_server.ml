@@ -28,4 +28,4 @@ let () =
   let service = Service.make ~logo_network ~schedule:(fun work -> Eio.Fiber.fork ~sw work) db in
   let client = Oidc.https_client env in
   let verify_bearer = Oidc.make ~issuer:config.oidc_issuer ~audience:config.oidc_audience ~client () in
-  Http_server.run env {service; verify_bearer; web_auth=None; config; now=Ptime_clock.now}
+  Http_server.run env {service; advisor=None; verify_bearer; web_auth=None; config; now=Ptime_clock.now}

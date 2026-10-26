@@ -278,7 +278,7 @@ let migration_v5 () =
   Schema.migrate db;
   Schema.migrate db;
   Alcotest.(check int) "existing data retained" 1 (count db "users");
-  Alcotest.(check int) "migration applied once" 6 (count db "schema_migrations");
+  Alcotest.(check int) "migration applied once" 7 (count db "schema_migrations");
   let violations =
     Sql.(
       run db

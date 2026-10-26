@@ -8,3 +8,4 @@ type stream_post = uri:string -> headers:(string * string) list -> body:string -
 (** The optional trusted TLS configuration is a construction-time seam for local
     fixtures. Production callers omit it to use system CA verification. *)
 val stream_post : ?tls:Tls.Config.client -> < net : _ Eio.Net.t; .. > -> stream_post
+val logo_network : < clock : _ Eio.Time.clock; net : _ Eio.Net.t; .. > -> Logo_fetch.network
