@@ -1,5 +1,8 @@
 module A = Cashflow_core.Advisor
 
+val language_instruction : string -> string
+(** The reply-language instruction for a conversation's locale; unknown locales are named by their code. *)
+
 val select_history : A.snapshot -> (Advisor_effects.context_turn list, A.error) result
 (** Last whole successful turns only, bounded by twelve turns and conservative serialized conversation bytes. No failed
     output, old evidence, or summarization. *)

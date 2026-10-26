@@ -831,6 +831,13 @@ let ordered_text_spans () =
       check_int "allocation boundary cleanup" 2 f.closes)
     [ false; true ]
 
+let reply_language () =
+  let contains sub text = Str_compat.contains ~sub text in
+  Alcotest.(check bool) "English" true (contains "Reply in English" (W.language_instruction "en"));
+  Alcotest.(check bool) "Swedish" true (contains "Reply in Swedish" (W.language_instruction "sv"));
+  Alcotest.(check bool) "region subtag" true (contains "Reply in Swedish" (W.language_instruction "sv-SE"));
+  Alcotest.(check bool) "unknown locale named by code" true (contains "locale code nb" (W.language_instruction "nb"))
+
 let tests =
   [
     ("fresh unique evidence", fresh_and_unique_evidence);
@@ -856,6 +863,7 @@ let tests =
     ("command ordering", commands);
     ("command authority and validation", command_authority_and_validation);
     ("terminal ordering", terminal_order);
+    ("reply language", reply_language);
   ]
 
 let () =

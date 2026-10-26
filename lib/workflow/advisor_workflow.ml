@@ -14,6 +14,19 @@ let safety_instructions =
    metadata states which whole turns were omitted; never invent or silently summarize missing finances. A tool error \
    is not evidence: correct its arguments within the remaining limits or explain the limitation; never claim it succeeded."
 
+let language_instruction locale =
+  let primary = match String.index_opt locale '-' with Some i -> String.sub locale 0 i | None -> locale in
+  let language =
+    match String.lowercase_ascii primary with
+    | "en" -> "English"
+    | "sv" -> "Swedish"
+    | _ -> "the language with locale code " ^ locale
+  in
+  Printf.sprintf
+    "Reply in %s, the language chosen in the user's settings, unless the user explicitly asks for another language. \
+     Tool arguments and identifiers stay exactly as supplied."
+    language
+
 (* Six bytes per UTF-8 byte bounds JSON escaping; fixed overhead bounds the two
    message envelopes. Whole turns are dropped, never clipped or summarized. *)
 let turn_bytes (t : E.context_turn) = 256 + (6 * (String.length t.user_text + String.length t.assistant_text))
@@ -157,7 +170,8 @@ let execute ~run:(current_run : A.run) =
           history;
           selection;
           messages;
-          system_instructions = safety_instructions ^ "\n" ^ loaded.system_instructions;
+          system_instructions =
+            safety_instructions ^ "\n" ^ language_instruction loaded.locale ^ "\n" ^ loaded.system_instructions;
         }
       in
       let measure context =
