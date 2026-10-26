@@ -896,6 +896,7 @@ let holiday_forecast_correction () =
       let system = List.hd messages |> member "content" |> to_string in
       check "authoritative local day across UTC midnight"
         (Str_compat.contains ~sub:"Current local date: 2026-10-25; timezone: Europe/Stockholm." system);
+      check "periods are described by explicit dates" (Str_compat.contains ~sub:"first_day and last_day" system);
       check "personality is part of the system prompt" (Str_compat.contains ~sub:"Boots Theory" system);
       check "reply language follows the conversation locale" (Str_compat.contains ~sub:"Reply in English" system);
       check "workflow safety preserves temporal context"

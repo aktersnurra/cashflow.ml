@@ -235,6 +235,15 @@ let redacted_eight_tools () =
   let spending = List.hd es in
   check "category name is shown" (contains (json aliases spending) "\"name\":\"Groceries\"");
   check "reference alias is still present" (contains (json aliases spending) "\"reference\":");
+  List.iter
+    (fun e ->
+      match e.T.result with
+      | T.Cycle_summary_result _ | T.Category_trend_result _ | T.Budget_status_result _ ->
+          let text = json aliases e in
+          check (T.name e.T.result ^ " gives each cycle explicit first and last days")
+            (contains text "\"first_day\":\"20" && contains text "\"last_day\":\"20")
+      | _ -> ())
+    es;
   let transactions =
     List.find (fun e -> match e.T.result with Relevant_transactions_result _ -> true | _ -> false) es
   in

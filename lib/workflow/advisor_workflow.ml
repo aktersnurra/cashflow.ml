@@ -11,7 +11,8 @@ let safety_instructions =
    sampled evidence (each has its own sampled time) from assumptions. Reads need not share a snapshot; disclose \
    updates rather than combining inconsistent totals. Samples/truncation are not complete explanations. Only supplied \
    evidence is verified; unmatched evidence references are plain text, not authorized links. History selection \
-   metadata states which whole turns were omitted; never invent or silently summarize missing finances. A tool error \
+   metadata states which whole turns were omitted; never invent or silently summarize missing finances. A cycle label only names a pay \
+   cycle and may differ from the calendar month: describe periods by their first_day and last_day. A tool error \
    is not evidence: correct its arguments within the remaining limits or explain the limitation; never claim it succeeded."
 
 (* Voice only. It never outranks the rules above or changes a figure. *)

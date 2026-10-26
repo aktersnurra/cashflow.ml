@@ -563,6 +563,8 @@ let model_json ~aliases (e : T.evidence) =
                   obj
                     [
                       ("cycle", str (Cycle.label x.cycle));
+                      ("first_day", date x.cycle.first);
+                      ("last_day", date x.cycle.last);
                       ("income", num x.flows.income);
                       ("spending", num x.flows.spending);
                       ("transfers_in", num x.flows.transfers_in);
@@ -581,7 +583,16 @@ let model_json ~aliases (e : T.evidence) =
               obj
                 [
                   ("category", acct a);
-                  ("cycles", arr (fun (c, n) -> obj [ ("cycle", str (Cycle.label c)); ("total", num n) ]) xs);
+                  ("cycles", arr
+                      (fun ((c : Cycle.t), n) ->
+                        obj
+                          [
+                            ("cycle", str (Cycle.label c));
+                            ("first_day", date c.first);
+                            ("last_day", date c.last);
+                            ("total", num n);
+                          ])
+                      xs);
                 ]
           | Relevant_transactions_result xs ->
               arr
@@ -616,6 +627,8 @@ let model_json ~aliases (e : T.evidence) =
               obj
                 [
                   ("cycle", str (Cycle.label c));
+                  ("first_day", date c.first);
+                  ("last_day", date c.last);
                   ( "lines",
                     arr
                       (fun (x : T.budget) ->
