@@ -21,3 +21,17 @@
   like `cashflow_summary`.
 - The Overview's "may run short before payday" card links to the forecast, and a property test
   checks that the two agree.
+
+### Advisor
+
+- An Advisor page (`/advisor`): a chat about your own money that streams its answer as it is
+  written. It reads your budgets, spending, recurring payments, goals and forecast through
+  read-only tools; it cannot change anything. Answers cite the figures they used, and a
+  finding on Home can be continued as a conversation. It replies in the language set in your
+  settings and speaks in a plain, practical voice.
+- Conversations are private, pinned to personal or household books and to one currency, and
+  kept in a history menu under the title bar (titled by your first message, grouped by date,
+  with delete). Data is shared with the model only after you turn the Advisor on, over a
+  zero-data-retention provider route.
+- The model sees income and expense category names, never bank account names or numbers, and
+  every period comes with its first and last day.
