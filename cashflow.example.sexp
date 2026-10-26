@@ -28,6 +28,13 @@
  ;; CASHFLOW_LOG_LEVEL overrides it for a single run.
  (log_level Info)
 
+ ;; Advisor supports model anthropic/claude-sonnet-4.6 with provider_only (amazon-bedrock).
+ ;; This profile needs no attestation fields: context policy 200000, completion 8192.
+ ;; Optional stricter override: (advisor_limits ((context_tokens 100000) (completion_tokens 2048)))
+ ;; Input tokens are estimated, not a guarantee about provider framing/tokenization.
+ ;; Unsupported models/routes without overrides retain legacy features but not Advisor.
+ ;; Explicit overrides for unsupported profiles or above policy limits are rejected.
+ ;; See design/advisor-deployment.md for capability sources and deployment gates.
  ;; Optional: category suggestions and month summaries through OpenRouter.
  ;; Remove #; to enable. Every request requires ZDR and denies data collection.
  ;; provider_only is optional; these are its defaults. An empty list is refused.

@@ -2,10 +2,12 @@ open! Core
 
 (* Transactions carries its filters, the pay cycle (0 the current one, -1 the one before) and
    optionally a category, so Back and links keep them. *)
-type t = Home | Cashflow | Transactions of { offset : int; category : string option } | Inbox | Accounts | Account of string | Budgets | Forecast | Household | Insights | Settings | Add [@@deriving equal, sexp]
+type t = Home | Advisor of string option | Cashflow | Transactions of { offset : int; category : string option } | Inbox | Accounts | Account of string | Budgets | Forecast | Household | Insights | Settings | Add [@@deriving equal, sexp]
 
 let to_path = function
   | Home -> "/"
+  | Advisor None -> "/advisor"
+  | Advisor (Some id) -> "/advisor/" ^ id
   | Cashflow -> "/cashflow"
   | Transactions { offset = 0; category = None } -> "/transactions"
   | Transactions { offset; category } -> "/transactions/" ^ Int.to_string offset ^ Option.value_map category ~default:"" ~f:(fun c -> "/" ^ c)
@@ -21,6 +23,8 @@ let to_path = function
 
 let of_path path =
   match String.split (String.strip ~drop:(Char.equal '/') path) ~on:'/' with
+  | [ "advisor" ] -> Advisor None
+  | [ "advisor"; id ] -> Advisor (Some id)
   | [ "cashflow" ] -> Cashflow
   | [ "transactions" ] -> Transactions { offset = 0; category = None }
   | [ "transactions"; offset ] -> Transactions { offset = Option.value (Int.of_string_opt offset) ~default:0; category = None }
@@ -38,6 +42,7 @@ let of_path path =
 
 let title locale = function
   | Home -> Msg.nav_home locale
+  | Advisor _ -> Msg.nav_advisor locale
   | Cashflow -> Msg.nav_cashflow locale
   | Transactions _ -> Msg.nav_transactions locale
   | Inbox -> Msg.nav_inbox locale

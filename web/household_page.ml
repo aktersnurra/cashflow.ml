@@ -3,19 +3,19 @@ open! Bonsai_web.Cont
 open Bonsai.Let_syntax
 
 (* The household's figures are only fetched in the branch where there is a household. *)
-let rec page ~(ctx : Ctx.t) graph =
+let rec page ~(ctx : Ctx.t) ~(advisor : Advisor.controller Bonsai.t) graph =
   let has_household = let%arr session = ctx.session in Ctx.has_household session in
   match%sub has_household with
   | true ->
       let plan = Remote.load ~name:"contribution_plan" ~ctx graph in
       let owed = Remote.load ~name:"settle_up_status" ~ctx graph in
-      view ~ctx ~plan ~owed graph
-  | false -> view ~ctx ~plan:(Bonsai.return Remote.Loading) ~owed:(Bonsai.return Remote.Loading) graph
+      view ~ctx ~advisor ~plan ~owed graph
+  | false -> view ~ctx ~advisor ~plan:(Bonsai.return Remote.Loading) ~owed:(Bonsai.return Remote.Loading) graph
 
-and view ~(ctx : Ctx.t) ~plan ~owed graph =
+and view ~(ctx : Ctx.t) ~(advisor : Advisor.controller Bonsai.t) ~plan ~owed graph =
   let email, set_email = Bonsai.state "" graph in
   let name, set_name = Bonsai.state "" graph in
-  let%arr plan and owed and email and set_email and name and set_name and locale = ctx.locale and session = ctx.session and changed = ctx.changed
+  let%arr advisor and plan and owed and email and set_email and name and set_name and locale = ctx.locale and session = ctx.session and changed = ctx.changed
   and notify = ctx.notify and navigate = ctx.navigate in
   let admin = Ctx.is_admin session in
   let run ?(after = Effect.Ignore) command args =
@@ -70,6 +70,7 @@ and view ~(ctx : Ctx.t) ~plan ~owed graph =
                                     [ Vdom.Node.div ~attrs:[ Vdom.Attr.class_ "fill"; Vdom.Attr.style (Css_gen.width (`Percent (Percent.of_percentage share))) ] [] ] ];
                               Ui.span ~cls:"amount" [ Ui.text (Fmt.whole locale ~code:c (J.field "contribution" m)) ];
                               Ui.span ~cls:"amount muted" [ Ui.text (Fmt.whole locale ~code:c (J.field "remaining" m)) ] ]))));
+        section (Msg.nav_advisor locale) (Advisor_view.household_setting ~locale ~view:advisor.view ~dispatch:advisor.dispatch);
         section (Msg.label_members locale)
           (Ui.div
              [ Ui.div ~cls:"table"

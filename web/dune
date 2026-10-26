@@ -4,7 +4,7 @@
  (name main)
  (enabled_if (= %{context_name} web))
  (modes js)
- (libraries bonsai.web bonsai.feather_icon async_js virtual_dom virtual_dom.svg js_of_ocaml yojson cashflow_msg mf2_runtime)
+ (libraries bonsai.web bonsai.feather_icon async_js virtual_dom virtual_dom.svg js_of_ocaml yojson cmarkit cashflow_msg mf2_runtime cashflow_advisor_protocol cashflow_advisor_stream)
  (preprocess (pps ppx_jane bonsai.ppx_bonsai js_of_ocaml-ppx)))
 
 (rule
@@ -13,5 +13,5 @@
  (targets index.html)
  (deps index.src.html main.bc.js style.css manifest.webmanifest apple-touch-icon.png icon-192.png icon-512.png favicon-32.png)
  (action
-  (progn
-   (copy index.src.html index.html))))
+  (with-stdout-to index.html
+   (run %{bin:ocaml} %{dep:build/version_assets.ml} %{dep:index.src.html} %{dep:style.css} %{dep:main.bc.js}))))

@@ -84,6 +84,32 @@ class LibraryBoundaries(unittest.TestCase):
         self.put('shared/dune', '(library (name helper) (libraries cashflow_core))')
         self.rejects('browser/MF2 native dependency main -> helper -> cashflow_core')
 
+    def test_protocol_declared_native_edge(self):
+        self.put('shared/advisor/dune', '(library (name cashflow_advisor_protocol) (libraries cashflow_io))')
+        self.rejects('browser/MF2 native dependency cashflow_advisor_protocol -> cashflow_io')
+
+    def test_protocol_transitive_declared_native_edge(self):
+        self.put('shared/advisor/dune', '(library (name cashflow_advisor_protocol) (libraries helper))')
+        self.put('test/helper/dune', '(library (name helper) (libraries cashflow_workflow))')
+        self.rejects('browser/MF2 native dependency cashflow_advisor_protocol -> helper -> cashflow_workflow')
+
+    def test_protocol_direct_native_source_edge(self):
+        self.put('shared/advisor/wire.ml', 'let value = Cashflow_core.Value.value\n')
+        self.rejects('forbidden source closure Wire -> Cashflow_core')
+
+    def test_protocol_transitive_native_source_edge(self):
+        self.put('shared/advisor/wire.ml', 'let value = Protocol_helper.value\n')
+        self.put('shared/advisor/protocol_helper.ml', 'let value = Cashflow_io.Adapter.value\n')
+        self.rejects('forbidden source closure Wire -> Protocol_helper -> Cashflow_io')
+
+    def test_protocol_interface_io_edge(self):
+        self.put('shared/advisor/wire.mli', 'val db : Sqlite3.db\n')
+        self.rejects('forbidden source closure Wire -> Sqlite3')
+
+    def test_core_protocol_source_edge(self):
+        self.put('lib/core/value.ml', 'let value = Cashflow_advisor_protocol.Wire.version\n')
+        self.rejects('forbidden source closure Value -> Cashflow_advisor_protocol')
+
     def test_old_consumer(self):
         self.put('bin/dune', '(executable (name cashflow) (libraries cashflow))')
         self.rejects('old flat library dependency: bin/dune')

@@ -17,8 +17,13 @@ type t = {
   openrouter_api_key : string option;
   openrouter_model : string;
   openrouter_provider_only : string list;
+  advisor_limits : Advisor_provider.generation_limits option;
   log_level : Logs.level option;  (** [None] silences logging *)
 }
+
+let advisor_available config =
+  Option.fold ~none:false ~some:(fun key -> String.trim key <> "") config.openrouter_api_key
+  && Option.is_some config.advisor_limits
 
 module File = struct
   open Sexplib0.Sexp_conv
@@ -35,8 +40,15 @@ module File = struct
   [@@deriving sexp]
 
   type web = { client_id : string; client_secret : secret } [@@deriving sexp]
+  type advisor_limits = {
+    context_tokens : int;
+    completion_tokens : int;
+  }
+  [@@deriving sexp]
+
   type openrouter = {
     api_key : secret;
+    advisor_limits : advisor_limits option; [@sexp.option]
     model : string; [@default "anthropic/claude-haiku-5.5"]
     provider_only : string list; [@default default_openrouter_provider_only]
   }
@@ -85,6 +97,21 @@ let resolve (file : File.t) =
     | Some o -> check (o.provider_only <> []) "openrouter.provider_only must not be empty"
     | None -> Ok ()
   in
+  let* advisor_limits =
+    match file.openrouter with
+    | None -> Ok None
+    | Some o ->
+        let supported = Advisor_provider.supported_limits ~model:o.model ~provider_only:o.provider_only in
+        match o.advisor_limits, supported with
+        | None, limits -> Ok limits
+        | Some _, None -> Error "openrouter.advisor_limits requires supported Advisor profile: anthropic/claude-sonnet-4.6 with provider_only (amazon-bedrock)"
+        | Some l, Some policy ->
+            let* () = check
+              (l.context_tokens > 0 && l.completion_tokens > 0 && l.completion_tokens <= l.context_tokens
+               && l.context_tokens <= policy.context_tokens && l.completion_tokens <= policy.completion_tokens)
+              "openrouter.advisor_limits requires positive context/completion, completion <= context, context <= 200000 and completion <= 8192" in
+            Ok (Some { Advisor_provider.context_tokens = l.context_tokens; completion_tokens = l.completion_tokens })
+  in
   let* web_client_secret = match file.web with Some web -> Result.map Option.some (read_secret web.client_secret) | None -> Ok None in
   let* openrouter_api_key = match file.openrouter with Some o -> Result.map Option.some (read_secret o.api_key) | None -> Ok None in
   let public_base_url = if String.ends_with ~suffix:"/" file.public_url then String.sub file.public_url 0 (String.length file.public_url - 1) else file.public_url in
@@ -94,6 +121,7 @@ let resolve (file : File.t) =
       static_dir = file.static_dir; openrouter_api_key;
       openrouter_model = Option.fold ~none:"anthropic/claude-haiku-5.5" ~some:(fun (o : File.openrouter) -> o.model) file.openrouter;
       openrouter_provider_only = Option.fold ~none:default_openrouter_provider_only ~some:(fun (o : File.openrouter) -> o.provider_only) file.openrouter;
+      advisor_limits;
       log_level = (match file.log_level with Quiet -> None | Error -> Some Logs.Error | Warning -> Some Warning | Info -> Some Info | Debug -> Some Debug) }
 
 (* "lib/config.ml.File.t_of_sexp: extra fields: statc_dir" reads as "unknown field statc_dir". *)

@@ -746,14 +746,21 @@ let remove_rule =
 
 (* People *)
 
-let session_json service access =
+let session_json (service : Service.t) access =
+  Sql.read_snapshot service.db (fun () ->
   let user = Access.user access in
+  let defaults = user.default_currency :: (match Access.household access with None -> [] | Some h -> [h.default_currency]) in
+  let codes = List.sort_uniq String.compare defaults in
+  let currency_metadata = List.map (fun code -> match Service.currency service code with
+    | Ok currency -> `Assoc [("code", `String code); ("scale", `Int (Currency.scale currency))]
+    | Error _ -> `Null) codes in
   `Assoc
     [ ("user", Json.user user); ("household", Json.option Json.household (Access.household access));
+      ("currency_metadata", `List currency_metadata);
       ("members", match Service.members service access with Ok members -> `List (List.map Json.member members) | Error _ -> `List []);
       ("invitations", `List (List.map Json.household (Service.invitations service access)));
       ("inbox_count", `Int (Inbox.count service access));
-      ("locales", Json.strings I18n_locale.supported); ("timezones", Json.strings Time.supported_zone_names) ]
+      ("locales", Json.strings I18n_locale.supported); ("timezones", Json.strings Time.supported_zone_names) ])
 
 let get_session = command ~mcp:false "get_session" Read "Who you are, your household and pending invitations." [] (fun service access _ -> Ok (session_json service access))
 

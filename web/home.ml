@@ -87,6 +87,7 @@ let card_view ~(ctx : Ctx.t) (key : string Bonsai.t) (card : J.t Bonsai.t) graph
       Ui.card ~tone:"warning" ~title:(Msg.card_shortfall_title ~account:(J.str (J.path [ "account"; "name" ] data)) locale)
         ~body:
           (Ui.muted (Msg.card_shortfall_body ~due:(m (J.field "due" data)) ~available:(m (J.field "available" data)) ~short:(m (J.field "short_by" data)) locale)
+          :: Ui.muted (Msg.advisor_bills_estimate locale)
           :: List.map (J.list (J.field "upcoming" data)) ~f:(fun u ->
                  Ui.muted (Msg.card_shortfall_item ~merchant:(J.str (J.field "merchant" u)) ~amount:(m (J.field "amount" u)) ~date:(Fmt.date_json (J.field "expected" u)) locale)))
         ~actions:
@@ -150,14 +151,16 @@ let card_view ~(ctx : Ctx.t) (key : string Bonsai.t) (card : J.t Bonsai.t) graph
    figures above (the overview and month-review cards) are left out; at most three remain. *)
 let figure_kinds = [ "overview"; "month_review" ]
 
-let page ~(ctx : Ctx.t) graph =
+let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor_protocol.Wire.scope -> unit Effect.t) Bonsai.t)
+    ~selected_finding ~outlet ~advisor_route graph =
+  let captured, set_captured = Bonsai.state None graph in
   let offset, set_offset = Bonsai.state 0 graph in
   let scope, set_scope = Bonsai.state "me" graph in
   let summary = Remote.load ~name:"cashflow_summary" ~args:(let%arr scope in `Assoc [ ("scope", `String scope); ("cycles", `Int 13) ]) ~ctx graph in
   let categories =
     Remote.load ~name:"spending_by_category" ~args:(let%arr scope and offset in `Assoc [ ("scope", `String scope); ("cycle_offset", `Int offset) ]) ~ctx graph
   in
-  let feed = Remote.load ~name:"get_attention_feed" ~ctx graph in
+  let feed = Remote.load ~name:"get_attention_feed" ~args:(Bonsai.return (`Assoc [("narrative", `Bool false)])) ~ctx graph in
   let cards =
     let%arr feed in
     match feed with
@@ -169,9 +172,23 @@ let page ~(ctx : Ctx.t) graph =
         |> String.Map.of_alist_reduce ~f:(fun a _ -> a)
     | Loading | Failed _ -> String.Map.empty
   in
-  let views = Bonsai.assoc (module String) cards ~f:(fun key card graph -> card_view ~ctx key card graph) graph in
+  let visible_cards = let%arr cards and captured and selected_finding in
+    match captured, selected_finding with Some (key, cards), Some selected when String.equal key selected -> cards | _ -> cards in
+  let views = Bonsai.assoc (module String) visible_cards ~f:(fun key card graph ->
+    let body = card_view ~ctx key card graph in
+    let%arr body and card and on_ask and selected_finding and outlet and cards and set_captured and session = ctx.session and locale = ctx.locale in
+    let finding_key = J.str (J.field "key" card) in
+    let selected = Option.equal String.equal selected_finding (Some finding_key) in
+    let eligible = List.mem ["unusual_spend"; "shortfall"] (J.str (J.field "kind" card)) ~equal:String.equal in
+    let scope = if String.equal (J.str (J.path ["data"; "scope"] card)) "household"
+      || String.equal (J.str (J.path ["data"; "account"; "owner"] card)) "household" then
+      Cashflow_advisor_protocol.Wire.Household (J.str (J.path ["household"; "id"] session)) else Personal in
+    Vdom.Node.div ~attrs:([Vdom.Attr.create "data-finding-key" finding_key] @ if selected then [Vdom.Attr.create "data-testid" "selected-finding"] else [])
+      ([body] @ (if eligible then [Ui.div ~cls:"finding-reply" [Ui.button (Msg.advisor_ask locale)
+        (Effect.Many [set_captured (Some (finding_key, cards)); on_ask ~finding_key ~scope])]] else [])
+       @ if selected then [outlet] else [])) graph in
   let%arr summary and categories and views and offset and set_offset and scope and set_scope and locale = ctx.locale and session = ctx.session
-  and navigate = ctx.navigate in
+  and navigate = ctx.navigate and outlet and selected_finding and visible_cards and advisor_route in
   let cycles = match summary with Loaded json -> J.list (J.field "cycles" json) | Loading | Failed _ -> [] in
   let code = match summary with Loaded json -> J.str ~default:"SEK" (J.field "currency" json) | Loading | Failed _ -> "SEK" in
   let index = List.length cycles - 1 + offset in
@@ -183,6 +200,9 @@ let page ~(ctx : Ctx.t) graph =
   let head =
     Ui.div ~cls:"page-head"
       [ Vdom.Node.h1 [ Ui.text (Msg.nav_home locale) ];
+        Vdom.Node.a ~attrs:([Vdom.Attr.class_ "advisor-mobile-link button"; Vdom.Attr.href "/advisor";
+          Vdom.Attr.on_click (fun _ -> Effect.Many [Effect.Prevent_default; navigate (Route.Advisor None)])]
+          @ if advisor_route then [Vdom.Attr.create "aria-current" "page"] else []) [Ui.text (Msg.nav_advisor locale)];
         Ui.div ~cls:"page-controls"
           [ (if List.is_empty scopes then Vdom.Node.none
              else Ui.div ~cls:"segmented" (List.map scopes ~f:(fun (value, label) -> Ui.button ~kind:(if String.equal value scope then "active" else "") label (set_scope value))));
@@ -242,4 +262,11 @@ let page ~(ctx : Ctx.t) graph =
           [ Ui.div ~cls:"section-head" [ Vdom.Node.h2 [ Ui.text (Msg.overview_attention locale) ]; Ui.span ~cls:"count" [ Ui.text (Int.to_string (List.length items)) ] ];
             Ui.div ~cls:"attention-list" items ]
   in
-  Vdom.Node.main ~attrs:[ Vdom.Attr.class_ "page" ] [ head; body; attention ]
+  let hosted = Map.exists visible_cards ~f:(fun card -> Option.equal String.equal selected_finding (Some (J.str (J.field "key" card)))) in
+  let standalone = advisor_route && not hosted in
+  Vdom.Node.main ~attrs:[Vdom.Attr.class_ (if standalone then "page advisor-page" else "page")]
+    [(if standalone then Vdom.Node.h1 [Ui.text (Msg.nav_advisor locale)] else Vdom.Node.none);
+     (* Keep the financial surface mounted for Home continuity; an unanchored
+        Advisor conversation is not a second dashboard above the chat. *)
+     Vdom.Node.div ~attrs:(if standalone then [Vdom.Attr.create "hidden" ""] else []) [head; body; attention];
+     (if standalone then outlet else Vdom.Node.none)]

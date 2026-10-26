@@ -1,0 +1,776 @@
+open Cashflow_core
+module A = Advisor
+module T = Cashflow_workflow.Advisor_tools
+
+let ( let* ) = Result.bind
+let error code = Error { A.code; context = A.No_context }
+let limit kind = Error { A.code = A.Run_limit_reached; context = A.Limit kind }
+
+exception Invalid
+
+let require = function Some x -> x | None -> raise Invalid
+let get = function Ok x -> x | Error _ -> raise Invalid
+
+let unique fields =
+  let keys = List.map fst fields in
+  if List.length keys <> List.length (List.sort_uniq String.compare keys) then raise Invalid
+
+let fields allowed = function
+  | `Assoc f ->
+      unique f;
+      if List.exists (fun (k, _) -> not (List.mem k allowed)) f then raise Invalid;
+      f
+  | _ -> raise Invalid
+
+let text f k =
+  match List.assoc_opt k f with
+  | None -> None
+  | Some (`String s) when String.length s <= 512 -> Some s
+  | _ -> raise Invalid
+
+let integer f k default lo hi =
+  match List.assoc_opt k f with None -> default | Some (`Int n) when n >= lo && n <= hi -> n | _ -> raise Invalid
+
+let boolean f k = match List.assoc_opt k f with None -> false | Some (`Bool b) -> b | _ -> raise Invalid
+
+let items f k max =
+  match List.assoc_opt k f with None -> [] | Some (`List xs) when List.length xs <= max -> xs | _ -> raise Invalid
+
+let parse_call ~name ~arguments =
+  let allowed =
+    match name with
+    | "cycle_summary" -> Some [ "cycles" ]
+    | "category_spending" | "budget_status" -> Some [ "cycle_offset" ]
+    | "category_trend" -> Some [ "category"; "cycles" ]
+    | "relevant_transactions" -> Some [ "cycle_offset"; "category"; "limit" ]
+    | "recurring" | "goals" -> Some []
+    | "forecast" -> Some [ "cycles"; "scenario" ]
+    | _ -> None
+  in
+  match allowed with
+  | None -> error A.Tool_not_allowed
+  | Some allowed -> (
+      try
+        if String.length arguments > 8192 then raise Invalid;
+        let f = fields ("currency" :: allowed) (Yojson.Safe.from_string arguments) in
+        let currency = Option.map (fun s -> require (T.currency_code s)) (text f "currency") in
+        let c = { T.currency } in
+        let cycles () = integer f "cycles" 6 1 6 in
+        let period () = T.Cycle_offset (integer f "cycle_offset" 0 (-5) 0) in
+        let category () = Option.map (fun s -> require (T.account_reference s)) (text f "category") in
+        Ok
+          (match name with
+          | "cycle_summary" -> T.Cycle_summary (c, cycles ())
+          | "category_spending" -> T.Category_spending (c, period ())
+          | "category_trend" -> T.Category_trend (c, require (category ()), cycles ())
+          | "relevant_transactions" -> T.Relevant_transactions (c, period (), category (), integer f "limit" 20 1 20)
+          | "recurring" -> T.Recurring c
+          | "budget_status" -> T.Budget_status (c, integer f "cycle_offset" 0 (-5) 0)
+          | "goals" -> T.Goals c
+          | "forecast" ->
+              let horizon = integer f "cycles" 3 1 6 in
+              if not (List.mem horizon [ 1; 3; 6 ]) then raise Invalid;
+              let s =
+                match List.assoc_opt "scenario" f with
+                | None -> []
+                | Some x -> fields [ "leave_out"; "one_off"; "follow_budgets" ] x
+              in
+              let leave_out =
+                List.map
+                  (function `String s -> require (T.series_reference s) | _ -> raise Invalid)
+                  (items s "leave_out" 20)
+              in
+              let one_off =
+                List.map
+                  (fun x ->
+                    let o = fields [ "date"; "amount"; "description" ] x in
+                    let d = get (Date.of_string (require (text o "date"))) in
+                    let a = require (text o "amount") in
+                    if String.length a > 30 then raise Invalid;
+                    (d, a, Option.value (text o "description") ~default:""))
+                  (items s "one_off" 10)
+              in
+              T.Forecast
+                ( c,
+                  horizon,
+                  {
+                    T.leave_out;
+                    input =
+                      {
+                        Cashflow_workflow.Forecast_request.leave_out = [];
+                        one_off;
+                        follow_budgets = boolean s "follow_budgets";
+                      };
+                  } )
+          | _ -> raise Invalid)
+      with Invalid | Yojson.Json_error _ | Stack_overflow -> error A.Invalid_tool_arguments)
+
+type aliases = {
+  service : Service.t;
+  principal : Advisor_access.principal;
+  scope : A.scope;
+  conversation : A.Conversation_id.t;
+  owner : User_id.t;
+  nonce : string;
+  accounts : (Account_id.t, string) Hashtbl.t;
+  series : (string, string) Hashtbl.t;
+  evidence : (A.Evidence_id.t, T.evidence) Hashtbl.t;
+  selected : (A.Evidence_id.t, int) Hashtbl.t;
+}
+
+let store service = Advisor_store.create ~clock:service.Service.now service.db
+
+let create_aliases (service : Service.t) ~principal ~scope ~conversation =
+  let* () = Advisor_access.authorize_history service principal conversation in
+  let* user = Advisor_access.user service principal in
+  let* metadata = Advisor_store.metadata (store service) ~owner:user.id conversation in
+  if metadata.scope <> scope then error A.Scope_mismatch
+  else
+    Ok
+      {
+        service;
+        principal;
+        scope;
+        conversation;
+        owner = user.id;
+        nonce =
+          String.concat ""
+            (String.split_on_char '-' (Uuidm.to_string (Uuidm.v4_gen (Random.State.make_self_init ()) ())));
+        accounts = Hashtbl.create 32;
+        series = Hashtbl.create 20;
+        evidence = Hashtbl.create 8;
+        selected = Hashtbl.create 8;
+      }
+
+let authorize service ~principal ~scope aliases =
+  if service != aliases.service || principal != aliases.principal || scope <> aliases.scope then error A.Access_denied
+  else
+    let* () = Advisor_access.authorize_scope service principal scope in
+    Advisor_access.authorize_history service principal aliases.conversation
+
+let account (i : Account_info.t) : T.account =
+  let name = match i.account.kind with Account.Expense | Income -> Some i.account.name | Asset | Liability | Equity -> None in
+  { id = i.account.id; kind = i.account.kind; name }
+
+let scoped_book (ctx : Insights.ctx) =
+  let book = Insights.book ctx in
+  fun id -> Option.map account (book.inside id)
+
+let take n xs = List.filteri (fun i _ -> i < n) xs
+
+let service_result = function
+  | Ok x -> Ok x
+  | Error (`Not_found _) -> error A.Not_found
+  | Error (`Forbidden _) -> error A.Access_denied
+  | Error (`Invalid _) -> error A.Invalid_tool_arguments
+  | Error (`Storage_unavailable _) -> error A.Storage_unavailable
+
+let resolve_category service aliases ctx reference =
+  let* id =
+    Advisor_store.resolve_account_alias (store service) ~owner:aliases.owner ~conversation:aliases.conversation
+      ~alias:(T.account_reference_text reference)
+  in
+  match scoped_book ctx id with
+  | Some a when a.kind = Account.Expense || a.kind = Account.Income -> Ok a
+  | _ -> error A.Not_found
+
+let period (T.Cycle_offset n) = Insights.Cycle_offset n
+
+let refs = function
+  | T.Category_spending_result xs -> List.map (fun (x : T.category) -> x.account) xs
+  | T.Category_trend_result (a, _) -> [ a ]
+  | T.Relevant_transactions_result xs ->
+      List.concat_map (fun (x : T.transaction) -> List.filter_map Fun.id [ x.debit; x.credit ]) xs
+  | T.Recurring_result xs ->
+      List.concat_map (fun (x : T.payment) -> List.filter_map Fun.id [ x.category; x.paid_from ]) xs
+  | T.Budget_status_result (_, xs) -> List.map (fun (x : T.budget) -> x.category) xs
+  | T.Forecast_result f ->
+      List.concat_map (fun (x : T.forecast_item) -> List.filter_map Fun.id [ x.account; x.category ]) f.items
+  | T.Cycle_summary_result _ | T.Goals_result _ -> []
+
+let assumptions (f : Forecast.t) =
+  List.map
+    (function
+      | Forecast.Usual_spending { per_cycle; first; last; days } ->
+          Printf.sprintf "usual_spending: %Ld minor units; %s to %s; %d days" per_cycle (Date.to_string first)
+            (Date.to_string last) days
+      | Stopped _ -> "stopped_series_excluded"
+      | Stale_import d -> "stale_import: " ^ Date.to_string d
+      | Other_currency _ -> "other_currency_accounts_excluded"
+      | Short_history d -> "short_history: " ^ string_of_int d
+      | No_income_detected -> "no_income_detected"
+      | Range_from { forecasts; since } ->
+          Printf.sprintf "range_from: %d forecasts since %s" forecasts (Date.to_string since)
+      | No_range_yet -> "no_range_yet"
+      | Seasonal { month; year; percent } -> Printf.sprintf "seasonal: %d-%02d %d percent" year month percent)
+    f.assumptions
+
+let read (service : Service.t) ~principal ~scope ~aliases ~currency:pinned request =
+  try
+    let* detached =
+      Sql.read_snapshot service.db (fun () ->
+          let* () = authorize service ~principal ~scope aliases in
+          let* () = if Hashtbl.length aliases.evidence >= A.limits.tool_calls then limit A.Tool_calls else Ok () in
+          let* access = Advisor_access.access service principal in
+          let common = T.common request in
+          (* A conversation is pinned to one currency for its whole life: an omitted argument means the
+             pinned one, never the user's current default, and any other currency is rejected before reading. *)
+          let* currency =
+            match Option.map T.currency_code_text common.currency with
+            | Some code when not (String.equal code (Currency.code pinned)) -> error A.Invalid_tool_arguments
+            | _ -> Ok (Some (Currency.code pinned))
+          in
+          let query_scope = match scope with A.Personal -> Analytics.Me | Household _ -> Analytics.Household in
+          let qc = { Query.scope = query_scope; currency } in
+          let* ctx = service_result (Insights.context service access ~scope:query_scope ?currency ()) in
+          let scoped = scoped_book ctx in
+          let run q = Result.map fst (service_result (Query.run service access q)) in
+          let cycle_ok n = n >= 1 && n <= 6 in
+          let offset_ok n = n >= -5 && n <= 0 in
+          let valid =
+            match request with
+            | T.Cycle_summary (_, n) | T.Category_trend (_, _, n) -> cycle_ok n
+            | Category_spending (_, Cycle_offset n) | Budget_status (_, n) -> offset_ok n
+            | Relevant_transactions (_, Cycle_offset n, _, count) -> offset_ok n && count >= 1 && count <= 20
+            | Forecast (_, n, s) ->
+                List.mem n [ 1; 3; 6 ]
+                && s.input.leave_out = []
+                && List.length s.leave_out <= 20
+                && List.length s.input.one_off <= 10
+            | Recurring _ | Goals _ -> true
+          in
+          if not valid then error A.Invalid_tool_arguments
+          else
+            let* result, total_count, returned_count, extra_assumptions =
+              match request with
+              | T.Cycle_summary (_, n) ->
+                  let* xs = run (Query.Cashflow_summary (qc, n)) in
+                  Ok (T.Cycle_summary_result xs, List.length xs, List.length xs, [])
+              | Category_spending (_, p) ->
+                  let* xs = run (Query.Spending_by_category (qc, period p, true)) in
+                  let ys =
+                    take 20 xs
+                    |> List.map (fun (x : Analytics.category_total) ->
+                        { T.account = account x.category; total = x.total; previous = x.previous })
+                  in
+                  Ok (T.Category_spending_result ys, List.length xs, List.length ys, [])
+              | Category_trend (_, reference, n) ->
+                  let* a = resolve_category service aliases ctx reference in
+                  let* _, xs = run (Query.Category_trend (qc, a.id, n)) in
+                  Ok (T.Category_trend_result (a, xs), List.length xs, List.length xs, [])
+              | Relevant_transactions (_, p, category, count) ->
+                  let* category =
+                    match category with
+                    | None -> Ok None
+                    | Some r ->
+                        let* a = resolve_category service aliases ctx r in
+                        if a.kind = Account.Expense then Ok (Some a) else error A.Not_found
+                  in
+                  let* xs = run (Query.Largest_expenses (qc, period p, max_int)) in
+                  let xs =
+                    List.filter
+                      (fun (v : Service.transfer_view) ->
+                        match category with None -> true | Some a -> Account_id.equal v.transfer.debit_account_id a.id)
+                      xs
+                  in
+                  let ys =
+                    take count xs
+                    |> List.map (fun (v : Service.transfer_view) ->
+                        let t = v.transfer in
+                        (* The pinned book is stricter than the UI's combined membership visibility. *)
+                        let debit = scoped t.debit_account_id and credit = scoped t.credit_account_id in
+                        let description =
+                          match (debit, credit) with Some _, Some _ -> t.memo.description | _ -> "masked counterpart"
+                        in
+                        { T.date = t.value_date; amount = Amount.to_int64 t.amount; description; debit; credit })
+                  in
+                  Ok
+                    ( T.Relevant_transactions_result ys,
+                      List.length xs,
+                      List.length ys,
+                      [ "partial samples do not establish a complete explanation" ] )
+              | Recurring _ ->
+                  let* xs = run (Query.Recurring qc) in
+                  let ys =
+                    take 20 xs
+                    |> List.map (fun (x : Analytics.recurring) ->
+                        {
+                          T.merchant =
+                            (if Option.is_none (scoped x.paid_from) then "masked counterpart" else x.merchant_name);
+                          cadence = x.cadence;
+                          typical = x.typical_amount;
+                          latest = x.last_amount;
+                          changed = Analytics.price_changed x;
+                          last_date = x.last_date;
+                          next_expected = x.next_expected;
+                          occurrences = x.occurrences;
+                          category = Option.bind x.category (fun a -> scoped a.account.id);
+                          paid_from = scoped x.paid_from;
+                        })
+                  in
+                  Ok (T.Recurring_result ys, List.length xs, List.length ys, [ "next_expected dates are estimates" ])
+              | Budget_status (_, n) ->
+                  let* r = run (Query.Budget_status (qc, n)) in
+                  let ys =
+                    take 20 r.lines
+                    |> List.filter_map (fun (x : Analytics.budget_line) ->
+                        Option.map
+                          (fun category ->
+                            {
+                              T.category;
+                              budgeted = x.budgeted;
+                              carried = x.carried;
+                              rollover = x.rollover;
+                              spent = x.spent;
+                              expected = x.expected_by_now;
+                              status = x.status;
+                            })
+                          (scoped x.line_category.account.id))
+                  in
+                  Ok (T.Budget_status_result (r.report_cycle, ys), List.length r.lines, List.length ys, [])
+              | Goals _ ->
+                  let* xs = run (Query.Goals qc) in
+                  let ys =
+                    take 20 xs
+                    |> List.map (fun (x : Insights.goal_progress) ->
+                        {
+                          T.target = x.goal.target_amount;
+                          saved = x.saved;
+                          remaining = x.remaining;
+                          target_date = x.goal.target_date;
+                          monthly = x.goal.monthly_amount;
+                          required = x.required_monthly;
+                          on_track = x.on_track;
+                        })
+                  in
+                  Ok (T.Goals_result ys, List.length xs, List.length ys, [])
+              | Forecast (_, horizon, s) ->
+                  (* Eligibility is recomputed even for a previously supplied series. *)
+                  let* baseline = run (Query.Forecast (qc, horizon, Cashflow_workflow.Forecast_request.no_scenario)) in
+                  let eligible id =
+                    List.exists (fun (x : Forecast.item) -> x.item_id = id && Option.is_some x.series) baseline.items
+                  in
+                  let* leave_out =
+                    List.fold_right
+                      (fun r acc ->
+                        let* acc = acc in
+                        match Hashtbl.find_opt aliases.series (T.series_reference_text r) with
+                        | Some id when eligible id -> Ok (id :: acc)
+                        | _ -> error A.Not_found)
+                      s.leave_out (Ok [])
+                  in
+                  let scenario = { s.input with leave_out } in
+                  let* f =
+                    if scenario = Cashflow_workflow.Forecast_request.no_scenario then Ok baseline
+                    else run (Query.Forecast (qc, horizon, scenario))
+                  in
+                  let items =
+                    take 20 f.items
+                    |> List.map (fun (x : Forecast.item) ->
+                        {
+                          T.series_id = Option.map (fun (s : Series.t) -> s.id) x.series;
+                          date = x.date;
+                          kind = x.kind;
+                          amount = x.amount;
+                          account = scoped x.account;
+                          category =
+                            Option.bind x.series (fun s -> Option.bind s.category (fun a -> scoped a.account.id));
+                        })
+                  in
+                  let projected : T.forecast =
+                    {
+                      today = f.today;
+                      imported_through = f.imported_through;
+                      horizon_end = f.horizon_end;
+                      lowest = f.lowest;
+                      baseline = take 20 f.baseline;
+                      scenario = Option.map (take 20) f.scenario;
+                      range = take 20 f.range;
+                      chance_positive = f.chance_positive;
+                      items;
+                      item_count = List.length f.items;
+                      baseline_count = List.length f.baseline;
+                      range_count = List.length f.range;
+                      scenario_count = Option.fold ~none:0 ~some:List.length f.scenario;
+                    }
+                  in
+                  Ok
+                    ( T.Forecast_result projected,
+                      List.length f.items,
+                      List.length items,
+                      assumptions f
+                      @
+                      if scenario = Cashflow_workflow.Forecast_request.no_scenario then []
+                      else [ "user-specified scenario; not observed facts" ] )
+            in
+            let accounts =
+              Insights.accounts ctx
+              |> List.filter (fun (a : Account_info.t) ->
+                  Option.is_some (scoped a.account.id) && (a.account.kind = Asset || a.account.kind = Liability))
+            in
+            let dates =
+              List.filter_map
+                (fun (a : Account_info.t) -> Import_store.imported_through service.db a.account.id)
+                accounts
+            in
+            let imported_through = match dates with [] -> None | x :: xs -> Some (List.fold_left Date.min x xs) in
+            let import_status =
+              if dates = [] then A.Unknown
+              else if List.length dates < List.length accounts then A.Incomplete
+              else match imported_through with Some d when Date.compare d ctx.today < 0 -> A.Stale | _ -> A.Current
+            in
+            let reconciled =
+              match result with
+              | T.Cycle_summary_result xs -> List.for_all (fun (x : Analytics.cycle_summary) -> x.reconciled) xs
+              | _ -> false
+            in
+            let has_more =
+              total_count > returned_count
+              ||
+              match result with
+              | T.Forecast_result f ->
+                  f.baseline_count > List.length f.baseline
+                  || f.range_count > List.length f.range
+                  || f.scenario_count > Option.fold ~none:0 ~some:List.length f.scenario
+              | _ -> false
+            in
+            if List.length extra_assumptions > 20 then limit A.Tool_result_bytes
+            else
+              let id =
+                require (A.Evidence_id.of_string (Uuidm.to_string (Uuidm.v4_gen (Random.State.make_self_init ()) ())))
+              in
+              Ok
+                {
+                  T.id;
+                  scope;
+                  sampled_at = service.now ();
+                  currency = ctx.currency;
+                  result;
+                  total_count;
+                  returned_count;
+                  has_more;
+                  import_status;
+                  imported_through;
+                  reconciled;
+                  assumptions = extra_assumptions;
+                  source_references = [ T.name result ];
+                })
+    in
+    (* Alias metadata is distinct from financial state. No serialization under either boundary. *)
+    let* () =
+      Sql.transaction_result service.db (fun () ->
+          let* () = authorize service ~principal ~scope aliases in
+          let* access = Advisor_access.access service principal in
+          let query_scope = match scope with A.Personal -> Analytics.Me | Household _ -> Analytics.Household in
+          let* ctx =
+            service_result
+              (Insights.context service access ~scope:query_scope ~currency:(Currency.code detached.currency) ())
+          in
+          let scoped = scoped_book ctx in
+          List.fold_left
+            (fun acc (a : T.account) ->
+              let* () = acc in
+              match scoped a.id with
+              | Some current when current.kind = a.kind ->
+                  let* alias = Advisor_store.account_alias (store service) ~conversation:aliases.conversation a.id in
+                  Hashtbl.replace aliases.accounts a.id alias;
+                  Ok ()
+              | _ -> error A.Not_found)
+            (Ok ()) (refs detached.result))
+    in
+    (match detached.result with
+    | T.Forecast_result f ->
+        List.iter
+          (fun (x : T.forecast_item) ->
+            Option.iter
+              (fun id ->
+                if not (Hashtbl.fold (fun _ v found -> found || v = id) aliases.series false) then
+                  let alias = Printf.sprintf "series_%s_%d" aliases.nonce (Hashtbl.length aliases.series + 1) in
+                  if Hashtbl.length aliases.series < 160 then Hashtbl.add aliases.series alias id)
+              x.series_id)
+          f.items
+    | _ -> ());
+    Hashtbl.add aliases.evidence detached.id detached;
+    Ok detached
+  with Sql.Sql_error _ -> error A.Storage_unavailable
+
+let display (e : T.evidence) : A.evidence =
+  let money label amount = { A.label; value = A.Money { minor_units = amount; currency = e.currency } } in
+  let financial_facts =
+    match e.result with
+    | T.Cycle_summary_result (x :: _) ->
+        [
+          money "Income (first returned cycle)" x.flows.income; money "Spending (first returned cycle)" x.flows.spending;
+        ]
+    | Category_spending_result (x :: _) -> [ money "Largest returned category" x.total ]
+    | Category_trend_result (_, (_, n) :: _) -> [ money "First returned cycle" n ]
+    | Relevant_transactions_result (x :: _) -> [ money "Largest returned expense" x.amount ]
+    | Recurring_result (x :: _) -> [ money "Largest returned typical payment" x.typical ]
+    | Budget_status_result (_, x :: _) -> [ money "First returned budget: spent" x.spent ]
+    | Goals_result (x :: _) -> [ money "First returned goal: remaining" x.remaining ]
+    | Forecast_result f ->
+        [
+          money "Forecast lowest cash" (snd f.lowest);
+          { A.label = "Forecast lowest date"; value = A.Date (fst f.lowest) };
+        ]
+    | _ -> []
+  in
+  {
+    id = e.id;
+    scope = e.scope;
+    currency = e.currency;
+    sampled_at = e.sampled_at;
+    title = T.name e.result;
+    facts =
+      [
+        { A.label = "Returned rows"; value = A.Text (string_of_int e.returned_count) };
+        { A.label = "Total rows"; value = A.Text (string_of_int e.total_count) };
+        { A.label = "Truncated"; value = A.Text (string_of_bool e.has_more) };
+      ]
+      @ financial_facts;
+    source_references = e.source_references;
+    import_status = e.import_status;
+    reconciled = e.reconciled;
+    assumptions = e.assumptions;
+  }
+
+let model_json ~aliases (e : T.evidence) =
+  let* () = authorize aliases.service ~principal:aliases.principal ~scope:aliases.scope aliases in
+  match Hashtbl.find_opt aliases.evidence e.id with
+  | Some original when original == e -> (
+      try
+        let obj x = `Assoc x and arr f xs = `List (List.map f xs) in
+        let str s = `String s and num n = `String (Int64.to_string n) in
+        let date d = `String (Date.to_string d) in
+        let opt f = function None -> `Null | Some x -> f x in
+        let acct (a : T.account) =
+          let alias = require (Hashtbl.find_opt aliases.accounts a.id) in
+          obj
+            ([ ("reference", str alias); ("role", str (Account.kind_to_string a.kind)) ]
+            @ match a.name with Some name -> [ ("name", str name) ] | None -> [])
+        in
+        let series id =
+          Hashtbl.fold (fun alias value acc -> if value = id then Some alias else acc) aliases.series None |> require
+        in
+        let point (p : Forecast.point) =
+          obj [ ("date", date p.date); ("cash", num p.cash); ("earmarked", num p.earmarked) ]
+        in
+        let payload =
+          match e.result with
+          | T.Cycle_summary_result xs ->
+              arr
+                (fun (x : Analytics.cycle_summary) ->
+                  obj
+                    [
+                      ("cycle", str (Cycle.label x.cycle));
+                      ("first_day", date x.cycle.first);
+                      ("last_day", date x.cycle.last);
+                      ("income", num x.flows.income);
+                      ("spending", num x.flows.spending);
+                      ("transfers_in", num x.flows.transfers_in);
+                      ("transfers_out", num x.flows.transfers_out);
+                      ("savings", num x.savings);
+                      ("savings_rate_bp", opt (fun n -> `Int n) x.savings_rate_bp);
+                      ("reconciled", `Bool x.reconciled);
+                    ])
+                xs
+          | Category_spending_result xs ->
+              arr
+                (fun (x : T.category) ->
+                  obj [ ("category", acct x.account); ("total", num x.total); ("previous", opt num x.previous) ])
+                xs
+          | Category_trend_result (a, xs) ->
+              obj
+                [
+                  ("category", acct a);
+                  ("cycles", arr
+                      (fun ((c : Cycle.t), n) ->
+                        obj
+                          [
+                            ("cycle", str (Cycle.label c));
+                            ("first_day", date c.first);
+                            ("last_day", date c.last);
+                            ("total", num n);
+                          ])
+                      xs);
+                ]
+          | Relevant_transactions_result xs ->
+              arr
+                (fun (x : T.transaction) ->
+                  obj
+                    [
+                      ("date", date x.date);
+                      ("amount", num x.amount);
+                      ("description", str x.description);
+                      ("debit", opt acct x.debit);
+                      ("credit", opt acct x.credit);
+                    ])
+                xs
+          | Recurring_result xs ->
+              arr
+                (fun (x : T.payment) ->
+                  obj
+                    [
+                      ("merchant", str x.merchant);
+                      ("cadence", str (Analytics.cadence_to_string x.cadence));
+                      ("typical", num x.typical);
+                      ("latest", num x.latest);
+                      ("price_changed", `Bool x.changed);
+                      ("last_date", date x.last_date);
+                      ("next_expected", date x.next_expected);
+                      ("occurrences", `Int x.occurrences);
+                      ("category", opt acct x.category);
+                      ("paid_from", opt acct x.paid_from);
+                    ])
+                xs
+          | Budget_status_result (c, xs) ->
+              obj
+                [
+                  ("cycle", str (Cycle.label c));
+                  ("first_day", date c.first);
+                  ("last_day", date c.last);
+                  ( "lines",
+                    arr
+                      (fun (x : T.budget) ->
+                        obj
+                          [
+                            ("category", acct x.category);
+                            ("budgeted", num x.budgeted);
+                            ("carried", num x.carried);
+                            ("rollover", `Bool x.rollover);
+                            ("spent", num x.spent);
+                            ("expected", num x.expected);
+                            ("status", str (Query.status_string x.status));
+                          ])
+                      xs );
+                ]
+          | Goals_result xs ->
+              arr
+                (fun (x : T.goal) ->
+                  obj
+                    [
+                      ("target", num x.target);
+                      ("saved", num x.saved);
+                      ("remaining", num x.remaining);
+                      ("target_date", opt date x.target_date);
+                      ("monthly", opt num x.monthly);
+                      ("required", opt num x.required);
+                      ("on_track", `Bool x.on_track);
+                    ])
+                xs
+          | Forecast_result f ->
+              obj
+                [
+                  ("today", date f.today);
+                  ("imported_through", opt date f.imported_through);
+                  ("horizon_end", date f.horizon_end);
+                  ("lowest", obj [ ("date", date (fst f.lowest)); ("cash", num (snd f.lowest)) ]);
+                  ("baseline", arr point f.baseline);
+                  ("baseline_count", `Int f.baseline_count);
+                  ("scenario", opt (arr point) f.scenario);
+                  ("scenario_count", `Int f.scenario_count);
+                  ("range", arr (fun (d, lo, hi) -> obj [ ("date", date d); ("low", num lo); ("high", num hi) ]) f.range);
+                  ("range_count", `Int f.range_count);
+                  ("chance_positive", opt (fun n -> `Int n) f.chance_positive);
+                  ( "items",
+                    arr
+                      (fun (x : T.forecast_item) ->
+                        obj
+                          [
+                            ("series", opt (fun id -> str (series id)) x.series_id);
+                            ("date", date x.date);
+                            ("kind", str (Forecast.kind_to_string x.kind));
+                            ("amount", num x.amount);
+                            ("account", opt acct x.account);
+                            ("category", opt acct x.category);
+                          ])
+                      f.items );
+                  ("item_count", `Int f.item_count);
+                ]
+        in
+        let json =
+          obj
+            [
+              ("evidence_id", str (A.Evidence_id.to_string e.id));
+              ("tool", str (T.name e.result));
+              ("sampled_at", str (Time.to_utc_string e.sampled_at));
+              ("currency", obj [ ("code", str (Currency.code e.currency)); ("scale", `Int (Currency.scale e.currency)) ]);
+              ("amount_encoding", str "signed minor units as decimal integer strings");
+              ("total_count", `Int e.total_count);
+              ("returned_count", `Int e.returned_count);
+              ("has_more", `Bool e.has_more);
+              ( "import_status",
+                str
+                  (match e.import_status with
+                  | A.Current -> "current"
+                  | Stale -> "stale"
+                  | Incomplete -> "incomplete"
+                  | Unknown -> "unknown") );
+              ("imported_through", opt date e.imported_through);
+              ("reconciled", `Bool e.reconciled);
+              ("assumptions", arr str e.assumptions);
+              ("source_references", arr str e.source_references);
+              ("data", payload);
+            ]
+        in
+        let bytes = String.length (Yojson.Safe.to_string json) in
+        if bytes > A.limits.tool_result_bytes then limit A.Tool_result_bytes
+        else
+          let previous = Option.value (Hashtbl.find_opt aliases.selected e.id) ~default:0 in
+          let total = Hashtbl.fold (fun _ n sum -> sum + n) aliases.selected 0 - previous + bytes in
+          if total > A.limits.evidence_bytes then limit A.Evidence_bytes
+          else (
+            Hashtbl.replace aliases.selected e.id bytes;
+            Ok json)
+      with Invalid -> error A.Not_found)
+  | _ -> error A.Not_found
+
+let resolve_finding (service : Service.t) ~principal ~scope ~key =
+  if String.length key > 512 then error A.Invalid_tool_arguments
+  else
+    try
+      Sql.read_snapshot service.db (fun () ->
+          let* () = Advisor_access.authorize_scope service principal scope in
+          let* access = Advisor_access.access service principal in
+          let owner = match scope with A.Personal -> Access.personal access | Household h -> Owner.Household h in
+          let owns (a : Account_info.t) = Owner.equal a.account.owner owner in
+          let scope_is s =
+            match (scope, s) with A.Personal, Analytics.Me | Household _, Analytics.Household -> true | _ -> false
+          in
+          let cards = Attention.feed ~narrative:false service access in
+          match List.find_opt (fun (Attention.Card c) -> c.key = key) cards with
+          | None -> error A.Not_found
+          | Some (Attention.Card c) -> (
+              let money currency n =
+                (Advisor_codec.money_out { A.minor_units = n; currency }).decimal ^ " " ^ Currency.code currency
+              in
+              let found =
+                match (c.kind, c.payload) with
+                | Attention.Overview, p when scope = A.Personal ->
+                    Option.map
+                      (fun (s : Analytics.cycle_summary) ->
+                        ("Cycle overview", "Spending: " ^ money p.currency s.flows.spending))
+                      p.summary
+                | Budget_alert, (p, currency) when owns p.line_category ->
+                    Some ("Budget status", "Spent: " ^ money currency p.spent ^ "; budget: " ^ money currency p.budgeted)
+                | Unusual_spend, p when scope_is p.scope && owns p.unusual.unusual_category ->
+                    Some
+                      ( "Unusual spending",
+                        "Spent: "
+                        ^ money p.unusual_currency p.unusual.spent_so_far
+                        ^ "; usual: "
+                        ^ money p.unusual_currency p.unusual.usual )
+                | Shortfall, (p, currency) when owns p.short_account ->
+                    Some
+                      ("Cash shortfall", "Available: " ^ money currency p.available ^ "; due: " ^ money currency p.due)
+                | Goal_off_track, (p, currency) when Owner.equal p.goal.goal_owner owner ->
+                    Some
+                      ( "Goal progress",
+                        "Saved: " ^ money currency p.saved ^ "; remaining: " ^ money currency p.remaining )
+                | _ -> None
+              in
+              match found with
+              | None -> error A.Not_found
+              | Some (title, summary) ->
+                  Ok { A.kind = Attention.kind_name c.kind; key; scope; title; summary; sampled_at = service.now () }))
+    with Sql.Sql_error _ -> error A.Storage_unavailable

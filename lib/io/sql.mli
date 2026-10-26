@@ -91,3 +91,8 @@ val changes : db -> int
 
 val transaction_result : db -> (unit -> ('a, 'e) result) -> ('a, 'e) result
 (** Like {!transaction}, but rolls back when the function returns [Error] too. *)
+
+val transaction_outer_result : db -> (unit -> ('a, 'e) result) -> ('a, 'e) result
+(** Acquires the guard before checking depth. Raises [Sql_error] without calling the callback
+    if this fiber already has a transaction. Otherwise returns only after the outer commit,
+    with the same result rollback semantics as {!transaction_result}. *)

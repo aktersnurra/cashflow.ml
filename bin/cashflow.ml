@@ -94,8 +94,31 @@ let serve path =
                          admin_group = config.admin_group })
             | _ -> None
           in
-          (* Runs until the process is stopped. *)
-          Http_server.run env { service; verify_bearer; web_auth; config; now = Ptime_clock.now }))
+          Eio.Switch.run (fun sw ->
+              let provider =
+                Cashflow_io.Advisor_provider.create ?limits:config.advisor_limits ~post:(Https.stream_post env)
+                  ~api_key:(Option.value config.openrouter_api_key ~default:"")
+                  ~model:config.openrouter_model ~provider_only:config.openrouter_provider_only ()
+              in
+              let origin = Eio.Time.Mono.now env#mono_clock in
+              let clock : Cashflow_io.Advisor_runtime.clock =
+                {
+                  now = service.now;
+                  monotonic_s =
+                    (fun () ->
+                      Mtime.span origin (Eio.Time.Mono.now env#mono_clock) |> Mtime.Span.to_float_ns |> fun ns ->
+                      ns /. 1e9);
+                  sleep_s = Eio.Time.sleep env#clock;
+                }
+              in
+              let runtime = Cashflow_io.Advisor_runtime.create ~sw ~service ~provider ~clock in
+              let available = Config.advisor_available config in
+              let advisor =
+                Some
+                  (Cashflow_io.Advisor_http.create ~service ~runtime ~public_origin:config.public_base_url ~available
+                     ~sleep_s:(Eio.Time.sleep env#clock))
+              in
+              Http_server.run env { service; verify_bearer; advisor; web_auth; config; now = service.now })))
 
 (* For local development and browser tests: signs a user in without the identity provider and
    prints a session token to use as the cashflow_session cookie. It needs the database file and

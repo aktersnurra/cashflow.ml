@@ -161,6 +161,7 @@
  (alias check-library-boundaries)
  (enabled_if (= %{context_name} default))
  (deps check_library_boundaries.py test_check_library_boundaries.py (source_tree ../lib)
+  (source_tree ../shared/advisor)
   (glob_files_rec ../bin/dune) (glob_files_rec ../shared/dune)
   (glob_files_rec ../tools/dune) (glob_files_rec ../locales/dune)
   (glob_files_rec ../web/dune) (glob_files_rec dune))
@@ -180,3 +181,70 @@
  (deps test_check_library_boundaries_dune.py check_library_boundaries.py
   test_check_library_boundaries.py dune)
  (action (run python3 test_check_library_boundaries_dune.py)))
+
+(test
+ (name test_advisor_stream)
+ (enabled_if (= %{context_name} default))
+ (modules test_advisor_stream)
+ (libraries alcotest cashflow_advisor_protocol cashflow_io eio_main ohex))
+
+(executable
+ (name advisor_fixture_server)
+ (enabled_if (= %{context_name} default))
+ (modules advisor_fixture_server test_service_support)
+ (libraries alcotest cashflow_advisor_protocol cashflow_core cashflow_io eio_main eio.unix httpun-eio gluten unix yojson ptime.clock.os mtime))
+
+(test
+ (name test_advisor_protocol)
+ (enabled_if (= %{context_name} default))
+ (modules test_advisor_protocol)
+ (libraries alcotest cashflow_core cashflow_io cashflow_advisor_protocol hegel yojson)
+ (preprocess (pps ppx_hegel_test)))
+
+(test
+ (name test_advisor_store)
+ (enabled_if (= %{context_name} default))
+ (modules test_advisor_store advisor_test_support test_service_support)
+ (libraries alcotest cashflow_core cashflow_io cashflow_workflow cashflow_advisor_protocol eio eio_main))
+
+(test
+ (name test_advisor_access)
+ (enabled_if (= %{context_name} default))
+ (modules test_advisor_access advisor_test_support test_service_support)
+ (libraries alcotest cashflow_core cashflow_io cashflow_advisor_protocol))
+
+(test
+ (name test_advisor_tools)
+ (enabled_if (= %{context_name} default))
+ (modules test_advisor_tools advisor_test_support test_service_support)
+ (libraries alcotest cashflow_core cashflow_io cashflow_workflow yojson))
+
+(test
+ (name test_advisor_provider)
+ (enabled_if (= %{context_name} default))
+ (modules test_advisor_provider)
+ (libraries alcotest cashflow_io cashflow_core yojson eio eio_main))
+
+(test
+ (name test_advisor_workflow)
+ (enabled_if (= %{context_name} default))
+ (modules test_advisor_workflow)
+ (libraries alcotest cashflow_workflow cashflow_core ptime))
+
+(test
+ (name test_advisor_runtime)
+ (enabled_if (= %{context_name} default))
+ (modules test_advisor_runtime advisor_test_support test_service_support)
+ (libraries alcotest cashflow_io cashflow_core cashflow_workflow eio eio_main yojson))
+
+(test
+ (name test_advisor_http)
+ (enabled_if (= %{context_name} default))
+ (modules test_advisor_http advisor_test_support test_service_support)
+ (libraries alcotest cashflow_core cashflow_io cashflow_advisor_protocol eio eio_main mtime httpun bigstringaf))
+
+(test
+ (name test_advisor_client_state)
+ (enabled_if (= %{context_name} default))
+ (modules test_advisor_client_state)
+ (libraries alcotest cashflow_advisor_protocol))
