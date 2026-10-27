@@ -118,6 +118,8 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
      await page.locator('.sidebar').getByRole('link',{name:'Settings',exact:true}).click();
      await page.locator('select:visible').first().selectOption('sv');await button('Save').click();
      await page.getByRole('heading',{name:'Inställningar',exact:true}).waitFor();
+     // Saving a language renames the seeded categories (translated names), so only that step re-baselines the digest.
+     before.financial_digest=(await state()).financial_digest;before.rebased=true;
      await page.goto(base+'/advisor/'+id);
      const cards=page.locator('[id^="advisor-evidence-"]');await cards.first().waitFor();
      assert.equal(await cards.count(),2);
@@ -131,7 +133,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
       assert.ok((await card.innerText()).includes(money.decimal+' '+money.currency.code),'exact wire decimal retained');
       assert.equal(await card.locator('script,img,a').count(),0);
      }
-     before.financial_digest=updated; // Only the explicit fixture import is an authorized financial mutation.
+     if(!before.rebased)before.financial_digest=updated; // Only the explicit fixture import (and the language rename above) are authorized financial mutations.
     }else if(mode==='invalid'||mode==='output'){
      await page.getByRole('status').filter({hasText:/could not|failed|limit|wrong/i}).waitFor();
      const s=await snap(id);attempt=s.turns[0].attempts[0];assert.equal(attempt.state.type,'Failed');
