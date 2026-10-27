@@ -240,13 +240,25 @@ let logo_network env : Logo_fetch.network =
       let client = Cohttp_eio.Client.make_generic (fun ~sw uri ->
         let socket = Eio.Net.connect ~sw env#net (`Tcp (ip, 443)) in
         (connector tls uri socket :> _ Eio.Flow.two_way)) in
-      let response, body = Cohttp_eio.Client.get client ~sw uri in
+      (* Some sites refuse a client that says nothing about itself. *)
+      let headers = Cohttp.Header.of_list [ ("user-agent", "Mozilla/5.0 (compatible; cashflow.ml logo fetch)"); ("accept", "image/*,text/html;q=0.9,*/*;q=0.5") ] in
+      let response, body = Cohttp_eio.Client.get ~headers client ~sw uri in
+      let status = Cohttp.Code.code_of_status (Cohttp.Response.status response) in
+      if status >= 400 then Log.warn (fun m -> m "logo fetch: HTTP %d from %s" status (Option.value (Uri.host uri) ~default:"?"));
+      (* At most [max_bytes + 1] bytes: enough for the caller to tell it was too long, without reading the rest. *)
       let text =
-        try Ok (Eio.Buf_read.(parse_exn take_all) body ~max_size:(max_bytes + 1))
-        with Eio.Buf_read.Buffer_limit_exceeded -> Error Logo_fetch.Oversized_body in
-      Result.map (fun body ->
-        { Logo_fetch.status = Cohttp.Code.code_of_status (Cohttp.Response.status response);
-          headers = Cohttp.Header.to_list (Cohttp.Response.headers response); body }) text) with
+        let buffer = Buffer.create 65536 and chunk = Cstruct.create 16384 in
+        let rec read () =
+          if Buffer.length buffer <= max_bytes then
+            match Eio.Flow.single_read body chunk with
+            | n -> Buffer.add_string buffer (Cstruct.to_string ~len:n chunk); read ()
+            | exception End_of_file -> ()
+        in
+        read ();
+        let all = Buffer.contents buffer in
+        if String.length all > max_bytes + 1 then String.sub all 0 (max_bytes + 1) else all
+      in
+      Ok { Logo_fetch.status; headers = Cohttp.Header.to_list (Cohttp.Response.headers response); body = text }) with
     | Ok response -> response
     | Error e -> Error e
   in { Logo_fetch.with_request; resolve; get }
