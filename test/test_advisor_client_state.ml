@@ -273,6 +273,7 @@ let versions_and_money () =
       import_status = W.Stale;
       reconciled = false;
       assumptions = [];
+      proposal = None;
     }
   in
   let s = apply s (C.Event (t, event 1 (W.Evidence_added evidence))) |> fun s -> apply s (C.Flush t) in

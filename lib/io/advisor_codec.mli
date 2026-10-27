@@ -8,3 +8,4 @@ val retry : Cashflow_advisor_protocol.Wire.retry -> (Cashflow_core.Advisor.retry
 
 val money_out : Cashflow_core.Advisor.money -> Cashflow_advisor_protocol.Wire.money
 val evidence_out : Cashflow_core.Advisor.evidence -> Cashflow_advisor_protocol.Wire.evidence
+val proposal_state_out : Cashflow_core.Advisor.proposal_state -> Cashflow_advisor_protocol.Wire.proposal_state

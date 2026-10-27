@@ -81,6 +81,7 @@ let display : A.evidence =
     import_status = A.Current;
     reconciled = true;
     assumptions = [];
+    proposal = None;
   }
 
 type fixture = {

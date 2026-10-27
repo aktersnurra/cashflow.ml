@@ -45,6 +45,7 @@ let parse_call ~name ~arguments =
     | "relevant_transactions" -> Some [ "cycle_offset"; "category"; "limit" ]
     | "recurring" | "goals" -> Some []
     | "forecast" -> Some [ "cycles"; "scenario" ]
+    | "propose_set_budget" -> Some [ "category"; "monthly_amount"; "rollover" ]
     | _ -> None
   in
   match allowed with
@@ -52,7 +53,9 @@ let parse_call ~name ~arguments =
   | Some allowed -> (
       try
         if String.length arguments > 8192 then raise Invalid;
-        let f = fields ("currency" :: allowed) (Yojson.Safe.from_string arguments) in
+        (* A proposal never takes a currency: it acts in the conversation's own. *)
+        let proposing = String.equal name "propose_set_budget" in
+        let f = fields ((if proposing then [] else [ "currency" ]) @ allowed) (Yojson.Safe.from_string arguments) in
         let currency = Option.map (fun s -> require (T.currency_code s)) (text f "currency") in
         let c = { T.currency } in
         let cycles () = integer f "cycles" 6 1 6 in
@@ -67,6 +70,10 @@ let parse_call ~name ~arguments =
           | "recurring" -> T.Recurring c
           | "budget_status" -> T.Budget_status (c, integer f "cycle_offset" 0 (-5) 0)
           | "goals" -> T.Goals c
+          | "propose_set_budget" ->
+              let amount = require (text f "monthly_amount") in
+              if String.length amount > 30 then raise Invalid;
+              T.Propose_budget { category = require (category ()); monthly_amount = amount; rollover = boolean f "rollover" }
           | "forecast" ->
               let horizon = integer f "cycles" 3 1 6 in
               if not (List.mem horizon [ 1; 3; 6 ]) then raise Invalid;
@@ -186,6 +193,7 @@ let refs = function
   | T.Budget_status_result (_, xs) -> List.map (fun (x : T.budget) -> x.category) xs
   | T.Forecast_result f ->
       List.concat_map (fun (x : T.forecast_item) -> List.filter_map Fun.id [ x.account; x.category ]) f.items
+  | T.Budget_proposal_result p -> [ p.category ]
   | T.Cycle_summary_result _ | T.Goals_result _ -> []
 
 let assumptions (f : Forecast.t) =
@@ -237,7 +245,7 @@ let read (service : Service.t) ~principal ~scope ~aliases ~currency:pinned reque
                 && s.input.leave_out = []
                 && List.length s.leave_out <= 20
                 && List.length s.input.one_off <= 10
-            | Recurring _ | Goals _ -> true
+            | Recurring _ | Goals _ | Propose_budget _ -> true
           in
           if not valid then error A.Invalid_tool_arguments
           else
@@ -289,6 +297,19 @@ let read (service : Service.t) ~principal ~scope ~aliases ~currency:pinned reque
                       List.length xs,
                       List.length ys,
                       [ "partial samples do not establish a complete explanation" ] )
+              | Propose_budget { category; monthly_amount; rollover } ->
+                  let* a = resolve_category service aliases ctx category in
+                  if a.kind <> Account.Expense then error A.Invalid_tool_arguments
+                  else
+                    (match Json.parse_decimal ~scale:(Currency.scale ctx.currency) monthly_amount with
+                    | Some proposed when Int64.compare proposed 0L >= 0 ->
+                        Ok
+                          ( T.Budget_proposal_result
+                              { category = a; current = Option.map (fun (b : Analytics.budget) -> b.monthly_amount) (Insights.current_budget ctx a.id);
+                                current_rollover = Option.map (fun (b : Analytics.budget) -> b.rollover) (Insights.current_budget ctx a.id);
+                                proposed; rollover; from_cycle = Insights.current_cycle_label ctx },
+                            1, 1, [] )
+                    | _ -> error A.Invalid_tool_arguments)
               | Recurring _ ->
                   let* xs = run (Query.Recurring qc) in
                   let ys =
@@ -515,6 +536,19 @@ let display (e : T.evidence) : A.evidence =
         ]
     | _ -> []
   in
+  let proposal_facts =
+    match e.result with
+    | T.Budget_proposal_result p ->
+        Some
+          [
+            { A.label = "Category"; value = A.Text (Option.value p.category.name ~default:"") };
+            (match p.current with Some n -> money "Current budget" n | None -> { A.label = "Current budget"; value = A.Text "none" });
+            money "Proposed budget" p.proposed;
+            { A.label = "From cycle"; value = A.Text p.from_cycle };
+            { A.label = "Carry over"; value = A.Text (string_of_bool p.rollover) };
+          ]
+    | _ -> None
+  in
   {
     id = e.id;
     scope = e.scope;
@@ -522,16 +556,20 @@ let display (e : T.evidence) : A.evidence =
     sampled_at = e.sampled_at;
     title = T.name e.result;
     facts =
-      [
-        { A.label = "Returned rows"; value = A.Text (string_of_int e.returned_count) };
-        { A.label = "Total rows"; value = A.Text (string_of_int e.total_count) };
-        { A.label = "Truncated"; value = A.Text (string_of_bool e.has_more) };
-      ]
-      @ financial_facts;
+      (match proposal_facts with
+      | Some facts -> facts
+      | None ->
+          [
+            { A.label = "Returned rows"; value = A.Text (string_of_int e.returned_count) };
+            { A.label = "Total rows"; value = A.Text (string_of_int e.total_count) };
+            { A.label = "Truncated"; value = A.Text (string_of_bool e.has_more) };
+          ]
+          @ financial_facts);
     source_references = e.source_references;
     import_status = e.import_status;
     reconciled = e.reconciled;
     assumptions = e.assumptions;
+    proposal = (match e.result with T.Budget_proposal_result _ -> Some A.Awaiting | _ -> None);
   }
 
 let model_json ~aliases (e : T.evidence) =
@@ -658,6 +696,17 @@ let model_json ~aliases (e : T.evidence) =
                       ("on_track", `Bool x.on_track);
                     ])
                 xs
+          | Budget_proposal_result p ->
+              (* Never "done": the user's own click is what applies it, and the card shows the outcome. *)
+              obj
+                [
+                  ("status", str "awaiting_user_confirmation");
+                  ("category", acct p.category);
+                  ("current_monthly", opt num p.current);
+                  ("proposed_monthly", num p.proposed);
+                  ("carry_over", `Bool p.rollover);
+                  ("from_cycle", str p.from_cycle);
+                ]
           | Forecast_result f ->
               obj
                 [

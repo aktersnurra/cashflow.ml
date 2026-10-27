@@ -119,6 +119,14 @@ let fact_out (v : A.fact) : W.fact = { label = v.label; value = display_value_ou
 let import_status_out (v : A.import_status) : W.import_status =
   match v with A.Current -> W.Current | A.Stale -> W.Stale | A.Incomplete -> W.Incomplete | A.Unknown -> W.Unknown
 
+let proposal_state_out : A.proposal_state -> W.proposal_state = function
+  | A.Awaiting -> W.Awaiting
+  | A.Applied -> W.Applied
+  | A.Declined -> W.Declined
+  | A.Out_of_date -> W.Out_of_date
+  | A.Not_applied -> W.Not_applied
+  | A.Lapsed -> W.Lapsed
+
 let evidence_out (v : A.evidence) : W.evidence =
   {
     id = A.Evidence_id.to_string v.id;
@@ -131,6 +139,7 @@ let evidence_out (v : A.evidence) : W.evidence =
     import_status = import_status_out v.import_status;
     reconciled = v.reconciled;
     assumptions = v.assumptions;
+    proposal = Option.map proposal_state_out v.proposal;
   }
 
 let identities_out (v : A.identities) : W.identities =

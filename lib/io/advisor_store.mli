@@ -73,6 +73,33 @@ type memory = { id : string; text : string; updated_at : Ptime.t }
 val memory_limit : int
 (** Notes per user. *)
 
+type proposal = {
+  id : string;  (** the evidence id of the card it was shown on *)
+  conversation_id : A.Conversation_id.t;
+  kind : string;
+  arguments : Yojson.Safe.t;
+  precondition : Yojson.Safe.t;
+  state : A.proposal_state;  (** an undecided proposal past its expiry reads as [Lapsed] *)
+}
+
+val add_proposal :
+  t ->
+  owner:Cashflow_core.User_id.t ->
+  conversation_id:A.Conversation_id.t ->
+  id:string ->
+  kind:string ->
+  arguments:Yojson.Safe.t ->
+  precondition:Yojson.Safe.t ->
+  now:Ptime.t ->
+  expires:Ptime.t ->
+  (unit, A.error) result
+
+val proposal : t -> owner:Cashflow_core.User_id.t -> string -> (proposal, A.error) result
+(** Owner-bound: another user's id is [Not_found]. *)
+
+val decide_proposal : t -> owner:Cashflow_core.User_id.t -> id:string -> A.proposal_state -> (bool, A.error) result
+(** Moves an [Awaiting] proposal to the given state; [Ok false] when it was already decided. Terminal states are final. *)
+
 val memories : t -> owner:Cashflow_core.User_id.t -> (memory list, A.error) result
 (** The owner's notes, oldest first. *)
 

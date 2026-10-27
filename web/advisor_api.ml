@@ -170,3 +170,9 @@ let update_memory ~id text = write_memory ("memories/" ^ Js_of_ocaml.Url.urlenco
 let forget_memory id =
   request ~body:"{}" ("memories/" ^ Js_of_ocaml.Url.urlencode id ^ "/forget")
     (json (fun j -> match str (field "status" j) with Some "forgotten" -> Some () | _ -> None))
+
+(* Apply or dismiss a proposal: the answer is the recorded state, which may differ from what was asked
+   (already decided, out of date, lapsed). *)
+let decide_proposal ~id action =
+  request ~body:"{}" ("proposals/" ^ Js_of_ocaml.Url.urlencode id ^ "/" ^ action)
+    (json (fun j -> Option.bind (str (field "state" j)) ~f:W.proposal_state_of_string))

@@ -57,6 +57,7 @@ type finding = { kind : string; key : string; scope : scope; title : string; sum
 type display_value = Text of string | Money of money | Date of string
 type fact = { label : string; value : display_value }
 type import_status = Current | Stale | Incomplete | Unknown
+type proposal_state = Awaiting | Applied | Declined | Out_of_date | Not_applied | Lapsed
 
 type evidence = {
   id : string;
@@ -69,6 +70,7 @@ type evidence = {
   import_status : import_status;
   reconciled : bool;
   assumptions : string list;
+  proposal : proposal_state option;
 }
 
 type identities = {
@@ -504,6 +506,19 @@ let import_status_of_json j =
   | "Unknown" -> Unknown
   | s -> raise (Decode (Unknown_variant s))
 
+let proposal_state_to_string = function
+  | Awaiting -> "awaiting" | Applied -> "applied" | Declined -> "declined" | Out_of_date -> "out_of_date" | Not_applied -> "not_applied" | Lapsed -> "lapsed"
+
+let proposal_state_of_string = function
+  | "awaiting" -> Some Awaiting | "applied" -> Some Applied | "declined" -> Some Declined
+  | "out_of_date" -> Some Out_of_date | "not_applied" -> Some Not_applied | "lapsed" -> Some Lapsed | _ -> None
+
+let proposal_state_to_json s = `String (proposal_state_to_string s)
+
+let proposal_state_of_json = function
+  | `String s -> (match proposal_state_of_string s with Some x -> x | None -> invalid "proposal")
+  | _ -> invalid "proposal"
+
 let evidence_to_json (v : evidence) =
   `Assoc
     [
@@ -517,6 +532,7 @@ let evidence_to_json (v : evidence) =
       ("import_status", import_status_to_json v.import_status);
       ("reconciled", `Bool v.reconciled);
       ("assumptions", jlist (fun x -> `String x) v.assumptions);
+      ("proposal", joption proposal_state_to_json v.proposal);
     ]
 
 let evidence_of_json j : evidence =
@@ -531,6 +547,8 @@ let evidence_of_json j : evidence =
     import_status = import_status_of_json (field "import_status" j);
     reconciled = boolean (field "reconciled" j);
     assumptions = list (fun x -> str x) (field "assumptions" j);
+    (* Evidence stored before proposals existed has no such field. *)
+    proposal = (match List.assoc_opt "proposal" (fields j) with None -> None | Some p -> option proposal_state_of_json p);
   }
 
 let identities_to_json (v : identities) =

@@ -186,7 +186,28 @@ let () =
                       ("index", `Int 0); ("id", `String id); ("type", `String "function");
                       ("function", `Assoc [("name", `String name); ("arguments", `String "{}")])]])]);
                     ("finish_reason", `String "tool_calls")]])]) ^ "\n\ndata: [DONE]\n\n") in
-                if privacy_mode = "invalid" then on_chunk "data: {invalid\n\n"
+                if privacy_mode = "propose" then (
+                  (* Look at the categories, then propose a budget for the first one shown, then answer. *)
+                  let open Yojson.Safe.Util in
+                  let tools = Yojson.Safe.from_string body |> member "messages" |> to_list
+                    |> List.filter (fun m -> member "role" m = `String "tool") in
+                  let seen = List.find_opt (fun m -> member "tool_call_id" m = `String "seen") tools in
+                  let proposed = List.exists (fun m -> member "tool_call_id" m = `String "proposed") tools in
+                  match seen with
+                  | None -> tool "category_spending" "seen"
+                  | Some _ when proposed -> on_chunk (text "I have proposed a budget; it is waiting for your confirmation."); finish ()
+                  | Some seen ->
+                      let alias = member "content" seen |> to_string |> Yojson.Safe.from_string |> member "data" |> to_list |> List.hd
+                        |> member "category" |> member "reference" |> to_string in
+                      on_chunk
+                        ("data: " ^ Yojson.Safe.to_string (`Assoc [("choices", `List [`Assoc [
+                          ("index", `Int 0); ("delta", `Assoc [("tool_calls", `List [`Assoc [
+                            ("index", `Int 0); ("id", `String "proposed"); ("type", `String "function");
+                            ("function", `Assoc [("name", `String "propose_set_budget");
+                              ("arguments", `String (Yojson.Safe.to_string (`Assoc [("category", `String alias); ("monthly_amount", `String "4000"); ("rollover", `Bool false)])))])]])]);
+                          ("finish_reason", `String "tool_calls")]])]) ^ "\n\ndata: [DONE]\n\n"))
+
+                else if privacy_mode = "invalid" then on_chunk "data: {invalid\n\n"
                 else if privacy_mode = "output" then (
                   on_chunk (text (String.make 32768 'x')); on_chunk (text (String.make 32768 'y'));
                   on_chunk (text "overflow"); finish ())

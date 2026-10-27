@@ -357,6 +357,7 @@ let evidence_bounds_and_cancel () =
       import_status = Current;
       reconciled = true;
       assumptions = [];
+      proposal = None;
     }
   in
   ignore (ok (Advisor_store.append store ~run ~expected_sequence:1L [ A.Evidence_added evidence ]));
@@ -596,6 +597,7 @@ let workflow_store_transcript ~repeated () =
       import_status = A.Current;
       reconciled = true;
       assumptions = [];
+      proposal = None;
     }
   in
   let context : E.context =

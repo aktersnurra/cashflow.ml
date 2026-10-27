@@ -443,6 +443,31 @@ let append t r payloads =
   in
   loop payloads
 
+(* A tool that proposes a change records it, so the user's later click has something to apply. The proposal
+   outlives the run (24 hours) and holds only typed values, never model prose. *)
+let remember_proposal t r (run : A.run) (evidence : Cashflow_workflow.Advisor_tools.evidence) =
+  match evidence.result with
+  | Budget_proposal_result p ->
+      let now = t.clock.now () in
+      let id = A.Evidence_id.to_string evidence.id in
+      S.add_proposal t.store ~owner:r.owner ~conversation_id:run.ids.conversation_id ~id ~kind:"set_budget"
+        ~arguments:
+          (`Assoc
+            [
+              ("category_id", `String (Cashflow_core.Account_id.to_string p.category.id));
+              ("monthly_amount", `String (Int64.to_string p.proposed));
+              ("rollover", `Bool p.rollover);
+            ])
+        ~precondition:
+          (`Assoc
+            [
+              ("current_monthly", match p.current with Some n -> `String (Int64.to_string n) | None -> `Null);
+              ("current_rollover", match p.current_rollover with Some b -> `Bool b | None -> `Null);
+              ("from_cycle", `String p.from_cycle);
+            ])
+        ~now ~expires:(Option.value (Ptime.add_span now (Ptime.Span.of_int_s 86400)) ~default:now)
+  | _ -> Ok ()
+
 let run_handler t r sw : E.handler =
   {
     handle =
@@ -483,7 +508,10 @@ let run_handler t r sw : E.handler =
             match r.aliases with
             | None -> Error (error A.Invalid_request)
             | Some aliases ->
-                checked t r (fun _ -> Advisor_projection.read t.service ~principal:r.principal ~scope ~aliases ~currency request))
+                checked t r (fun run ->
+                    let* evidence = Advisor_projection.read t.service ~principal:r.principal ~scope ~aliases ~currency request in
+                    let* () = remember_proposal t r run evidence in
+                    Ok evidence))
         | E.Select_evidence evidence -> (
             let* _ = checked t r (fun run -> Ok run) in
             match r.aliases with

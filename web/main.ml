@@ -129,9 +129,18 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
   let markdown_nodes = Bonsai.assoc (module String) markdown_sources ~f:(fun _ source _graph ->
     let source = Bonsai.cutoff source ~equal:String.equal in
     let%arr source in Advisor_markdown.render source) graph in
-  let advisor_turns = let%arr advisor_snapshot and advisor_dispatch and advisor_locale and markdown_nodes in
+  (* The state the server recorded for a proposal the person has just acted on; a reloaded snapshot carries the same. *)
+  let proposal_states, record_proposal_state =
+    Bonsai.state_machine0 ~default_model:String.Map.empty
+      ~apply_action:(fun _ model (id, state) -> Map.set model ~key:id ~data:state) graph in
+  let decide = let%arr record_proposal_state and notify and locale in
+    fun id action ->
+      match%bind.Effect Effect.of_deferred_thunk (fun () -> Advisor_api.decide_proposal ~id action) with
+      | Ok state -> record_proposal_state (id, state)
+      | Error _ -> notify (Msg.advisor_proposal_failed locale) in
+  let advisor_turns = let%arr advisor_snapshot and advisor_dispatch and advisor_locale and markdown_nodes and proposal_states and decide in
     Advisor_view.render_turns ~locale:advisor_locale ~snapshot:advisor_snapshot
-      ~dispatch:advisor_dispatch ~markdown:markdown_nodes in
+      ~dispatch:advisor_dispatch ~decided:(Map.find proposal_states) ~decide ~markdown:markdown_nodes in
   let selected_finding, set_selected_finding = Bonsai.state None graph in
   let selected_scope, set_selected_scope = Bonsai.state W.Personal graph in
   let declined, set_declined = Bonsai.state false graph in

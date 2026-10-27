@@ -23,7 +23,7 @@ The user approved the design as a whole, including the author-proposed defaults:
 
 ### Non-goals and anti-goals
 
-The first slice does not change transactions, budgets, rules, goals, household arrangements, or bank balances. No action/proposal tool is advertised to the model. Saving chat and run state is allowed; “read-only” refers to financial domain state.
+The first slice does not change transactions, budgets, rules, goals, household arrangements, or bank balances. No action/proposal tool is advertised to the model in that slice. (Later slice: the model may call `propose_set_budget`; it records a typed proposal and a card the user applies or dismisses with a click, and the model is only told it awaits confirmation. See the write-actions section below.) Saving chat and run state is allowed; “read-only” refers to financial domain state.
 
 No general autonomous agent framework, arbitrary SQL/code execution, web browsing, external provider tools, vector database, multi-agent orchestration, new forecasting mathematics, or automatic memory extraction. No notification spam, generic financial coaching, hidden assumptions, or extra prose to make the system appear busy. A chat message is not authorization to move money.
 
@@ -329,3 +329,18 @@ After approval of this document, write a separate implementation plan with small
 - [Hermes persistent memory](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/features/memory.md): bounded curated context separate from searchable history; not a financial authorization model.
 - [OpenRouter streaming](https://openrouter.ai/docs/api/reference/streaming): SSE chunks, keepalives, usage frames, and provider-dependent cancellation.
 - [openrouter-ocaml](https://github.com/mt-caret/openrouter-ocaml): Async-based client; useful reference, not an approved native dependency.
+
+## Write actions: propose, then the user applies (first slice: `propose_set_budget`)
+
+The model never writes. It may call `propose_set_budget` (category alias, monthly amount, rollover); currency and
+scope come from the pinned conversation and a model-supplied currency is rejected. The projection resolves the alias
+(only a category already shown in the conversation can be proposed), computes the current budget, and builds a
+server-rendered evidence card with `proposal = Awaiting`. The runtime stores a row in `advisor_proposals` (typed
+arguments, the budget it would replace, 24-hour expiry); the model's tool result says `awaiting_user_confirmation`.
+
+`POST /api/advisor/proposals/{id}/apply` and `/dismiss` are owner-only, session and CSRF protected. Apply runs the
+same `Insights.set_budget` as the manual command with the clicking user's access, after checking the proposal is
+undecided, unexpired and still based on the budget the user saw (otherwise `Out_of_date`, nothing written). A repeated
+click returns the recorded state. States move from `Awaiting` to exactly one of `Applied`, `Declined`, `Out_of_date`,
+`Not_applied`, `Lapsed`. Snapshots overlay the recorded state onto the card, so a reload, a second tab and a restart agree.
+Goals, categorising and entries are further `propose_*` tools on the same path.

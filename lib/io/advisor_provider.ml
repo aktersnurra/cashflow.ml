@@ -54,6 +54,14 @@ let tool_schemas =
       "amount", `Assoc ["type", str "string"; "maxLength", `Int 30;
         "description", str "Nonzero signed decimal in the pinned currency (not minor units), within its decimal precision. Negative for expenses, positive for income; no currency symbols or thousands separators."];
       "description", string 512]); "follow_budgets", `Assoc ["type", str "boolean"]] in
+  (* A proposal acts in the conversation's own scope and currency, so it takes no currency argument. *)
+  let propose_budget = `Assoc ["type", str "function"; "function", `Assoc [
+    "name", str "propose_set_budget";
+    "description", str "Propose a monthly budget for one expense category. Nothing changes until the user confirms it with Apply; you only see that it is awaiting confirmation.";
+    "parameters", object_ ["category"; "monthly_amount"] [category;
+      "monthly_amount", `Assoc ["type", str "string"; "maxLength", `Int 30;
+        "description", str "Non-negative decimal in the pinned currency (not minor units). No currency symbols or thousands separators. 0 removes the budget."];
+      "rollover", `Assoc ["type", str "boolean"; "description", str "Carry what is left or overspent into the next cycle."]]]] in
   List.map (fun (name, required, fields) -> `Assoc ["type", str "function";
     "function", `Assoc ["name", str name; "parameters", object_ required (("currency", currency) :: fields)]])
     ["cycle_summary", [], [cycles]; "category_spending", [], [offset];
@@ -61,7 +69,7 @@ let tool_schemas =
      "relevant_transactions", [], [offset; category; "limit", integer 1 20];
      "recurring", [], []; "budget_status", [], [offset]; "goals", [], [];
      "forecast", [], ["cycles", `Assoc ["type", str "integer"; "enum", `List [`Int 1; `Int 3; `Int 6];
-       "description", str "Forecast horizon in months from the current local date: 1, 3 or 6 (default 3). All one-off dates must fit this horizon."]; "scenario", scenario]]
+       "description", str "Forecast horizon in months from the current local date: 1, 3 or 6 (default 3). All one-off dates must fit this horizon."]; "scenario", scenario]] @ [propose_budget]
 
 let call_json (c : raw_call) = `Assoc ["id", str c.id; "type", str "function";
   "function", `Assoc ["name", str c.name; "arguments", str c.arguments]]

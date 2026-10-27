@@ -900,7 +900,7 @@ let holiday_forecast_correction () =
       check "personality is part of the system prompt" (Str_compat.contains ~sub:"Boots Theory" system);
       check "reply language follows the conversation locale" (Str_compat.contains ~sub:"Reply in English" system);
       check "workflow safety preserves temporal context"
-        (Str_compat.contains ~sub:"no financial execution or write authority" system);
+        (Str_compat.contains ~sub:"no other write authority" system);
       (match !posts with
        | 1 -> send_calls on_chunk ["goals", "goals", "{}"; "bad-forecast", "forecast", scenario date amount]
        | 2 ->
@@ -947,6 +947,86 @@ let holiday_forecast_correction () =
         Alcotest.(check int) "attempted invalid tool is charged" 3 run.counters.tool_calls;
         check "no financial mutations or goal creation" (before = counts ())))
     ["2026-02-15", "-25000"; "2027-06-01", "-25000"; "2027-02-15", "25k"; "2027-02-15", "0"]
+
+(* The model proposes a budget after seeing the category. The user is shown a card and the proposal is stored with
+   typed values; the model is told it awaits confirmation; the ledger and budgets are untouched. *)
+let proposal_is_recorded_not_applied () =
+  let posts = ref 0 in
+  let send_call on_chunk id name arguments =
+    let call = `Assoc [ ("index", `Int 0); ("id", `String id); ("type", `String "function");
+                        ("function", `Assoc [ ("name", `String name); ("arguments", `String arguments) ]) ] in
+    let data = `Assoc [ ("choices", `List [ `Assoc [ ("index", `Int 0); ("delta", `Assoc [ ("tool_calls", `List [ call ]) ]); ("finish_reason", `String "tool_calls") ] ]) ] in
+    on_chunk ("data: " ^ Yojson.Safe.to_string data ^ "\n\ndata: [DONE]\n\n")
+  in
+  fixture
+    (fun _ ~uri:_ ~headers:_ ~body ~on_chunk ->
+      incr posts;
+      let open Yojson.Safe.Util in
+      let messages = Yojson.Safe.from_string body |> member "messages" |> to_list in
+      let tool_content id = List.find (fun m -> member "tool_call_id" m = `String id) messages |> member "content" |> to_string |> Yojson.Safe.from_string in
+      (match !posts with
+       | 1 -> send_call on_chunk "seen" "category_spending" "{}"
+       | 2 ->
+           let alias = tool_content "seen" |> member "data" |> to_list |> List.hd |> member "category" |> member "reference" |> to_string in
+           send_call on_chunk "propose" "propose_set_budget" (Printf.sprintf "{\"category\":%S,\"monthly_amount\":\"4000\",\"rollover\":false}" alias)
+       | 3 ->
+           let result = tool_content "propose" in
+           Alcotest.(check string) "the model is told it awaits confirmation" "awaiting_user_confirmation" (result |> member "data" |> member "status" |> to_string);
+           on_chunk "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Proposed, awaiting your confirmation.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+       | 4 ->
+           let told =
+             List.exists (fun m -> member "role" m = `String "assistant" && Str_compat.contains ~sub:"declined by the user" (member "content" m |> to_string)) messages
+           in
+           check "the model is told the user declined the proposal" told;
+           on_chunk "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Understood.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+       | _ -> Alcotest.fail "unexpected extra model round");
+      Ok ())
+    (fun _ db service runtime _ ->
+      let owner, _, principal = login service "proposer" in
+      let access = Service.access_for service (Test_service_support.sign_in service "proposer" |> Access.user) in
+      let bank = Test_service_support.open_checking service access "Bank" in
+      let groceries =
+        (List.find (fun (i : Account_info.t) -> i.account.name = "Groceries" && Owner.equal i.account.owner (Access.personal access)) (Service.accounts service access)).account.id
+      in
+      let today = Service.today service access in
+      (match Test_service_support.ok (Service.add_entry service access
+        { (Test_service_support.entry "spend" ~from_account:bank ~to_account:groceries 12_000) with value_date = today }) with
+       | Ok _ -> ()
+       | Error e -> Alcotest.fail (Ledger_error.transfer_to_string e));
+      let counts () = Sql.(run db (stmt "SELECT (SELECT count(*) FROM transfers), (SELECT count(*) FROM budget_versions)" nil (one (row (int @-> int @-> nil) (fun a b -> (a, b)))))) in
+      let before = counts () in
+      let a = ok (R.submit runtime ~principal { (submit "propose") with user_text = "Set a groceries budget" }) in
+      drain ();
+      check "the run completes" (state db owner a = A.Completed);
+      Alcotest.(check int) "three rounds" 3 !posts;
+      let card =
+        List.find_map (function { A.payload = A.Evidence_added ({ proposal = Some _; _ } as e); _ } -> Some e | _ -> None) (journal db a)
+      in
+      (match card with
+       | Some e ->
+           check "shown as awaiting" (e.proposal = Some A.Awaiting);
+           let store = Advisor_store.create ~clock:service.now db in
+           let p = ok (Advisor_store.proposal store ~owner (A.Evidence_id.to_string e.id)) in
+           check "stored undecided" (p.state = A.Awaiting);
+           Alcotest.(check string) "stored kind" "set_budget" p.kind;
+           check "stored the typed amount, not prose" (Yojson.Safe.to_string p.arguments |> fun s -> Str_compat.contains ~sub:"\"400000\"" s);
+           let snapshot = ok (Advisor_store.snapshot store ~owner a.ids.conversation_id) in
+           let shown = List.concat_map (fun (t : A.turn) -> List.concat_map (fun (x : A.attempt) -> x.segments) t.attempts) snapshot.turns in
+           check "a reload shows the same card and state"
+             (List.exists (function A.Evidence_segment { proposal = Some A.Awaiting; id; _ } -> A.Evidence_id.equal id e.id | _ -> false) shown)
+       | None -> Alcotest.fail "no proposal card");
+      let after = counts () in
+      check "no transfer or budget was written" (before = after);
+      (match card with
+       | Some e ->
+           let declined = ok (Advisor_proposals.dismiss service ~principal ~id:(A.Evidence_id.to_string e.id)) in
+           check "dismissed" (declined = A.Declined);
+           let store = Advisor_store.create ~clock:service.now db in
+           let version = (ok (Advisor_store.snapshot store ~owner a.ids.conversation_id)).version in
+           let b = ok (R.submit runtime ~principal (submit ~conversation:a.ids.conversation_id ~version "follow-up")) in
+           drain ();
+           check "the follow-up completes" (state db owner b = A.Completed)
+       | None -> ()))
 
 let memory_notes_in_prompt () =
   let systems = ref [] in
@@ -995,6 +1075,7 @@ let () =
         [
           Alcotest.test_case "holiday forecast validation correction" `Quick holiday_forecast_correction;
           Alcotest.test_case "memory notes in the prompt" `Quick memory_notes_in_prompt;
+          Alcotest.test_case "proposal is recorded, not applied" `Quick proposal_is_recorded_not_applied;
           Alcotest.test_case "durable_delivery_and_runtime_deadlines" `Quick durable_delivery_and_runtime_deadlines;
           Alcotest.test_case "silent deadlines" `Quick silent_deadlines;
           Alcotest.test_case "sessions and reconnect" `Quick sessions_and_reconnect;

@@ -322,6 +322,19 @@ CREATE TABLE account_auto_apply (
  min_confidence INTEGER NOT NULL CHECK(min_confidence BETWEEN 50 AND 100)
 );
 |}
+    );
+    ( 10,
+      {|
+-- Changes the advisor proposed and the user may apply. The evidence id is the proposal id. State moves from
+-- awaiting to exactly one other state and no further; a proposal is deleted with its conversation.
+CREATE TABLE advisor_proposals (
+ id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES advisor_conversations(id) ON DELETE CASCADE,
+ kind TEXT NOT NULL, arguments TEXT NOT NULL, precondition TEXT NOT NULL,
+ state TEXT NOT NULL CHECK(state IN ('awaiting','applied','declined','out_of_date','not_applied','lapsed')),
+ created_at TEXT NOT NULL, expires_at TEXT NOT NULL, decided_at TEXT
+);
+CREATE INDEX advisor_proposals_conversation ON advisor_proposals(conversation_id, created_at);
+|}
     ) ]
 
 let latest_version = List.fold_left (fun latest (version, _) -> max latest version) 0 migrations
