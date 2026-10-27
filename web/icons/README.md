@@ -54,3 +54,20 @@ are source material and are not copied into the deployment bundle.
 For an existing iOS Home Screen install, removing/re-adding the shortcut may
 be needed for the new icon to appear. Installed PWAs may cache app icons until
 their manifest/icon change is recognized.
+
+## Transparent background variants
+
+The opaque iOS and PWA icons remain unchanged. Two optional types of transparent
+PNG are available at 64, 192, 256, 512, and 1024 pixels:
+
+- `icon-transparent-square-<size>.png`: dark rounded-square mark, but the cream
+  outside corner area is alpha-transparent.
+- `logo-transparent-<size>.png`: only the cream inlet and colored Sankey
+  streams, with the charcoal square removed. Use on a contrasting background.
+
+Run `python -m pip install Pillow` and then
+`python web/icons/export_transparent.py` to regenerate from the checked-in,
+approved `source-original.png`. These exported PNG files are not checked in;
+the complete set is available separately in the updated downloadable icon ZIP.
+Preserve the original opaque PWA and Apple icons because platforms may apply
+opaque-background and adaptive-icon rules.
