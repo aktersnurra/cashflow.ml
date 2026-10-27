@@ -283,3 +283,17 @@ let rules (service : Service.t) access = List.concat_map (Import_store.rules ser
 
 let remove_rule (service : Service.t) access ~rule_id =
   if List.exists (fun owner -> Import_store.remove_rule service.db owner rule_id) (Access.owners access) then Ok () else Error (`Not_found "rule")
+
+(* Auto-apply: a bank account's opt-in to applying confident history and LLM suggestions on import. *)
+
+let auto_apply_settings (service : Service.t) access =
+  let usable = List.filter_map (fun (i : Account_info.t) -> if i.details.statement_backed then Some i.account.id else None) (Service.accounts service access) in
+  List.filter (fun (id, _) -> List.exists (Account_id.equal id) usable) (Import_store.auto_apply_thresholds service.db)
+
+let set_auto_apply (service : Service.t) access ~account_id ~min_confidence =
+  let* bank = Service.find_account service access account_id in
+  let* () = Service.may_open access bank.account.owner bank.account.kind in
+  if not bank.details.statement_backed then Error (`Invalid "only bank accounts with statements import rows")
+  else (
+    Import_store.set_auto_apply_threshold service.db account_id min_confidence;
+    Ok ())

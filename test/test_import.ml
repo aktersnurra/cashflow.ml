@@ -270,6 +270,34 @@ let test_rules_auto_apply () =
   Alcotest.(check int) "spotify skipped the inbox" 2 summary.inbox_count;
   Alcotest.(check int64) "and was categorised" 238_00L (balance service alice subscriptions)
 
+(* History suggestions wait in the inbox until the bank account asks for the confident ones to be applied. *)
+let test_auto_apply_threshold () =
+  let service, alice, checking = setup () in
+  let ctx = Import.context service alice in
+  ignore (imported (Import.confirm ctx (request checking october)));
+  let subscriptions = account_named service alice "Subscriptions" in
+  let spotify = (List.find (fun (v : Inbox.item_view) -> v.transfer.transfer.memo.description = "SPOTIFY") (Inbox.list service alice ~limit:50)).item.transfer_id in
+  ignore (ok (Inbox.categorize service alice ~transfer_id:spotify ~category_id:subscriptions ()));
+  let file day = Printf.sprintf "Bokföringsdag;Text;Belopp;Saldo\n2026-11-%02d;SPOTIFY;-119,00;9 393,00\n" day in
+  let import day = imported (Import.confirm (Import.context service alice) (request checking (file day))) in
+  let set minimum = ok (Inbox.set_auto_apply service alice ~account_id:checking ~min_confidence:minimum) in
+  Alcotest.(check (list (pair string int))) "off by default" [] (List.map (fun (id, n) -> (Account_id.to_string id, n)) (Inbox.auto_apply_settings service alice));
+  Alcotest.(check int) "history waits in the inbox" 1 (import 10).inbox_count;
+  set (Some 90);
+  Alcotest.(check int) "a threshold above its confidence still waits" 1 (import 11).inbox_count;
+  let before = balance service alice subscriptions in
+  set (Some 60);
+  Alcotest.(check int) "a met threshold skips the inbox" 0 (import 12).inbox_count;
+  Alcotest.(check int64) "and categorises it" (Int64.add before 119_00L) (balance service alice subscriptions);
+  Alcotest.(check int) "the setting is listed" 1 (List.length (Inbox.auto_apply_settings service alice));
+  set None;
+  Alcotest.(check int) "turned off, it waits again" 1 (import 13).inbox_count;
+  let bob = sign_in service "bob" in
+  Alcotest.(check bool) "another user cannot change it" true (Result.is_error (Inbox.set_auto_apply service bob ~account_id:checking ~min_confidence:(Some 60)));
+  Alcotest.(check (list string)) "nor see it" [] (List.map (fun (id, _) -> Account_id.to_string id) (Inbox.auto_apply_settings service bob));
+  Alcotest.(check bool) "only a bank account can opt in" true
+    (Result.is_error (Inbox.set_auto_apply service alice ~account_id:subscriptions ~min_confidence:(Some 60)))
+
 let test_pair_and_share () =
   let service = make_service () in
   let alice = sign_in service ~admin:true "alice" in
@@ -635,6 +663,33 @@ let test_reconcile () =
   Alcotest.(check (option int64)) "adjusted" (Some (-12_00L)) adjusted;
   Alcotest.(check int64) "now agrees" 9_500_00L after
 
+(* History looks across all of an owner's categories, so a confident suggestion may be one the inbox would refuse:
+   another owner's or another currency's. Such a row must wait rather than be filed. *)
+let test_auto_apply_respects_owner_and_currency () =
+  let service, alice, _household, checking, shared = household_setup () in
+  let ctx = Import.context service alice in
+  ignore (imported (Import.confirm ctx (request checking october)));
+  let subscriptions = account_named service alice "Subscriptions" in
+  let spotify = find_item service alice "SPOTIFY" in
+  ignore (ok (Inbox.categorize service alice ~transfer_id:spotify ~category_id:subscriptions ()));
+  let euro =
+    match
+      Service.open_account service alice ~key:(Test_service_support.key "open:euro") ~owner:(Service.(Access.personal alice)) ~kind:Asset ~name:"Euro card"
+        ~currency:"EUR" ~flags:Account.no_flags ~details:{ Account_info.no_details with statement_backed = true }
+    with
+    | Ok (`Created info | `Exists info) -> info.account.id
+    | Error error -> Alcotest.fail (Service.error_to_string error)
+  in
+  let file = "Bokföringsdag;Text;Belopp;Saldo\n2026-11-10;SPOTIFY;-119,00;9 393,00\n" in
+  List.iter
+    (fun (label, account) ->
+      ok (Inbox.set_auto_apply service alice ~account_id:account ~min_confidence:(Some 60));
+      let before = balance service alice subscriptions in
+      let summary = imported (Import.confirm (Import.context service alice) (request account file)) in
+      Alcotest.(check int) (label ^ " waits in the inbox") 1 summary.inbox_count;
+      Alcotest.(check int64) (label ^ " leaves the category alone") before (balance service alice subscriptions))
+    [ ("a household account", shared); ("a euro account", euro) ]
+
 let () =
   Alcotest.run "import"
     [ ("parsing", [ Alcotest.test_case "amounts and csv" `Quick test_parsing ]);
@@ -653,7 +708,9 @@ let () =
 
           Alcotest.test_case "logo scheduling" `Quick test_logo_scheduling;
           Alcotest.test_case "manual merchant query" `Quick test_manual_merchant_query;
-          Alcotest.test_case "rules auto-apply" `Quick test_rules_auto_apply ] );
+          Alcotest.test_case "rules auto-apply" `Quick test_rules_auto_apply;
+          Alcotest.test_case "auto-apply threshold" `Quick test_auto_apply_threshold;
+          Alcotest.test_case "auto-apply respects owner and currency" `Quick test_auto_apply_respects_owner_and_currency ] );
       ( "inbox",
         [ Alcotest.test_case "pair and share" `Quick test_pair_and_share; Alcotest.test_case "undo after share" `Quick test_undo_after_share;
           Alcotest.test_case "pairing a contribution" `Quick test_pairing_a_contribution;
