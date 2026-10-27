@@ -2,7 +2,8 @@
 
 This folder records the **actual approved Sankey artwork**, supplied as
 `cashflow-icon-pack(2).zip` on 2026-10-27. **No redrawn SVG is used.**
-All 12 image files are exact, byte-for-byte copies from that archive.
+The opaque app icons and original/master images remain byte-for-byte copies
+from that archive. Browser favicons are transparent exports of the approved art.
 
 The icon depicts a cream inlet dividing into four unequal teal, mint, gold and
 coral bands against a near-black field.
@@ -29,8 +30,9 @@ coral bands against a near-black field.
 | `icon-1024.png` | Full-bleed 1024 px production master |
 | `preview.png` | Visual review sheet |
 
-Production raster files have the intended full-bleed dark background; mobile
-platforms apply their own shape/mask. Avoid reintroducing the old trend-line icon
+The Apple/PWA raster files retain the intended full-bleed dark background;
+mobile platforms apply their own shape/mask. Browser favicons contain only the
+Sankey logo on a transparent background. Avoid reintroducing the old trend-line icon
 or a reconstructed vector.
 
 ## Install / deploy
@@ -67,8 +69,9 @@ PNG are available at 64, 192, 256, 512, and 1024 pixels:
 
 Run `python -m pip install Pillow` and then
 `python web/icons/export_transparent.py` to regenerate from the checked-in,
-approved `source-original.png`. The two 192 px variants are checked in; the
-other sizes are generated locally. Run `python test/test_export_transparent.py`
+approved `source-original.png`. This also regenerates the transparent 16, 32,
+and 48 px browser favicons and the multi-size ICO in `web/`. The two 192 px
+variants and browser favicons are checked in; the other sizes are generated locally. Run `python test/test_export_transparent.py`
 to verify all sizes in a temporary directory without changing checked-in images.
 Preserve the original opaque PWA and Apple icons because platforms may apply
 opaque-background and adaptive-icon rules.
