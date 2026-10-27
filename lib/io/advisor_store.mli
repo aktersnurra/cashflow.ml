@@ -68,6 +68,25 @@ val consent : t -> consent_scope -> (bool, A.error) result
 val set_consent : t -> consent_scope -> enabled:bool -> (unit, A.error) result
 (** Low-level scoped storage, disabled when absent. Authorization is the caller's responsibility. *)
 
+type memory = { id : string; text : string; updated_at : Ptime.t }
+
+val memory_limit : int
+(** Notes per user. *)
+
+val memories : t -> owner:Cashflow_core.User_id.t -> (memory list, A.error) result
+(** The owner's notes, oldest first. *)
+
+val add_memory : t -> owner:Cashflow_core.User_id.t -> now:Ptime.t -> string -> (memory, A.error) result
+(** Text is trimmed and its whitespace runs (line breaks included) become single spaces, so a note can never start a
+    new prompt line. Empty, invalid UTF-8 or over 280 characters is [Invalid_request]; past {!memory_limit} is
+    [Capacity_exceeded]. *)
+
+val update_memory : t -> owner:Cashflow_core.User_id.t -> now:Ptime.t -> id:string -> string -> (memory, A.error) result
+(** Same text rules. Another owner's or an unknown id is [Not_found]. *)
+
+val forget_memory : t -> owner:Cashflow_core.User_id.t -> id:string -> (unit, A.error) result
+(** Deletes the row. Another owner's or an unknown id is [Not_found]. *)
+
 val list : t -> owner:Cashflow_core.User_id.t -> ?limit:int -> ?offset:int -> unit -> (history_entry list, A.error) result
 (** Owner-bound preview projection. The caller must still authorize history before disclosure. *)
 val metadata : t -> owner:Cashflow_core.User_id.t -> A.Conversation_id.t -> (metadata, A.error) result

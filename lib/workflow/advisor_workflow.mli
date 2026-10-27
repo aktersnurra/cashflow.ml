@@ -1,5 +1,8 @@
 module A = Cashflow_core.Advisor
 
+val memory_instructions : string list -> string
+(** The user's notes as a labelled data block; empty when there are none. *)
+
 val language_instruction : string -> string
 (** The reply-language instruction for a conversation's locale; unknown locales are named by their code. *)
 
