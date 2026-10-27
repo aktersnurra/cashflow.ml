@@ -206,15 +206,66 @@ let content_type path =
 
 let read_file path = try Some (In_channel.with_open_bin path In_channel.input_all) with Sys_error _ -> None
 
-let static deps path =
+(* Text assets are sent gzipped to clients that accept it: the bundle is 1.9 MB and about a third of that compressed,
+   which is most of the wait on a slow link. Compressing takes a fraction of a second, so each distinct file content
+   is compressed once and kept; the key is the content's own hash, so a new build can never be served the old bytes. *)
+let compressible file = List.mem (Filename.extension file) [ ".js"; ".css"; ".html"; ".svg"; ".webmanifest"; ".json" ]
+let gzip_cache : (string, string option) Hashtbl.t = Hashtbl.create 8
+
+let gzip body =
+  match Zipc_deflate.crc_32_and_deflate ~level:`Best body with
+  | Error _ -> None
+  | Ok (crc, deflated) ->
+      let le32 n = String.init 4 (fun i -> Char.chr (Int32.to_int (Int32.logand (Int32.shift_right_logical n (8 * i)) 0xffl))) in
+      Some ("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff" ^ deflated ^ le32 crc ^ le32 (Int32.of_int (String.length body)))
+
+let gzipped ~digest body =
+  match Hashtbl.find_opt gzip_cache digest with
+  | Some compressed -> compressed
+  | None ->
+      if Hashtbl.length gzip_cache >= 16 then Hashtbl.reset gzip_cache;
+      let compressed = gzip body in
+      Hashtbl.replace gzip_cache digest compressed;
+      compressed
+
+(* Whether the request already has this exact copy ([If-None-Match]), so only a 304 need be sent. *)
+let has_copy (request : request) etag =
+  match header request "if-none-match" with
+  | None -> false
+  | Some value ->
+      List.exists
+        (fun tag ->
+          let tag = String.trim tag in
+          let tag = if String.starts_with ~prefix:"W/" tag then String.sub tag 2 (String.length tag - 2) else tag in
+          tag = etag || tag = "*")
+        (String.split_on_char ',' value)
+
+(* Files whose URL carries their content hash ([?v=...], see web/build/version_assets.ml) never change under that URL, so
+   they are cached for a year and a refresh downloads nothing. Everything else is revalidated with its ETag. *)
+let static deps (request : request) path query =
   let safe = not (List.mem ".." (String.split_on_char '/' path)) in
+  let asset = safe && String.starts_with ~prefix:"/assets/" path in
   let file =
-    if safe && String.starts_with ~prefix:"/assets/" path then Filename.concat deps.config.static_dir (String.sub path 8 (String.length path - 8))
+    if asset then Filename.concat deps.config.static_dir (String.sub path 8 (String.length path - 8))
     else Filename.concat deps.config.static_dir "index.html"
   in
   match read_file file with
   | Some body ->
-      respond ~headers:[ ("cache-control", "no-cache") ] 200 (content_type file) body
+      let digest = Digest.to_hex (Digest.string body) in
+      let cache = if asset && List.mem_assoc "v" query then "public, max-age=31536000, immutable" else "no-cache" in
+      let accepts_gzip =
+        match header request "accept-encoding" with
+        | Some value -> Cashflow_core.Str_compat.contains ~sub:"gzip" (String.lowercase_ascii value)
+        | None -> false
+      in
+      let compressed = if accepts_gzip && compressible file && String.length body >= 1024 then gzipped ~digest body else None in
+      let etag, body, encoding =
+        match compressed with
+        | Some bytes -> (Printf.sprintf "\"%s-gzip\"" digest, bytes, [ ("content-encoding", "gzip") ])
+        | None -> (Printf.sprintf "\"%s\"" digest, body, [])
+      in
+      let headers = ("cache-control", cache) :: ("etag", etag) :: ("vary", "accept-encoding") :: encoding in
+      if has_copy request etag then respond ~headers 304 (content_type file) "" else respond ~headers 200 (content_type file) body
   | None -> if String.starts_with ~prefix:"/assets/" path then plain 404 "Not Found" else plain 503 "The web UI is not installed"
 
 let api_logo deps request id =
@@ -259,7 +310,7 @@ let handle_legacy deps (request : request) =
   | GET, "/api/commands" -> api_commands deps request
   | POST, p when String.starts_with ~prefix:"/api/commands/" p -> api_command deps request (String.sub p 14 (String.length p - 14))
   | _, p when String.starts_with ~prefix:"/api/" p || p = "/mcp" -> error_json 404 "not found"
-  | (GET | HEAD), p -> static deps p
+  | (GET | HEAD), p -> static deps request p query
   | _ -> plain 404 "Not Found"
 
 let advisor_request (request : request) : Advisor_http.request =
