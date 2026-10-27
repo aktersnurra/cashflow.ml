@@ -100,6 +100,8 @@ assert.ok(['name','route','route-history','enable','enable-pending','mobile','re
     await nav('Plan').click();await until(sessionHeld);
     assert.equal(await page.getByRole('heading',{name:'Shared bills may run short before payday',exact:true,includeHidden:true}).count(),0,'old household feed gone before session reload completes');
     await freshSession();await page.unroute('**/api/session*',holdSession);
+    // Home stays mounted but only loads its figures while it is showing, so return to it for the fresh feed.
+    await nav('Overview').click();
     await page.getByRole('heading',{name:'Groceries is higher than usual',exact:true,includeHidden:true}).waitFor({state:'attached'});
     await oldFeed();await sleep(100);assert.equal(await page.getByRole('heading',{name:'Shared bills may run short before payday',exact:true,includeHidden:true}).count(),0,'old late feed completion inert AFTER fresh Home reactivation');
     assert.equal(await page.getByRole('heading',{name:'Groceries is higher than usual',exact:true,includeHidden:true}).count(),1,'old late error cannot replace the fresh feed');

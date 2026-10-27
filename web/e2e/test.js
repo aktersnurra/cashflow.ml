@@ -57,11 +57,17 @@ fs.writeFileSync(out + '/savings.csv', savings);
     await page.waitForSelector('.list .row', { timeout: 10000 });
     await page.screenshot({ path: out + '/05-inbox.png' });
     const before = await page.locator('.list .row').count();
+    // Home stays mounted behind other pages; a write elsewhere must not make it recompute its figures while hidden.
+    let feedCalls = 0;
+    page.on('request', r => { if (r.url().includes('/api/commands/get_attention_feed')) feedCalls++; });
+    const feedBefore = feedCalls;
     await page.keyboard.press('c');
     await page.waitForFunction(() => document.activeElement && document.activeElement.matches('.palette input'));
     await page.keyboard.type('Groc');
     await page.keyboard.press('Enter');
     await page.waitForFunction(n => document.querySelectorAll('.list .row').length === n - 1, before, { timeout: 10000 });
+    await page.waitForTimeout(500);
+    assert.equal(feedCalls, feedBefore, 'categorizing in the inbox does not reload the hidden Home feed');
     await page.screenshot({ path: out + '/06-inbox-after.png' });
     // Palette navigation.
     await page.keyboard.press('Control+k');
@@ -73,6 +79,7 @@ fs.writeFileSync(out + '/savings.csv', savings);
     for (const [label, file] of [['Plan', '08-budgets'], ['Overview', '09-home'], ['Household', '11-household'], ['Settings', '10-settings']]) {
       await page.click(`.sidebar >> text=${label}`);
       await page.waitForTimeout(800);
+      if (label === 'Overview') assert.ok(feedCalls > feedBefore, 'Home reloads when it is shown again');
       await page.screenshot({ path: `${out}/${file}.png`, fullPage: true });
     }
     // Forecast: one imported month has no recurring payments yet, so Upcoming says so; a one-off

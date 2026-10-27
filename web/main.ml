@@ -230,7 +230,8 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
     | false, _ -> Bonsai.return Vdom.Node.none
     | true, true -> let%arr outlet and locale in Ui.page ~title:(Msg.nav_advisor locale) [outlet]
     | true, false -> Home.page ~ctx ~on_ask ~selected_finding ~outlet
-        ~advisor_route:(let%arr route in match route with Route.Advisor _ -> true | _ -> false) graph) graph in
+        ~advisor_route:(let%arr route in match route with Route.Advisor _ -> true | _ -> false)
+        ~visible:(let%arr route in match route with Route.Home | Route.Advisor _ -> true | _ -> false) graph) graph in
   let clear_home = let%arr reset_home and set_selected_finding and set_selected_scope in fun denied ->
     if denied then Effect.Many [set_selected_finding None; set_selected_scope W.Personal; reset_home] else Effect.Ignore in
   Bonsai.Edge.on_change ~equal:Bool.equal access_denied ~callback:clear_home graph;

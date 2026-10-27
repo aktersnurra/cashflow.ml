@@ -7,22 +7,25 @@ open Bonsai.Let_syntax
 
 type t = Loading | Loaded of J.t | Failed of string
 
-let load ?(args = Bonsai.return (`Assoc [])) ~name ~(ctx : Ctx.t) graph =
+(* [active] says whether anyone can see the result. A page that stays mounted behind others (Home) passes whether it is
+   showing, so a write elsewhere does not recompute its figures while hidden; it reloads when it appears again. *)
+let load ?(args = Bonsai.return (`Assoc [])) ?(active = Bonsai.return true) ~name ~(ctx : Ctx.t) graph =
   let result, set_result = Bonsai.state Loading graph in
-  let key = Bonsai.both args ctx.version in
+  let key = let%arr args and version = ctx.version and showing = active in (args, version, showing) in
   (* Monotonic outside the resettable model: an old callback must not become current
      again after a privacy reset or an unchanged-arguments reactivation. *)
   let generation = ref 0 and active = ref false and requested = ref None in
-  let equal_key (a, v) (b, w) = Yojson.Safe.equal a b && Int.equal v w in
+  let equal_key (a, v, x) (b, w, y) = Yojson.Safe.equal a b && Int.equal v w && Bool.equal x y in
   let request =
     let%arr set_result in
     fun key ->
       let%bind.Effect () = Effect.of_thunk ignore in
-      if not !active || Option.value_map !requested ~default:false ~f:(equal_key key) then Effect.Ignore
+      let _, _, showing = key in
+      if not !active || (not showing) || Option.value_map !requested ~default:false ~f:(equal_key key) then Effect.Ignore
       else
         let%bind.Effect ticket = Effect.of_thunk (fun () ->
           incr generation; requested := Some key; !generation) in
-        let args, _ = key in
+        let args, _, _ = key in
         let%bind.Effect response = Api.run name args in
         if !active && ticket = !generation then
           set_result (match response with Ok json -> Loaded json | Error message -> Failed message)

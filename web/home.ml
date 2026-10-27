@@ -152,15 +152,15 @@ let card_view ~(ctx : Ctx.t) (key : string Bonsai.t) (card : J.t Bonsai.t) graph
 let figure_kinds = [ "overview"; "month_review" ]
 
 let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor_protocol.Wire.scope -> unit Effect.t) Bonsai.t)
-    ~selected_finding ~outlet ~advisor_route graph =
+    ~selected_finding ~outlet ~advisor_route ~(visible : bool Bonsai.t) graph =
   let captured, set_captured = Bonsai.state None graph in
   let offset, set_offset = Bonsai.state 0 graph in
   let scope, set_scope = Bonsai.state "me" graph in
-  let summary = Remote.load ~name:"cashflow_summary" ~args:(let%arr scope in `Assoc [ ("scope", `String scope); ("cycles", `Int 13) ]) ~ctx graph in
+  let summary = Remote.load ~active:visible ~name:"cashflow_summary" ~args:(let%arr scope in `Assoc [ ("scope", `String scope); ("cycles", `Int 13) ]) ~ctx graph in
   let categories =
-    Remote.load ~name:"spending_by_category" ~args:(let%arr scope and offset in `Assoc [ ("scope", `String scope); ("cycle_offset", `Int offset) ]) ~ctx graph
+    Remote.load ~active:visible ~name:"spending_by_category" ~args:(let%arr scope and offset in `Assoc [ ("scope", `String scope); ("cycle_offset", `Int offset) ]) ~ctx graph
   in
-  let feed = Remote.load ~name:"get_attention_feed" ~args:(Bonsai.return (`Assoc [("narrative", `Bool false)])) ~ctx graph in
+  let feed = Remote.load ~active:visible ~name:"get_attention_feed" ~args:(Bonsai.return (`Assoc [("narrative", `Bool false)])) ~ctx graph in
   let cards =
     let%arr feed in
     match feed with
