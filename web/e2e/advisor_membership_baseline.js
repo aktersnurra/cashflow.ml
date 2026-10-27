@@ -72,7 +72,9 @@ const until=async promise=>{let timer;try{return await Promise.race([promise,new
  await until(sessionHeld);
  assert.equal(await shared().count(),0,'old household DOM gone, including hidden descendants, before fresh session is released');
  assert.equal(await original.evaluate(e=>document.contains(e)),false,'authorization-boundary reset discards old captured Home');
- await freshSession();await until(feedHeld);
+ await freshSession();
+ // Home stays mounted but only loads its figures while it is showing, so return to it for the fresh feed.
+ await nav('Overview').click();await until(feedHeld);
  assert.equal(await shared().count(),0,'no old feed while fresh authorized feed is pending');
  await freshFeed();await page.getByRole('heading',{name:'Groceries is higher than usual',exact:true,includeHidden:true}).waitFor({state:'attached'});
  // Delayed obsolete metadata must neither republish the old session nor restore H baseline.

@@ -137,7 +137,9 @@ let category_spending ctx category =
   |> List.sort (fun (a : Transfer.t) (b : Transfer.t) -> Amount.compare b.amount a.amount)
 
 (* Accounts the bills still due before payday would overdraw. *)
-let shortfalls ctx = Analytics.shortfalls (book ctx) ~today:ctx.today ~until:(current_cycle ctx).last (recurring ctx)
+let shortfalls ?recurring:known ctx =
+  let payments = match known with Some payments -> payments | None -> recurring ctx in
+  Analytics.shortfalls (book ctx) ~today:ctx.today ~until:(current_cycle ctx).last payments
 
 let budget_owner ctx = match ctx.scope with Analytics.Household -> List.hd ctx.owners | Me | Family -> Access.personal ctx.access
 

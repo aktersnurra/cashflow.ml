@@ -206,6 +206,18 @@ let feed ?(narrative = true) (service : Service.t) access =
   let user = Access.user access in
   let db = service.db in
   let cards = ref [] in
+  (* Recurring payments scan a year of transfers and the shortfall and price-change cards both need them: work them
+     out once per scope and currency rather than once per card kind. *)
+  let recurring_memo = Hashtbl.create 4 in
+  let recurring (ctx : Insights.ctx) =
+    let key = (ctx.scope, Currency.code ctx.currency) in
+    match Hashtbl.find_opt recurring_memo key with
+    | Some payments -> payments
+    | None ->
+        let payments = Insights.recurring ctx in
+        Hashtbl.replace recurring_memo key payments;
+        payments
+  in
   let add ?(resolvable = true) kind key payload = cards := Card { kind; key; payload; resolvable } :: !cards in
   List.iter (fun (h : Household.t) -> add ~resolvable:false Invitation ("invitation:" ^ Household_id.to_string h.id) h) (Service.invitations service access);
   List.iter (fun (m : mismatch) -> add Reconciliation_mismatch ("mismatch:" ^ m.checkpoint.checkpoint_id) m) (mismatches service access);
@@ -268,7 +280,7 @@ let feed ?(narrative = true) (service : Service.t) access =
               List.iter
                 (fun (s : Analytics.shortfall) ->
                   add Shortfall (Printf.sprintf "shortfall:%s:%s" (Account_id.to_string s.short_account.account.id) (Cycle.label report.report_cycle)) (s, ctx.currency))
-                (Insights.shortfalls ctx);
+                (Insights.shortfalls ~recurring:(recurring ctx) ctx);
               (* The feed covers every goal currency, unlike a currency-specific report. *)
               List.iter
                 (fun owner ->
@@ -297,7 +309,7 @@ let feed ?(narrative = true) (service : Service.t) access =
         (fun (r : Analytics.recurring) ->
           let fresh = r.occurrences = 3 && Date.days_between ~first:r.last_date ~last:today <= 40 in
           if Analytics.price_changed r || fresh then add Recurring_change ("recurring:" ^ r.merchant ^ ":" ^ Date.to_string r.last_date) (r, ctx.currency))
-        (Insights.recurring ctx));
+        (recurring ctx));
   List.iter (fun (c : count_cash) -> add Count_cash ("count_cash:" ^ Account_id.to_string c.cash.account.id ^ ":" ^ Date.to_string c.since) c) (count_cash service access ~today);
   !cards
   |> List.filter (fun (Card c) ->
