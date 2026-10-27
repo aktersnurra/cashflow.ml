@@ -18,7 +18,8 @@ open! Bonsai_web.Cont
 open Bonsai.Let_syntax
 open Js_of_ocaml
 
-type target = Existing of string | Create of { name : string; kind : string; owner : string }
+type new_account = { name : string; kind : string; owner : string }
+type target = Existing of string | Create of new_account
 
 type phase =
   | Idle
@@ -86,7 +87,7 @@ let target_args identity = function
 let component ~(ctx : Ctx.t) ~(account_id : string option Bonsai.t) graph =
   let phase, set_phase = Bonsai.state Idle graph in
   let dragging, set_dragging = Bonsai.state false graph in
-  let preview =
+  let run_preview =
     let%arr set_phase in
     fun ~name ~content ~identity ~target ->
       let%bind.Effect () = set_phase (Previewing name) in
@@ -96,13 +97,13 @@ let component ~(ctx : Ctx.t) ~(account_id : string option Bonsai.t) graph =
       | Error message -> set_phase (Failed message)
   in
   let start =
-    let%arr set_phase and preview and account_id in
+    let%arr set_phase and run_preview and account_id in
     fun (file : File.file Js.t) ->
       let name = Js.to_string file##.name in
       let%bind.Effect () = set_phase (Reading name) in
       let%bind.Effect content = read_effect file in
       match account_id with
-      | Some id -> preview ~name ~content ~identity:`Null ~target:(Existing id)
+      | Some id -> run_preview ~name ~content ~identity:`Null ~target:(Existing id)
       | None -> (
           match%bind.Effect Api.run "identify_statement" (`Assoc (content_args content)) with
           | Error message -> set_phase (Failed message)
@@ -112,14 +113,14 @@ let component ~(ctx : Ctx.t) ~(account_id : string option Bonsai.t) graph =
                 | `Null -> Create { name = proposed_name identity; kind = "asset"; owner = "personal" }
                 | account -> Existing (J.str (J.field "id" account))
               in
-              preview ~name ~content ~identity ~target)
+              run_preview ~name ~content ~identity ~target)
   in
   (* Sets the opening balance the bank's figures imply, then previews again so the check agrees. *)
   let set_opening =
-    let%arr set_phase and preview in
+    let%arr set_phase and run_preview in
     fun ~name ~content ~identity ~account_id ~date ~balance ->
       match%bind.Effect Api.run "set_opening_balance" (`Assoc [ ("account_id", `String account_id); ("date", date); ("balance", balance) ]) with
-      | Ok _ -> preview ~name ~content ~identity ~target:(Existing account_id)
+      | Ok _ -> run_preview ~name ~content ~identity ~target:(Existing account_id)
       | Error message -> set_phase (Failed message)
   in
   let confirm =
@@ -134,7 +135,7 @@ let component ~(ctx : Ctx.t) ~(account_id : string option Bonsai.t) graph =
       | Ok result -> Effect.Many [ set_phase (Done result); changed ]
       | Error message -> set_phase (Failed message)
   in
-  let%arr phase and set_phase and dragging and set_dragging and start and preview and confirm and set_opening and account_id
+  let%arr phase and set_phase and dragging and set_dragging and start and run_preview and confirm and set_opening and account_id
   and locale = ctx.locale and session = ctx.session and navigate = ctx.navigate in
   let currency = J.str ~default:"SEK" (J.path [ "user"; "default_currency" ] session) in
   (* A tap opens the phone's file picker; on a computer a file can also be dropped on it. *)
@@ -190,7 +191,7 @@ let component ~(ctx : Ctx.t) ~(account_id : string option Bonsai.t) graph =
           let chosen = match target with Existing id -> id | Create _ -> "new" in
           let fresh = Create { name = proposed_name identity; kind = "asset"; owner = "personal" } in
           let choose value =
-            preview ~name:file ~content ~identity ~target:(if String.equal value "new" then fresh else Existing value)
+            run_preview ~name:file ~content ~identity ~target:(if String.equal value "new" then fresh else Existing value)
           in
           let edit f = match target with Create c -> set_phase (Preview { file; content; identity; target = f c; preview; decisions }) | Existing _ -> Effect.Ignore in
           [ Ui.div ~cls:"import-destination"
@@ -200,11 +201,11 @@ let component ~(ctx : Ctx.t) ~(account_id : string option Bonsai.t) graph =
               | Existing _ -> []
               | Create { name; kind; owner } ->
                   [ Ui.field (Msg.label_name locale)
-                      (Ui.input ~value:name ~on_input:(fun v -> edit (fun c -> Create { c with name = v }) ) ());
+                      (Ui.input ~value:name ~on_input:(fun v -> edit (fun c -> Create { c with name = v })) ());
                     Ui.field (Msg.label_kind locale)
                       (Ui.select ~value:kind
                          ~options:[ ("asset", Msg.label_kind_asset locale); ("liability", Msg.label_kind_liability locale) ]
-                         ~on_change:(fun v -> preview ~name:file ~content ~identity ~target:(Create { name; kind = v; owner })));
+                         ~on_change:(fun v -> run_preview ~name:file ~content ~identity ~target:(Create { name; kind = v; owner })));
                     (if Ctx.has_household session then
                        Ui.field (Msg.label_owner locale)
                          (Ui.select ~value:owner

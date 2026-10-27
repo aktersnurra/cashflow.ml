@@ -347,7 +347,8 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
   .dropzone-hint { display: none; }
 }
 .import-panel .dropzone { margin-top: 0; padding: 40px 24px; }
-.import-destination { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+.import-destination { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 4px; }
+.import-destination .field { margin-bottom: 0; }
 .import-destination + .warning { margin-top: 12px; }
 .import-manual { margin-top: 16px; text-align: center; font-size: 13px; }
 .import-manual a { color: var(--text-2); }
