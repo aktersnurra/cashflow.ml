@@ -11,7 +11,9 @@
  (alias default)
  (enabled_if (= %{context_name} web))
  (targets index.html)
- (deps index.src.html main.bc.js style.css manifest.webmanifest apple-touch-icon.png icon-192.png icon-512.png favicon-32.png)
+ (deps index.src.html main.bc.js style.css manifest.webmanifest
+       apple-touch-icon.png favicon-16.png favicon-32.png favicon-48.png favicon.ico
+       icon-64.png icon-192.png icon-512.png icon-maskable-512.png)
  (action
   (with-stdout-to index.html
    (run %{bin:ocaml} %{dep:build/version_assets.ml} %{dep:index.src.html} %{dep:style.css} %{dep:main.bc.js}))))

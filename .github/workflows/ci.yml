@@ -33,6 +33,10 @@ jobs:
       OPAMYES: "1"
     steps:
       - uses: actions/checkout@v4
+      - run: |
+          python3 -m venv "$RUNNER_TEMP/icon-tests"
+          "$RUNNER_TEMP/icon-tests/bin/pip" install Pillow
+          "$RUNNER_TEMP/icon-tests/bin/python" test/test_export_transparent.py
       - run: sudo apt-get update && sudo apt-get install -y opam libgmp-dev pkg-config
       - id: opam-root
         uses: actions/cache@v4
