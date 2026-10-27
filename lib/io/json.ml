@@ -32,20 +32,29 @@ let strings values = `List (List.map (fun s -> `String s) values)
 
 let cycle (c : Cycle.t) = `Assoc [ ("cycle", `String (Cycle.label c)); ("first", date c.first); ("last", date c.last) ]
 
+(* An untouched starter category is named in English and marked, so each viewer can be shown it in
+   their own language; any other account carries its stored name. *)
+let account_name (info : Account_info.t) =
+  match Starter.untouched info with
+  | Some starter ->
+      [ ("name", `String (Starter.name ~locale:"en" starter));
+        ("starter", `Assoc [ ("slug", `String starter.entry.slug); ("currency", option (fun c -> `String c) starter.currency) ]) ]
+  | None -> [ ("name", `String info.account.name) ]
+
 let account (info : Account_info.t) =
   let a = info.account in
   `Assoc
-    [ ("id", `String (Account_id.to_string a.id)); ("name", `String a.name); ("kind", `String (Account.kind_to_string a.kind));
+    ([ ("id", `String (Account_id.to_string a.id)) ] @ account_name info @ [ ("kind", `String (Account.kind_to_string a.kind));
       ("owner", `String (match a.owner with User _ -> "personal" | Household _ -> "household"));
       ("currency", `String (Currency.code a.currency)); ("balance", money a.currency (Account.posted_balance a));
       ("pending", money a.currency (Account.pending_balance a)); ("closed", `Bool a.closed);
       ("institution", option (fun s -> `String s) info.details.institution);
       ("number", option (fun s -> `String s) (Account_info.masked_number info));
       ("role", option (fun r -> `String (Account_info.role_to_string r)) info.details.role);
-      ("statement_backed", `Bool info.details.statement_backed); ("tags", strings info.details.tags) ]
+      ("statement_backed", `Bool info.details.statement_backed); ("tags", strings info.details.tags) ])
 
 let account_ref (info : Account_info.t) =
-  `Assoc [ ("id", `String (Account_id.to_string info.account.id)); ("name", `String info.account.name) ]
+  `Assoc (("id", `String (Account_id.to_string info.account.id)) :: account_name info)
 
 let side = function
   | Service.Own info -> account_ref info

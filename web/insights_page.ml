@@ -144,7 +144,7 @@ let page ~(ctx : Ctx.t) graph =
   let top_category =
     match categories with
     | Remote.Loaded json -> (
-        let rows = List.filter_map (J.list (J.field "categories" json)) ~f:(fun r -> let v = Fmt.to_float (J.field "total" r) in if Float.(v > 0.) then Some (J.str (J.path [ "category"; "name" ] r), v) else None) in
+        let rows = List.filter_map (J.list (J.field "categories" json)) ~f:(fun r -> let v = Fmt.to_float (J.field "total" r) in if Float.(v > 0.) then Some (Accounts_data.name ~locale (J.field "category" r), v) else None) in
         let total = List.sum (module Float) rows ~f:snd in
         match rows with
         | (name, v) :: _ when Float.(total > 0.) ->

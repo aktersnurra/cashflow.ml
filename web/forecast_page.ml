@@ -292,7 +292,7 @@ let page ~(ctx : Ctx.t) graph =
       | "stale_import" -> Some (Msg.forecast_a_stale ~date:(d "date") locale)
       | "stopped" -> Some (Msg.forecast_a_stopped ~name:(J.str (J.field "name" a)) ~date:(d "last_date") locale)
       | "other_currency" ->
-          Some (Msg.forecast_a_other_currency ~accounts:(String.concat ~sep:", " (List.map (J.list (J.field "accounts" a)) ~f:(fun x -> J.str (J.field "name" x)))) locale)
+          Some (Msg.forecast_a_other_currency ~accounts:(String.concat ~sep:", " (List.map (J.list (J.field "accounts" a)) ~f:(Accounts_data.name ~locale))) locale)
       | "short_history" -> (
           match J.int (J.field "days" a) with 0 -> Some (Msg.forecast_a_no_history locale) | days -> Some (Msg.forecast_a_short ~days locale))
       | "no_income_detected" -> Some (Msg.forecast_a_no_income locale)
@@ -320,6 +320,6 @@ let page ~(ctx : Ctx.t) graph =
     match forecast with
     | Remote.Loading -> Ui.div ~cls:"loading" [ Ui.div ~cls:"shimmer" []; Ui.muted (Msg.forecast_loading locale) ]
     | Remote.Failed _ -> Remote.view ~locale forecast ~f:(fun _ -> Vdom.Node.none)
-    | Remote.Loaded json -> view (D.of_json json)
+    | Remote.Loaded json -> view (D.of_json ~locale json)
   in
   Vdom.Node.main ~attrs:[ Vdom.Attr.class_ "page" ] [ head; body ]

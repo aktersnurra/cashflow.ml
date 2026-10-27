@@ -2,8 +2,6 @@ open! Core
 open! Bonsai_web.Cont
 open Bonsai.Let_syntax
 
-let kinds locale = [ ("asset", Msg.label_kind_asset locale); ("liability", Msg.label_kind_liability locale); ("expense", Msg.label_kind_expense locale); ("income", Msg.label_kind_income locale) ]
-
 type draft = { name : string; kind : string; owner : string; last4 : string; statement_backed : bool; no_overdraft : bool }
 
 let empty_draft = { name = ""; kind = "asset"; owner = "personal"; last4 = ""; statement_backed = true; no_overdraft = false }
@@ -48,7 +46,7 @@ let list ~(ctx : Ctx.t) graph =
           [ Vdom.Node.h2 [ Ui.text (Msg.action_open_account locale) ];
             Ui.field (Msg.label_name locale) (Ui.input ~value:d.name ~on_input:(fun v -> set (fun d -> { d with name = v })) ());
             Ui.div ~cls:"form-row"
-              [ Ui.field (Msg.label_kind locale) (Ui.select ~value:d.kind ~options:(kinds locale) ~on_change:(fun v -> set (fun d -> { d with kind = v })));
+              [ Ui.field (Msg.label_kind locale) (Ui.select ~value:d.kind ~options:(Accounts_data.kinds locale) ~on_change:(fun v -> set (fun d -> { d with kind = v })));
                 (if Ctx.has_household session then
                    Ui.field (Msg.label_owner locale)
                      (Ui.select ~value:d.owner ~options:[ ("personal", Msg.label_personal locale); ("household", Msg.label_household locale) ]
@@ -110,7 +108,7 @@ let list ~(ctx : Ctx.t) graph =
               Ui.div ~cls:"page-controls" [ Ui.button ~kind:"primary" (Msg.action_open_account locale) (set_draft (Some empty_draft)) ] ];
           worth_panel;
           Remote.view ~locale accounts ~f:(fun json ->
-              let accounts = List.filter (Accounts_data.of_list json) ~f:(fun a -> not a.closed) in
+              let accounts = List.filter (Accounts_data.of_list ~locale json) ~f:(fun a -> not a.closed) in
               let banks = List.filter accounts ~f:Accounts_data.is_bank in
               let categories kind = List.filter accounts ~f:(fun a -> Accounts_data.is_category a && String.equal a.kind kind) in
               let bank_row (a : Accounts_data.account) =
@@ -134,8 +132,8 @@ let detail ~(ctx : Ctx.t) ~(account_id : string Bonsai.t) graph =
   (* A bank account's imported rows come folded, with the category each has now. A category's own
      rows are the transfers triage posted into it, which folding would leave out. *)
   let args =
-    let%arr account_id and accounts in
-    let fold = match accounts with Remote.Loaded json -> Option.exists (Accounts_data.find (Accounts_data.of_list json) account_id) ~f:Accounts_data.is_bank | _ -> false in
+    let%arr account_id and accounts and locale = ctx.locale in
+    let fold = match accounts with Remote.Loaded json -> Option.exists (Accounts_data.find (Accounts_data.of_list ~locale json) account_id) ~f:Accounts_data.is_bank | _ -> false in
     `Assoc [ ("account_id", `String account_id); ("limit", `Int 200); ("fold_triage", `Bool fold) ]
   in
   let transactions = Remote.load ~name:"query_transactions" ~args ~ctx graph in
@@ -145,7 +143,7 @@ let detail ~(ctx : Ctx.t) ~(account_id : string Bonsai.t) graph =
   let%arr accounts and transactions and imports and import and account_id and tool and set_tool and locale = ctx.locale and changed = ctx.changed
   and notify = ctx.notify and navigate = ctx.navigate and session = ctx.session in
   let today = let d = Js_of_ocaml.(new%js Js.date_now) in Printf.sprintf "%04d-%02d-%02d" d##getFullYear (d##getMonth + 1) d##getDate in
-  let account = match accounts with Loaded json -> Accounts_data.find (Accounts_data.of_list json) account_id | _ -> None in
+  let account = match accounts with Loaded json -> Accounts_data.find (Accounts_data.of_list ~locale json) account_id | _ -> None in
   match account with
   | None -> Ui.page ~title:(Msg.accounts_title locale) [ Remote.view ~locale accounts ~f:(fun _ -> Ui.empty (Msg.accounts_empty locale)) ]
   | Some a ->
@@ -190,7 +188,11 @@ let detail ~(ctx : Ctx.t) ~(account_id : string Bonsai.t) graph =
         let forward = if bank then incoming else Bool.equal incoming (String.equal a.kind "expense") in
         let signed = if forward then amount else { amount with minor = Int64.neg amount.minor } in
         let pending = String.equal (J.str (J.field "kind" t)) "pending" in
-        let name = match J.field "category" t with `Null -> J.str ~default:(J.str (J.field "owner" other)) (J.field "name" other) | c -> J.str (J.field "name" c) in
+        let name =
+          match J.field "category" t with
+          | `Null -> if J.is_null (J.field "name" other) then J.str (J.field "owner" other) else Accounts_data.name ~locale other
+          | c -> Accounts_data.name ~locale c
+        in
         let category =
           match J.str_opt (J.field "triage" t) with
           | Some "paired" -> Ui.span ~cls:"muted" [ Ui.text (Msg.transactions_transfer locale) ]

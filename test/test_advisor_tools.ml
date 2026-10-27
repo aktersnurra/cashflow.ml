@@ -296,6 +296,20 @@ let propose_categorize_card () =
           (ok (P.parse_call ~name:"propose_categorize" ~arguments:(Printf.sprintf "{\"rows\":[{\"row\":%S,\"category\":%S}]}" (ref_of ica) groceries)))));
   rejected [ (ref_of ica, groceries); (ref_of ica, groceries) ]
 
+(* The advisor reads categories as the user sees them: a Swedish user's starter categories in
+   Swedish, so its answer and the screen agree. *)
+let categories_in_the_users_language () =
+  fixture @@ fun service access principal _ _ _ ->
+  let user = Access.user access in
+  ignore (S.ok (Service.update_settings service access { User.locale = "sv"; timezone = user.timezone; default_currency = user.default_currency; pay_cycle = user.pay_cycle }));
+  let c = conversation service principal A.Personal "swedish" in
+  let aliases = ok (P.create_aliases service ~principal ~scope:A.Personal ~conversation:c) in
+  let e = read service principal aliases A.Personal "categories" "{}" in
+  let open Yojson.Safe.Util in
+  let names = Yojson.Safe.from_string (json aliases e) |> member "data" |> to_list |> List.map (fun c -> member "name" c |> to_string) in
+  check "in Swedish" (List.mem "Mat & hushåll" names);
+  check "not in English" (not (List.mem "Groceries" names))
+
 let redacted_eight_tools () =
   fixture @@ fun service access principal h _ calls ->
   let bank, category, shared, _, injection = seed service access h in
@@ -749,6 +763,7 @@ let () =
           Alcotest.test_case "eight tools and redaction" `Quick redacted_eight_tools;
           Alcotest.test_case "propose budget card" `Quick propose_budget_card;
           Alcotest.test_case "propose categorize card" `Quick propose_categorize_card;
+          Alcotest.test_case "categories in the user's language" `Quick categories_in_the_users_language;
           Alcotest.test_case "resource isolation and import freshness" `Quick isolation_and_freshness;
           Alcotest.test_case "household and empty results" `Quick household_and_empty;
           Alcotest.test_case "series attempt binding and stale references" `Quick series_aliases_and_staleness;

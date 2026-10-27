@@ -24,7 +24,7 @@ let page ?(embedded = false) ~(ctx : Ctx.t) graph =
   let%arr focus and inbox and accounts and selected and set_selected and picker and set_picker and locale = ctx.locale and changed = ctx.changed
   and notify = ctx.notify and session = ctx.session in
   let currency = J.str ~default:"SEK" (J.path [ "user"; "default_currency" ] session) in
-  let accounts = match accounts with Loaded json -> Accounts_data.of_list json | _ -> [] in
+  let accounts = match accounts with Loaded json -> Accounts_data.of_list ~locale json | _ -> [] in
   let items = match inbox with Loaded json -> J.list (J.field "items" json) | _ -> [] in
   let count = List.length items in
   let selected = if count = 0 then 0 else Int.min selected (count - 1) in
@@ -91,7 +91,7 @@ let page ?(embedded = false) ~(ctx : Ctx.t) graph =
     let t = transaction item in
     let amount = Fmt.money_json ~code:(J.str ~default:currency (J.field "currency" t)) (J.field "amount" t) in
     let signed = if outflow item then { amount with minor = Int64.neg amount.minor } else amount in
-    let suggestion = J.str_opt (J.path [ "suggested_category"; "name" ] item) in
+    let suggestion = (match J.field "suggested_category" item with `Null -> None | c -> Some (Accounts_data.name ~locale c)) in
     let is_selected = index = selected in
     Vdom.Node.div
       ~attrs:[ Vdom.Attr.class_ ("row clickable" ^ if is_selected then " selected" else ""); Vdom.Attr.on_click (fun _ -> set_selected index) ]
@@ -131,7 +131,7 @@ let page ?(embedded = false) ~(ctx : Ctx.t) graph =
               ();
             Ui.div ~cls:"list"
               (List.map (List.take options 12) ~f:(fun (a : Accounts_data.account) ->
-                   Vdom.Node.div ~attrs:[ Vdom.Attr.class_ "row clickable"; Vdom.Attr.on_click (fun _ -> choose a.id) ] [ Ui.div ~cls:"row-title" [ Ui.text a.name ]; Ui.span ~cls:"row-sub" [ Ui.text a.kind ] ])) ] ]
+                   Vdom.Node.div ~attrs:[ Vdom.Attr.class_ "row clickable"; Vdom.Attr.on_click (fun _ -> choose a.id) ] [ Ui.div ~cls:"row-title" [ Ui.text a.name ]; Ui.span ~cls:"row-sub" [ Ui.text (Accounts_data.kind_label locale a.kind) ] ])) ] ]
   in
   let overlay =
     match picker, current with

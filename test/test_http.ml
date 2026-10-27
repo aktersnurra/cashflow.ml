@@ -166,6 +166,30 @@ let test_login_return_paths () =
       ("/\\example.org", "/"); ("/\\\\example.org", "/"); ("/\t/example.org", "/");
       ("/inbox\r\nLocation: https://example.org", "/"); ("/inbox\000", "/"); ("/inbox\127", "/") ]
 
+(* A Swedish browser signing in, the first time and again, leaves the starter chart in English:
+   language is applied when names are shown, not by renaming them. *)
+let test_sign_in_keeps_starter_names () =
+  let deps = deps () in
+  let sign_in_swedish () =
+    let login = Http_server.handle deps (request "/auth/login") in
+    let location = Uri.of_string (Option.get (header login "location")) in
+    last_nonce := Uri.get_query_param location "nonce";
+    let state = Option.get (Uri.get_query_param location "state") in
+    let cookie = Option.get (cookie_header login "cashflow_login") in
+    let callback =
+      Http_server.handle deps
+        (request ("/auth/callback?code=good-code&state=" ^ state) ~headers:[ ("cookie", cookie); ("accept-language", "sv-SE,sv;q=0.9,en") ])
+    in
+    Alcotest.(check int) "signed in" 302 callback.status
+  in
+  sign_in_swedish ();
+  let alice = sign_in deps.service "alice" in
+  Alcotest.(check string) "a Swedish user" "sv" (Access.user alice).locale;
+  let before = Service.accounts deps.service alice in
+  ignore (account_named deps.service alice "Groceries");
+  sign_in_swedish ();
+  Alcotest.(check bool) "signing in again renames nothing" true (Service.accounts deps.service alice = before)
+
 let test_unversioned_assets_revalidate () =
   let dir = Filename.temp_file "cashflow-assets-" "" in
   Sys.remove dir;
@@ -352,4 +376,5 @@ let () =
           Alcotest.test_case "mcp scopes" `Quick test_mcp_scopes; Alcotest.test_case "web login and csrf" `Quick test_web_login_and_csrf;
           Alcotest.test_case "login return paths" `Quick test_login_return_paths;
           Alcotest.test_case "static caching and compression" `Quick test_static_caching_and_compression;
+          Alcotest.test_case "sign-in keeps starter names" `Quick test_sign_in_keeps_starter_names;
           Alcotest.test_case "static paths stay inside" `Quick test_static_paths_stay_inside ] ) ]

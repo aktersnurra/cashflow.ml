@@ -185,7 +185,7 @@ let component ~(ctx : Ctx.t) ~(account_id : string option Bonsai.t) graph =
         else
           let accounts = J.list (J.field "accounts" identity) in
           let label a =
-            J.str (J.field "name" a) ^ Option.value_map (J.str_opt (J.field "number" a)) ~default:"" ~f:(fun n -> " ****" ^ n)
+            Accounts_data.name ~locale a ^ Option.value_map (J.str_opt (J.field "number" a)) ~default:"" ~f:(fun n -> " ****" ^ n)
           in
           let options = List.map accounts ~f:(fun a -> (J.str (J.field "id" a), label a)) @ [ ("new", Msg.import_new_account locale) ] in
           let chosen = match target with Existing id -> id | Create _ -> "new" in
@@ -260,6 +260,6 @@ let component ~(ctx : Ctx.t) ~(account_id : string option Bonsai.t) graph =
           Ui.div ~cls:"actions"
             [ (if inbox > 0 then Ui.button ~kind:"primary" (Msg.action_review locale) (navigate Route.Inbox) else Vdom.Node.none);
               (match J.str_opt (J.path [ "account"; "id" ] result) with
-              | Some id when Option.is_none account_id -> Ui.button (J.str (J.path [ "account"; "name" ] result)) (navigate (Route.Account id))
+              | Some id when Option.is_none account_id -> Ui.button (Accounts_data.name ~locale (J.field "account" result)) (navigate (Route.Account id))
               | _ -> Vdom.Node.none);
               Ui.button (Msg.action_close locale) (set_phase Idle) ] ]

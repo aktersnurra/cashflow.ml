@@ -8,6 +8,7 @@ module Store_sqlite = Cashflow_io.Store_sqlite
 module Str_compat = Cashflow_core.Str_compat
 module Analytics = Cashflow_core.Analytics
 module Currency = Cashflow_core.Currency
+module User = Cashflow_core.User
 
 open Test_service_support
 
@@ -90,6 +91,14 @@ let test_unusual_spending () =
   Alcotest.(check bool) "typed narrative flag" true (Result.is_error (command.run service alice [("narrative", `String "false")]));
   ignore (Attention.feed service alice);
   Alcotest.(check int) "written once" 1 (List.length !prompts);
+  (* In Swedish it is written again, naming the category as a Swedish reader sees it. *)
+  let user = Access.user alice in
+  let alice =
+    ok (Service.update_settings service alice { User.locale = "sv"; timezone = user.timezone; default_currency = user.default_currency; pay_cycle = user.pay_cycle })
+  in
+  ignore (Attention.feed service alice);
+  Alcotest.(check int) "written again in Swedish" 2 (List.length !prompts);
+  Alcotest.(check bool) "naming the category in Swedish" true (Str_compat.contains ~sub:"Mat & hushåll" (List.hd !prompts));
   (* A budget takes over. *)
   let ctx = ok (Insights.context service alice ~scope:Me ()) in
   ignore (ok (Insights.set_budget ctx ~category_id:groceries ~monthly_amount:5_000_00L ~rollover:false ~effective_from:None));

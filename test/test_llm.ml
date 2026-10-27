@@ -6,7 +6,12 @@ module Llm_features = Cashflow_io.Llm_features
 module Service = Cashflow_io.Service
 module Sql = Cashflow_io.Sql
 module Store_sqlite = Cashflow_io.Store_sqlite
+module Insights = Cashflow_io.Insights
 module Account_id = Cashflow_core.Account_id
+module Analytics = Cashflow_core.Analytics
+module Household = Cashflow_core.Household
+module Owner = Cashflow_core.Owner
+module User = Cashflow_core.User
 module Str_compat = Cashflow_core.Str_compat
 
 open Test_service_support
@@ -49,6 +54,54 @@ let test_suggestions_and_privacy () =
   Alcotest.(check bool) "no account name" false (Str_compat.contains ~sub:"secret" prompt);
   Alcotest.(check bool) "no balance" false (Str_compat.contains ~sub:"87654" prompt);
   Alcotest.(check bool) "but the merchant" true (Str_compat.contains ~sub:"WILLYS" prompt)
+
+let speak_swedish service access =
+  let user = Access.user access in
+  ok (Service.update_settings service access { User.locale = "sv"; timezone = user.timezone; default_currency = user.default_currency; pay_cycle = user.pay_cycle })
+
+(* Alice reads English and Bob Swedish. Each one's prompt names the household's starter categories
+   in their own language, under the same ids, and neither's choice changes the other's. *)
+let test_prompts_name_categories_in_the_viewers_language () =
+  let asked = ref [] in
+  let capturing : Llm.t = { fake with complete = (fun ?schema:_ ~system:_ ~user () -> asked := user :: !asked; Ok {|{"suggestions": []}|}) } in
+  let service = Service.make ~now:(fun () -> now) ~assistant:capturing (Store_sqlite.open_memory ()) in
+  let alice = sign_in service ~admin:true "alice" in
+  let household = ok (Service.create_household service alice ~name:"Home" ~default_currency:"SEK") in
+  let alice = Service.access_for service (Access.user alice) in
+  let bob = sign_in service "bob" in
+  ignore (ok (Service.invite_member service alice ~email:"bob@example.com"));
+  let bob = ok (Service.respond_to_invitation service bob ~household_id:household.id ~accept:true) in
+  let bob = speak_swedish service bob in
+  let shared = open_checking service alice ~owner:(Household household.id) ~statement_backed:true "Shared" in
+  let groceries =
+    (List.find (fun (i : Account_info.t) -> i.account.name = "Groceries" && Owner.equal i.account.owner (Household household.id)) (Service.accounts service alice))
+      .account.id
+  in
+  let named access =
+    let csv = "Datum;Text;Belopp\n2026-10-20;WILLYS HEMMA;-412,00\n" in
+    ignore (ok_import (Import.preview (Import.context service access) { target = Import.Existing shared; file_name = None; content = csv; decisions = [] }));
+    let open Yojson.Safe.Util in
+    Yojson.Safe.from_string (List.hd !asked) |> member "categories" |> to_list
+    |> List.find_map (fun c -> if member "id" c = `String (Account_id.to_string groceries) then Some (member "name" c |> to_string) else None)
+  in
+  Alcotest.(check (option string)) "alice reads English" (Some "Groceries") (named alice);
+  Alcotest.(check (option string)) "bob reads Swedish" (Some "Mat & hushåll") (named bob);
+  Alcotest.(check (option string)) "and alice still English" (Some "Groceries") (named alice)
+
+(* The month review names its top categories in the reader's language. *)
+let test_month_review_in_the_readers_language () =
+  let asked = ref [] in
+  let capturing : Llm.t = { fake with complete = (fun ?schema:_ ~system:_ ~user () -> asked := user :: !asked; Ok "Mostly groceries.") } in
+  let service = Service.make ~now:(fun () -> now) ~assistant:capturing (Store_sqlite.open_memory ()) in
+  let alice = speak_swedish service (sign_in service "alice") in
+  let ctx = ok (Insights.context service alice ~scope:Me ()) in
+  let cycle = Insights.current_cycle ctx in
+  let summary : Analytics.cycle_summary = { cycle; flows = Analytics.zero_flows; savings = 0L; savings_rate_bp = None; reconciled = false } in
+  let groceries = List.find (fun (i : Account_info.t) -> i.account.name = "Groceries") (Service.accounts service alice) in
+  ignore (Llm_features.month_summary service alice ~cycle ~currency:ctx.currency ~summary ~previous:None ~top:[ { category = groceries; total = 1_000_00L; previous = None } ]);
+  let prompt = List.hd !asked in
+  Alcotest.(check bool) "in Swedish" true (Str_compat.contains ~sub:"Mat & hushåll" prompt);
+  Alcotest.(check bool) "not in English" false (Str_compat.contains ~sub:"Groceries" prompt)
 
 (* Confirming an import asks the model before it takes the database, never inside the transaction,
    and still applies the suggestion. *)
@@ -202,6 +255,8 @@ let () =
   Alcotest.run "llm"
     [ ( "features",
         [ Alcotest.test_case "suggestions and privacy" `Quick test_suggestions_and_privacy;
+          Alcotest.test_case "prompts name categories in the viewer's language" `Quick test_prompts_name_categories_in_the_viewers_language;
+          Alcotest.test_case "month review in the reader's language" `Quick test_month_review_in_the_readers_language;
           Alcotest.test_case "no network inside the import transaction" `Quick test_no_network_inside_the_import_transaction;
           Alcotest.test_case "an unknown format read by the assistant" `Quick test_unknown_format_read_by_the_assistant;
           Alcotest.test_case "layout cells outside the file" `Quick test_layout_cells_outside_the_file ] );

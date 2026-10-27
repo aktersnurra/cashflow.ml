@@ -435,9 +435,9 @@ let uncategorized ctx (account : Account.t) kind =
   | None -> (
       let key = Result.get_ok (Idempotency_key.of_string ("seed:uncategorized-" ^ Account.kind_to_string kind ^ "-" ^ currency)) in
       let slug = if kind = Account.Expense then "uncategorized-expense" else "uncategorized-income" in
-      let name = Chart.name (Access.user ctx.access).locale (List.find (fun (e : Chart.entry) -> e.slug = slug) Chart.entries) in
+      let name = Starter.name ~locale:"en" { entry = List.find (fun (e : Chart.entry) -> e.slug = slug) Chart.entries; currency = Some currency } in
       match
-        Service.open_account ctx.service ctx.access ~key ~owner:account.owner ~kind ~name:(name ^ " (" ^ currency ^ ")") ~currency
+        Service.open_account ctx.service ctx.access ~key ~owner:account.owner ~kind ~name ~currency
           ~flags:Account.no_flags ~details:{ Account_info.no_details with role = Some Uncategorized }
       with
       | Ok (`Created info | `Exists info) -> Ok info

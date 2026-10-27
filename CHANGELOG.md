@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Starter categories in each reader's language
+
+- The starter categories (Groceries, Housing, Uncategorized...) are shown in each person's own language, and changing
+  language no longer renames anything. Before, it renamed the household's shared categories too, so two members who
+  read different languages kept switching them for each other. A category someone renamed shows what they typed, to
+  everyone.
+- The assistant's suggestions, the month review, the unusual-spending note and the advisor name categories in the
+  reader's language as well. MCP sees them in English.
+- Existing books need no migration: a starter category still named in Swedish counts as untouched.
+- The inbox's category picker says what kind each choice is in your language ("Utgiftskategori", not "expense").
+
 ### Advisor can propose categories
 
 - Ask the advisor to categorize your uncategorized transactions. It reads the waiting rows and your categories, then

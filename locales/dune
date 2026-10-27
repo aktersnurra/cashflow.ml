@@ -8,5 +8,5 @@
 (library
  (name cashflow_msg)
  (wrapped false)
- (modules msg)
+ (modules msg category_name)
  (libraries mf2_runtime))

@@ -33,11 +33,12 @@ let suggest_categories (service : Service.t) access ~(bank_account : Account_inf
           (Account_store.for_owner service.db bank_account.account.owner)
       in
       let scale = Currency.scale bank_account.account.currency in
+      let locale = (Access.user access).locale in
       let user =
         Yojson.Safe.to_string
           (`Assoc
              [ ( "categories",
-                 `List (List.map (fun (i : Account_info.t) -> `Assoc [ ("id", `String (Account_id.to_string i.account.id)); ("name", `String i.account.name); ("kind", `String (Account.kind_to_string i.account.kind)) ]) categories) );
+                 `List (List.map (fun (i : Account_info.t) -> `Assoc [ ("id", `String (Account_id.to_string i.account.id)); ("name", `String (Starter.display_name ~locale i)); ("kind", `String (Account.kind_to_string i.account.kind)) ]) categories) );
                ( "rows",
                  `List
                    (List.map
@@ -193,7 +194,7 @@ let month_summary (service : Service.t) access ~(cycle : Cycle.t) ~currency ~(su
               [ ("cycle", `String (Cycle.label cycle)); ("currency", `String (Currency.code currency)); ("this_cycle", flows summary);
                 ("previous_cycle", Json.option flows previous);
                 ( "top_categories",
-                  `List (List.map (fun (c : Analytics.category_total) -> `Assoc [ ("name", `String c.category.account.name); ("total", m c.total); ("previous", Json.option m c.previous) ]) top) ) ]
+                  `List (List.map (fun (c : Analytics.category_total) -> `Assoc [ ("name", `String (Starter.display_name ~locale:user.locale c.category)); ("total", m c.total); ("previous", Json.option m c.previous) ]) top) ) ]
           in
           let language = if String.starts_with ~prefix:"sv" user.locale then "Swedish" else "English" in
           let system =
@@ -228,7 +229,7 @@ let unusual_spending (service : Service.t) access ~(cycle : Cycle.t) ~currency ~
           let m = Json.money currency in
           let figures =
             `Assoc
-              [ ("category", `String unusual.unusual_category.account.name); ("currency", `String (Currency.code currency));
+              [ ("category", `String (Starter.display_name ~locale:user.locale unusual.unusual_category)); ("currency", `String (Currency.code currency));
                 ("spent_this_cycle", m unusual.spent_so_far); ("usual_whole_cycle", m unusual.usual);
                 ( "transactions",
                   `List

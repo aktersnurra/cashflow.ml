@@ -170,13 +170,14 @@ let authorize service ~principal ~scope aliases =
     let* () = Advisor_access.authorize_scope service principal scope in
     Advisor_access.authorize_history service principal aliases.conversation
 
-let account (i : Account_info.t) : T.account =
-  let name = match i.account.kind with Account.Expense | Income -> Some i.account.name | Asset | Liability | Equity -> None in
+(* Categories are named as the user sees them; bank accounts are never named to the model. *)
+let account ~locale (i : Account_info.t) : T.account =
+  let name = match i.account.kind with Account.Expense | Income -> Some (Starter.display_name ~locale i) | Asset | Liability | Equity -> None in
   { id = i.account.id; kind = i.account.kind; name }
 
 let scoped_book (ctx : Insights.ctx) =
   let book = Insights.book ctx in
-  fun id -> Option.map account (book.inside id)
+  fun id -> Option.map (account ~locale:(Access.user ctx.access).locale) (book.inside id)
 
 let take n xs = List.filteri (fun i _ -> i < n) xs
 
@@ -280,7 +281,7 @@ let read (service : Service.t) ~principal ~scope ~aliases ~currency:pinned reque
                   let ys =
                     take 20 xs
                     |> List.map (fun (x : Analytics.category_total) ->
-                        { T.account = account x.category; total = x.total; previous = x.previous })
+                        { T.account = account ~locale:(Access.user ctx.access).locale x.category; total = x.total; previous = x.previous })
                   in
                   Ok (T.Category_spending_result ys, List.length xs, List.length ys, [])
               | Category_trend (_, reference, n) ->
@@ -356,7 +357,7 @@ let read (service : Service.t) ~principal ~scope ~aliases ~currency:pinned reque
                         && Option.is_none i.details.role && (not i.account.closed) && Option.is_some (scoped i.account.id))
                     |> List.sort (fun (a : Account_info.t) (b : Account_info.t) -> String.compare a.account.name b.account.name)
                   in
-                  let shown = take 60 all |> List.map account in
+                  let shown = take 60 all |> List.map (account ~locale:(Access.user ctx.access).locale) in
                   Ok (T.Categories_result shown, List.length all, List.length shown, [])
               | Propose_categorize { rows } ->
                   let* rows =
