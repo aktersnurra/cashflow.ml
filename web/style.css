@@ -1,7 +1,7 @@
-/* cashflow.ml. Quiet, editorial, data-first (docs/cashflow-ui-agent-brief.md): nearly white in
-   light mode, nearly charcoal in dark; hierarchy from type, columns, spacing and 1px hairlines;
-   mostly monochrome, with one navy accent for what you can act on and green/red only where a
-   sign matters. Colours are measured from the mockups in docs/.
+/* cashflow.ml. Quiet, editorial, data-first (docs/cashflow-ui-agent-brief.md): cream in light
+   mode, charcoal in dark; hierarchy from type, columns, spacing and 1px hairlines. The approved
+   Sankey icon supplies teal actions and mint/gold/coral chart hues; text and semantic states
+   use contrast-adjusted shades rather than the artwork's literal colours.
 
    Type: Linux Libertine, else the platform's UI font. 13 (labels, meta) / 14 (body, controls) /
    16 (section headings) / 24 (page title) / 34 (the one key figure). Lining, tabular figures
@@ -10,39 +10,41 @@
 
    Theme: light unless the system or the user (data-theme on <html>, see theme.ml) says dark. */
 :root {
-  --bg: #fafafa; --sidebar: #f4f5f6; --panel: #ffffff; --surface: #f3f4f6; --surface-2: #eceef1; --line: #ebecef; --line-strong: #dfe1e5;
-  --text: #0d121c; --text-2: #74818f; --text-3: #9aa3ae;
-  --accent: #1c3355; --accent-hover: #2a4670; --on-accent: #ffffff; --focus: #5c8bc9;
-  --positive: #238d68; --negative: #ba3637; --warning: #b7791f;
-  --tint-red: #f9edea; --tint-green: #ddeee7; --tint-amber: #fbf1dc; --tint-blue: #e8eef8;
-  --s-ink: #3a4d5b; --c1: #5c8bc9; --c2: #8b72d8; --c3: #a7c3d5; --c4: #d88c88; --c5: #c9bde7; --c-other: #b4bac0; --c-transfer: #9aa3ae;
-  --c-savings: #5bb192; --in-transfer: #74818f; --in-savings: #75b4c3;
-  --income: #5bb192; --spending: #d88c88; --line-chart: #0c2342; --area: #e4eaf2;
-  --overlay-shadow: 0 16px 48px rgba(13,18,28,.14), 0 0 0 1px rgba(13,18,28,.06); --scrim: rgba(13,18,28,.25);
+  --bg: #fbf8f2; --sidebar: #f3efe7; --panel: #fffdf8; --surface: #f3efe6; --surface-2: #e9e3d8; --line: #e4dfd4; --line-strong: #d1cabc;
+  --text: #1b211d; --text-2: #4d6055; --text-3: #5b685f;
+  --accent: #146b69; --accent-hover: #0f5655; --on-accent: #fffdf8; --focus: #147b78;
+  --positive: #216e52; --negative: #ac382f; --warning: #855b12;
+  --tint-red: #fae9e2; --tint-green: #e3f0e6; --tint-amber: #fbefd6; --tint-blue: #e1efec;
+  --s-ink: #3a5046; --c1: #247d7f; --c2: #56896c; --c3: #9d741f; --c4: #bc503c; --c5: #687f77; --c-other: #7d897e; --c-transfer: #7a857c;
+  --c-savings: #4f8964; --in-transfer: #6d7d72; --in-savings: #4d8279;
+  --income: #56896c; --spending: #bc503c; --line-chart: #146b69; --area: #e1efec;
+  --overlay-shadow: 0 16px 48px rgba(27,33,29,.14), 0 0 0 1px rgba(27,33,29,.06); --scrim: rgba(27,33,29,.25);
   --font: "Linux Libertine O", "Linux Libertine", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
   --mono: ui-monospace, "SF Mono", Menlo, monospace;
   color-scheme: light;
 }
 :root[data-theme="dark"] {
-  --bg: #161719; --sidebar: #121315; --panel: #1c1d20; --surface: #222326; --surface-2: #2a2c30; --line: #2a2c30; --line-strong: #35373c;
-  --text: #e7e9ec; --text-2: #9aa3ae; --text-3: #6f7782;
-  --accent: #c9d6ea; --accent-hover: #dfe7f3; --on-accent: #0d121c; --focus: #7ea3d8;
-  --positive: #4fbf93; --negative: #e0716b; --warning: #d9a54a;
-  --tint-red: #3a2523; --tint-green: #1f3329; --tint-amber: #362c1a; --tint-blue: #1f2836;
-  --s-ink: #9aa3ae; --c-other: #6f7782; --c-transfer: #5d6570; --in-transfer: #9aa3ae;
-  --line-chart: #c9d6ea; --area: #222a36;
+  --bg: #111412; --sidebar: #0d100e; --panel: #1b201c; --surface: #222923; --surface-2: #2b342d; --line: #323d34; --line-strong: #49564b;
+  --text: #f4eddf; --text-2: #bcc6bc; --text-3: #9eab9f;
+  --accent: #91d5c1; --accent-hover: #b0e3d1; --on-accent: #0d211b; --focus: #6dcab7;
+  --positive: #a4d6b8; --negative: #f28d7c; --warning: #f2c66d;
+  --tint-red: #38251f; --tint-green: #203329; --tint-amber: #342c19; --tint-blue: #1c3531;
+  --s-ink: #f4eddf; --c1: #41b1ac; --c2: #b0d9bf; --c3: #f2c66d; --c4: #f5866b; --c5: #9bb5ac; --c-other: #8c9a8d; --c-transfer: #738078;
+  --c-savings: #8bcca5; --in-transfer: #9eab9f; --in-savings: #79c6b7;
+  --income: #b0d9bf; --spending: #f5866b; --line-chart: #91d5c1; --area: #20352f;
   --overlay-shadow: 0 16px 48px rgba(0,0,0,.5), 0 0 0 1px rgba(255,255,255,.06); --scrim: rgba(0,0,0,.5);
   color-scheme: dark;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #161719; --sidebar: #121315; --panel: #1c1d20; --surface: #222326; --surface-2: #2a2c30; --line: #2a2c30; --line-strong: #35373c;
-    --text: #e7e9ec; --text-2: #9aa3ae; --text-3: #6f7782;
-    --accent: #c9d6ea; --accent-hover: #dfe7f3; --on-accent: #0d121c; --focus: #7ea3d8;
-    --positive: #4fbf93; --negative: #e0716b; --warning: #d9a54a;
-    --tint-red: #3a2523; --tint-green: #1f3329; --tint-amber: #362c1a; --tint-blue: #1f2836;
-    --s-ink: #9aa3ae; --c-other: #6f7782; --c-transfer: #5d6570; --in-transfer: #9aa3ae;
-    --line-chart: #c9d6ea; --area: #222a36;
+    --bg: #111412; --sidebar: #0d100e; --panel: #1b201c; --surface: #222923; --surface-2: #2b342d; --line: #323d34; --line-strong: #49564b;
+    --text: #f4eddf; --text-2: #bcc6bc; --text-3: #9eab9f;
+    --accent: #91d5c1; --accent-hover: #b0e3d1; --on-accent: #0d211b; --focus: #6dcab7;
+    --positive: #a4d6b8; --negative: #f28d7c; --warning: #f2c66d;
+    --tint-red: #38251f; --tint-green: #203329; --tint-amber: #342c19; --tint-blue: #1c3531;
+    --s-ink: #f4eddf; --c1: #41b1ac; --c2: #b0d9bf; --c3: #f2c66d; --c4: #f5866b; --c5: #9bb5ac; --c-other: #8c9a8d; --c-transfer: #738078;
+    --c-savings: #8bcca5; --in-transfer: #9eab9f; --in-savings: #79c6b7;
+    --income: #b0d9bf; --spending: #f5866b; --line-chart: #91d5c1; --area: #20352f;
     --overlay-shadow: 0 16px 48px rgba(0,0,0,.5), 0 0 0 1px rgba(255,255,255,.06); --scrim: rgba(0,0,0,.5);
     color-scheme: dark;
   }
