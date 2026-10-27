@@ -63,8 +63,14 @@ let part zip path =
           if Zipc.File.decompressed_size file > max_part_bytes then Error (path ^ " is too large")
           else Result.map_error (fun e -> path ^ ": " ^ e) (Zipc.File.to_binary_string file))
 
-(* The first sheet's part, through the workbook's relationships. *)
-let first_sheet zip =
+(* The first sheet's part, through the workbook's relationships; a file written without them
+   still has its first sheet where every spreadsheet program puts it. *)
+let rec first_sheet zip =
+  match listed_sheet zip with
+  | Ok path -> Ok path
+  | Error _ as missing -> if Option.is_some (Zipc.find "xl/worksheets/sheet1.xml" zip) then Ok "xl/worksheets/sheet1.xml" else missing
+
+and listed_sheet zip =
   let* workbook = Result.bind (part zip "xl/workbook.xml") parse_xml in
   let* id =
     match Option.bind (child "sheets" workbook) (child "sheet") with
