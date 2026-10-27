@@ -46,6 +46,8 @@ let parse_call ~name ~arguments =
     | "recurring" | "goals" -> Some []
     | "forecast" -> Some [ "cycles"; "scenario" ]
     | "propose_set_budget" -> Some [ "category"; "monthly_amount"; "rollover" ]
+    | "inbox_rows" | "categories" -> Some []
+    | "propose_categorize" -> Some [ "rows" ]
     | _ -> None
   in
   match allowed with
@@ -54,7 +56,7 @@ let parse_call ~name ~arguments =
       try
         if String.length arguments > 8192 then raise Invalid;
         (* A proposal never takes a currency: it acts in the conversation's own. *)
-        let proposing = String.equal name "propose_set_budget" in
+        let proposing = String.equal name "propose_set_budget" || String.equal name "propose_categorize" in
         let f = fields ((if proposing then [] else [ "currency" ]) @ allowed) (Yojson.Safe.from_string arguments) in
         let currency = Option.map (fun s -> require (T.currency_code s)) (text f "currency") in
         let c = { T.currency } in
@@ -70,6 +72,17 @@ let parse_call ~name ~arguments =
           | "recurring" -> T.Recurring c
           | "budget_status" -> T.Budget_status (c, integer f "cycle_offset" 0 (-5) 0)
           | "goals" -> T.Goals c
+          | "inbox_rows" -> T.Inbox_rows c
+          | "categories" -> T.Categories c
+          | "propose_categorize" ->
+              let rows =
+                List.map
+                  (fun x ->
+                    let o = fields [ "row"; "category" ] x in
+                    (require (T.row_reference (require (text o "row"))), require (T.account_reference (require (text o "category")))))
+                  (items f "rows" 20)
+              in
+              T.Propose_categorize { rows }
           | "propose_set_budget" ->
               let amount = require (text f "monthly_amount") in
               if String.length amount > 30 then raise Invalid;
@@ -121,6 +134,7 @@ type aliases = {
   nonce : string;
   accounts : (Account_id.t, string) Hashtbl.t;
   series : (string, string) Hashtbl.t;
+  rows : (string, Transfer_id.t) Hashtbl.t;  (** inbox row aliases issued to this run, never persisted *)
   evidence : (A.Evidence_id.t, T.evidence) Hashtbl.t;
   selected : (A.Evidence_id.t, int) Hashtbl.t;
 }
@@ -145,6 +159,7 @@ let create_aliases (service : Service.t) ~principal ~scope ~conversation =
             (String.split_on_char '-' (Uuidm.to_string (Uuidm.v4_gen (Random.State.make_self_init ()) ())));
         accounts = Hashtbl.create 32;
         series = Hashtbl.create 20;
+        rows = Hashtbl.create 32;
         evidence = Hashtbl.create 8;
         selected = Hashtbl.create 8;
       }
@@ -194,6 +209,9 @@ let refs = function
   | T.Forecast_result f ->
       List.concat_map (fun (x : T.forecast_item) -> List.filter_map Fun.id [ x.account; x.category ]) f.items
   | T.Budget_proposal_result p -> [ p.category ]
+  | T.Inbox_rows_result rows -> List.filter_map (fun (r : T.inbox_row) -> Option.map (fun (a, _, _) -> a) r.suggestion) rows
+  | T.Categories_result xs -> xs
+  | T.Categorize_proposal_result rows -> List.map (fun (r : T.categorize_row) -> r.category) rows
   | T.Cycle_summary_result _ | T.Goals_result _ -> []
 
 let assumptions (f : Forecast.t) =
@@ -245,7 +263,10 @@ let read (service : Service.t) ~principal ~scope ~aliases ~currency:pinned reque
                 && s.input.leave_out = []
                 && List.length s.leave_out <= 20
                 && List.length s.input.one_off <= 10
-            | Recurring _ | Goals _ | Propose_budget _ -> true
+            | Recurring _ | Goals _ | Propose_budget _ | Inbox_rows _ | Categories _ -> true
+            | Propose_categorize { rows } ->
+                let n = List.length rows in
+                n >= 1 && n <= 20 && List.length (List.sort_uniq String.compare (List.map (fun (r, _) -> T.row_reference_text r) rows)) = n
           in
           if not valid then error A.Invalid_tool_arguments
           else
@@ -297,6 +318,80 @@ let read (service : Service.t) ~principal ~scope ~aliases ~currency:pinned reque
                       List.length xs,
                       List.length ys,
                       [ "partial samples do not establish a complete explanation" ] )
+              | Inbox_rows _ ->
+                  let open_rows =
+                    Inbox.list service access ~limit:500
+                    |> List.filter (fun (v : Inbox.item_view) -> v.item.status = "open" && Option.is_some (scoped v.item.bank_account_id))
+                  in
+                  let alias_for id =
+                    match Hashtbl.fold (fun a t found -> if Transfer_id.equal t id then Some a else found) aliases.rows None with
+                    | Some a -> a
+                    | None ->
+                        let a = Printf.sprintf "row_%s_%d" aliases.nonce (Hashtbl.length aliases.rows + 1) in
+                        Hashtbl.add aliases.rows a id;
+                        a
+                  in
+                  let shown =
+                    take 20 open_rows
+                    |> List.map (fun (v : Inbox.item_view) ->
+                        let t = v.transfer.transfer in
+                        let suggestion =
+                          match (v.suggested, v.item.suggestion_confidence) with
+                          | Some info, confidence -> (
+                              match scoped info.account.id with
+                              | Some a when a.kind = Account.Expense || a.kind = Account.Income ->
+                                  Some (a, Option.value confidence ~default:0, Option.value v.item.suggestion_source ~default:"unknown")
+                              | _ -> None)
+                          | None, _ -> None
+                        in
+                        { T.reference = require (T.row_reference (alias_for t.id)); date = t.value_date; amount = Amount.to_int64 t.amount;
+                          outflow = Inbox.outflow v.item t; description = t.memo.description; suggestion })
+                  in
+                  Ok (T.Inbox_rows_result shown, List.length open_rows, List.length shown, [])
+              | Categories _ ->
+                  let all =
+                    Insights.accounts ctx
+                    |> List.filter (fun (i : Account_info.t) ->
+                        (i.account.kind = Account.Expense || i.account.kind = Account.Income)
+                        && Option.is_none i.details.role && (not i.account.closed) && Option.is_some (scoped i.account.id))
+                    |> List.sort (fun (a : Account_info.t) (b : Account_info.t) -> String.compare a.account.name b.account.name)
+                  in
+                  let shown = take 60 all |> List.map account in
+                  Ok (T.Categories_result shown, List.length all, List.length shown, [])
+              | Propose_categorize { rows } ->
+                  let* rows =
+                    List.fold_left
+                      (fun acc (row, category) ->
+                        let* acc = acc in
+                        let* id = match Hashtbl.find_opt aliases.rows (T.row_reference_text row) with Some id -> Ok id | None -> error A.Not_found in
+                        let* item, bank =
+                          match Inbox.find_open service access id with Ok x -> Ok x | Error _ -> error A.Not_found
+                        in
+                        if item.status <> "open" || Option.is_none (scoped item.bank_account_id) then error A.Not_found
+                        else
+                          let* view = match Inbox.view_item service access item with Ok v -> Ok v | Error _ -> error A.Not_found in
+                          let t = view.transfer.transfer in
+                          let outflow = Inbox.outflow item t in
+                          let* a = resolve_category service aliases ctx category in
+                          let* target = match Service.find_account service access a.id with Ok i -> Ok i | Error _ -> error A.Not_found in
+                          (* Money out belongs in an expense category and money in in an income one, in the bank account's
+                             own owner: what the inbox itself would accept, never a move between accounts. *)
+                          if (outflow && a.kind <> Account.Expense) || ((not outflow) && a.kind <> Account.Income)
+                             || not (Owner.equal target.account.owner bank.account.owner)
+                             (* Never a system category (Uncategorized, Untracked cash), a closed one, or where the row already is. *)
+                             || Option.is_some target.details.role || target.account.closed
+                             || Account_id.equal target.account.id item.current_account_id
+                          then error A.Invalid_tool_arguments
+                          else
+                            Ok
+                              ({ T.transfer_id = t.id; date = t.value_date; amount = Amount.to_int64 t.amount; outflow;
+                                 description = t.memo.description; category = a; revision = item.revision;
+                                 current = item.current_account_id }
+                              :: acc))
+                      (Ok []) rows
+                  in
+                  let rows = List.rev rows in
+                  Ok (T.Categorize_proposal_result rows, List.length rows, List.length rows, [])
               | Propose_budget { category; monthly_amount; rollover } ->
                   let* a = resolve_category service aliases ctx category in
                   if a.kind <> Account.Expense then error A.Invalid_tool_arguments
@@ -515,6 +610,14 @@ let read (service : Service.t) ~principal ~scope ~aliases ~currency:pinned reque
     Ok detached
   with Sql.Sql_error _ -> error A.Storage_unavailable
 
+(* At most [n] bytes, never cutting a UTF-8 character. A card shows a merchant's text as the row's label, not in full. *)
+let shorten s n =
+  if String.length s <= n then s
+  else
+    let cut = ref n in
+    while !cut > 0 && Char.code s.[!cut] land 0xC0 = 0x80 do decr cut done;
+    String.sub s 0 !cut ^ "…"
+
 let display (e : T.evidence) : A.evidence =
   let money label amount = { A.label; value = A.Money { minor_units = amount; currency = e.currency } } in
   let financial_facts =
@@ -547,6 +650,16 @@ let display (e : T.evidence) : A.evidence =
             { A.label = "From cycle"; value = A.Text p.from_cycle };
             { A.label = "Carry over"; value = A.Text (string_of_bool p.rollover) };
           ]
+    | T.Categorize_proposal_result rows ->
+        Some
+          (List.concat_map
+             (fun (r : T.categorize_row) ->
+               [
+                 { A.label = "Transaction"; value = A.Text (Date.to_string r.date ^ " · " ^ shorten r.description 80) };
+                 money "Amount" (if r.outflow then Int64.neg r.amount else r.amount);
+                 { A.label = "New category"; value = A.Text (Option.value r.category.name ~default:"") };
+               ])
+             rows)
     | _ -> None
   in
   {
@@ -569,7 +682,7 @@ let display (e : T.evidence) : A.evidence =
     import_status = e.import_status;
     reconciled = e.reconciled;
     assumptions = e.assumptions;
-    proposal = (match e.result with T.Budget_proposal_result _ -> Some A.Awaiting | _ -> None);
+    proposal = (match e.result with T.Budget_proposal_result _ | T.Categorize_proposal_result _ -> Some A.Awaiting | _ -> None);
   }
 
 let model_json ~aliases (e : T.evidence) =
@@ -696,6 +809,38 @@ let model_json ~aliases (e : T.evidence) =
                       ("on_track", `Bool x.on_track);
                     ])
                 xs
+          | Inbox_rows_result rows ->
+              arr
+                (fun (r : T.inbox_row) ->
+                  obj
+                    [
+                      ("reference", str (T.row_reference_text r.reference));
+                      ("date", date r.date);
+                      ("amount", num r.amount);
+                      ("direction", str (if r.outflow then "out" else "in"));
+                      (* Bounded: a merchant's text is data, and twenty long ones must not exceed the result limit. *)
+                      ("description", str (shorten r.description 200));
+                      ( "suggestion",
+                        opt
+                          (fun ((a : T.account), confidence, source) ->
+                            obj [ ("category", acct a); ("confidence", `Int confidence); ("source", str source) ])
+                          r.suggestion );
+                    ])
+                rows
+          | Categories_result xs -> arr acct xs
+          | Categorize_proposal_result rows ->
+              let reference id =
+                Hashtbl.fold (fun alias t found -> if Transfer_id.equal t id then Some alias else found) aliases.rows None
+              in
+              obj
+                [
+                  ("status", str "awaiting_user_confirmation");
+                  ( "rows",
+                    arr
+                      (fun (r : T.categorize_row) ->
+                        obj [ ("row", opt str (reference r.transfer_id)); ("category", acct r.category) ])
+                      rows );
+                ]
           | Budget_proposal_result p ->
               (* Never "done": the user's own click is what applies it, and the card shows the outcome. *)
               obj

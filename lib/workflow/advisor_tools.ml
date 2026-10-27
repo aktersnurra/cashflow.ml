@@ -4,6 +4,7 @@ type account_reference = string
 (** Model references are syntax-checked opaque aliases, never database IDs. *)
 
 type series_reference = string
+type row_reference = string
 type currency_code = string
 type common = { currency : currency_code option }
 type period = Cycle_offset of int
@@ -20,6 +21,10 @@ type request =
   | Budget_status of common * int
   | Goals of common
   | Forecast of common * int * scenario
+  | Inbox_rows of common
+  | Categories of common
+  | Propose_categorize of { rows : (row_reference * account_reference) list }
+      (** Up to 20 uncategorized rows, each with the category to file it under, for the user to confirm. *)
   | Propose_budget of { category : account_reference; monthly_amount : string; rollover : bool }
       (** A change for the user to confirm. Currency and scope are the conversation's. *)
 
@@ -94,6 +99,26 @@ type forecast = {
   scenario_count : int;
 }
 
+type inbox_row = {
+  reference : row_reference;
+  date : Date.t;
+  amount : int64;  (** minor units, always positive *)
+  outflow : bool;
+  description : string;
+  suggestion : (account * int * string) option;  (** category, confidence 0-100, where it came from *)
+}
+
+type categorize_row = {
+  transfer_id : Transfer_id.t;
+  date : Date.t;
+  amount : int64;
+  outflow : bool;
+  description : string;
+  category : account;
+  revision : int;  (** the inbox item's revision when proposed *)
+  current : Account_id.t;  (** where the row sat when proposed *)
+}
+
 type budget_proposal = {
   category : account;
   current : int64 option;  (** the monthly budget in force this cycle, if any *)
@@ -113,6 +138,9 @@ type result =
   | Goals_result of goal list
   | Forecast_result of forecast
   | Budget_proposal_result of budget_proposal
+  | Inbox_rows_result of inbox_row list
+  | Categories_result of account list
+  | Categorize_proposal_result of categorize_row list
 
 type evidence = {
   id : Advisor.Evidence_id.t;
@@ -137,6 +165,8 @@ let valid prefix s =
   && String.for_all (function 'a' .. 'z' | '0' .. '9' | '_' -> true | _ -> false) s
 
 let account_reference s = if valid "account_" s then Some s else None
+let row_reference s = if valid "row_" s then Some s else None
+let row_reference_text x = x
 let series_reference s = if valid "series_" s then Some s else None
 let account_reference_text x = x
 let series_reference_text x = x
@@ -151,7 +181,8 @@ let common = function
   | Goals c
   | Forecast (c, _, _) ->
       c
-  | Propose_budget _ -> { currency = None }
+  | Inbox_rows c | Categories c -> c
+  | Propose_budget _ | Propose_categorize _ -> { currency = None }
 
 let name = function
   | Cycle_summary_result _ -> "cycle_summary"
@@ -163,6 +194,9 @@ let name = function
   | Goals_result _ -> "goals"
   | Forecast_result _ -> "forecast"
   | Budget_proposal_result _ -> "propose_set_budget"
+  | Inbox_rows_result _ -> "inbox_rows"
+  | Categories_result _ -> "categories"
+  | Categorize_proposal_result _ -> "propose_categorize"
 
 let currency_code s =
   if String.length s = 3 && String.for_all (function 'A' .. 'Z' -> true | _ -> false) s then Some s else None

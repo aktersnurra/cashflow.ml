@@ -226,6 +226,76 @@ let propose_budget_card () =
   check "or a scope or owner" (Result.is_error (P.parse_call ~name:"propose_set_budget"
     ~arguments:(Printf.sprintf "{\"category\":%S,\"monthly_amount\":\"10\",\"scope\":\"family\"}" alias)))
 
+(* Uncategorized rows and the categories to file them under are read with aliases; a categorize proposal is a card
+   built from typed values for rows this run was shown, with a category of the right kind. Building it changes nothing. *)
+let propose_categorize_card () =
+  fixture @@ fun service access principal h _ _ ->
+  let _, groceries_id, _, _, _ = seed service access h in
+  let salary_id =
+    (List.find (fun (a : Account_info.t) -> a.account.name = "Salary" && Owner.equal a.account.owner (Access.personal access)) (Service.accounts service access)).account.id
+  in
+  (* Rules that only suggest, so the import never needs the assistant and the inbox rows carry a suggestion. *)
+  let rule pattern direction category_id =
+    ignore (S.ok (Inbox.add_rule service access ~owner:(Access.personal access) ~pattern ~direction ~min_amount:None ~max_amount:None
+      ~bank_account_id:None ~category_id ~tags:[] ~shared:false ~auto_apply:false))
+  in
+  rule "ica" (Some `Out) groceries_id;
+  rule "salary" (Some `In) salary_id;
+  let statement = S.open_checking service access ~statement_backed:true "Statement account" in
+  let csv = "Datum;Text;Belopp\n2026-10-02;ICA NARA;-250,00\n2026-10-03;SALARY ACME;10 000,00\n" in
+  (match Cashflow_io.Import.confirm (Cashflow_io.Import.context service access) { Cashflow_io.Import.target = Existing statement; file_name = Some "export.csv"; content = csv; decisions = [] } with
+   | Ok (`Imported _) -> ()
+   | _ -> Alcotest.fail "import failed");
+  let c = conversation service principal A.Personal "categorize" in
+  let aliases = ok (P.create_aliases service ~principal ~scope:A.Personal ~conversation:c) in
+  let read_json name arguments =
+    let e = read service principal aliases A.Personal name arguments in
+    (e, Yojson.Safe.from_string (json aliases e))
+  in
+  let open Yojson.Safe.Util in
+  let rows_e, rows_json = read_json "inbox_rows" "{}" in
+  let rows = rows_json |> member "data" |> to_list in
+  Alcotest.(check int) "both rows" 2 (List.length rows);
+  let row_by description = List.find (fun r -> member "description" r |> to_string = description) rows in
+  let ica = row_by "ICA NARA" and salary = row_by "SALARY ACME" in
+  Alcotest.(check string) "money out" "out" (member "direction" ica |> to_string);
+  Alcotest.(check string) "amount in minor units" "25000" (member "amount" ica |> to_string);
+  check "aliases, not ids" (String.starts_with ~prefix:"row_" (member "reference" ica |> to_string));
+  Alcotest.(check string) "the rule's suggestion is shown with its source" "rule" (member "suggestion" ica |> member "source" |> to_string);
+  ignore rows_e;
+  let _, cats_json = read_json "categories" "{}" in
+  let cats = cats_json |> member "data" |> to_list in
+  let category name = List.find (fun c -> member "name" c = `String name) cats |> member "reference" |> to_string in
+  check "no system categories" (not (List.exists (fun c -> member "name" c = `String "Uncategorized") cats));
+  let groceries = category "Groceries" and income = category "Salary" in
+  let ref_of r = member "reference" r |> to_string in
+  let propose pairs =
+    let rows = String.concat "," (List.map (fun (r, c) -> Printf.sprintf "{\"row\":%S,\"category\":%S}" r c) pairs) in
+    P.read service ~principal ~scope:A.Personal ~aliases ~currency:sek_pin
+      (ok (P.parse_call ~name:"propose_categorize" ~arguments:(Printf.sprintf "{\"rows\":[%s]}" rows)))
+  in
+  let e = ok (propose [ (ref_of ica, groceries); (ref_of salary, income) ]) in
+  (match e.T.result with
+  | T.Categorize_proposal_result [ a; b ] ->
+      check "out to expense, in to income" (a.outflow && not b.outflow);
+      Alcotest.(check int64) "exact amounts" 25000L a.amount
+  | _ -> Alcotest.fail "not a categorize proposal");
+  let card = P.display e in
+  check "the card can be acted on" (card.proposal = Some A.Awaiting);
+  Alcotest.(check int) "three facts per row" 6 (List.length card.facts);
+  check "the model is told it awaits confirmation" (contains (json aliases e) "awaiting_user_confirmation");
+  let rejected pairs = check "rejected" (Result.is_error (propose pairs)) in
+  rejected [ (ref_of ica, income) ];
+  rejected [ (ref_of salary, groceries) ];
+  rejected [ ("row_notissued_1", groceries) ];
+  rejected [ (ref_of ica, "account_notissued_1") ];
+  let other = ok (P.create_aliases service ~principal ~scope:A.Personal ~conversation:c) in
+  check "another run's handle does not know these rows"
+    (Result.is_error
+       (P.read service ~principal ~scope:A.Personal ~aliases:other ~currency:sek_pin
+          (ok (P.parse_call ~name:"propose_categorize" ~arguments:(Printf.sprintf "{\"rows\":[{\"row\":%S,\"category\":%S}]}" (ref_of ica) groceries)))));
+  rejected [ (ref_of ica, groceries); (ref_of ica, groceries) ]
+
 let redacted_eight_tools () =
   fixture @@ fun service access principal h _ calls ->
   let bank, category, shared, _, injection = seed service access h in
@@ -678,6 +748,7 @@ let () =
           Alcotest.test_case "strict arguments" `Quick strict_arguments;
           Alcotest.test_case "eight tools and redaction" `Quick redacted_eight_tools;
           Alcotest.test_case "propose budget card" `Quick propose_budget_card;
+          Alcotest.test_case "propose categorize card" `Quick propose_categorize_card;
           Alcotest.test_case "resource isolation and import freshness" `Quick isolation_and_freshness;
           Alcotest.test_case "household and empty results" `Quick household_and_empty;
           Alcotest.test_case "series attempt binding and stale references" `Quick series_aliases_and_staleness;

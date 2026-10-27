@@ -1028,6 +1028,36 @@ let proposal_is_recorded_not_applied () =
            check "the follow-up completes" (state db owner b = A.Completed)
        | None -> ()))
 
+(* A proposal the system rejects is feedback for the model, not a failed answer. *)
+let rejected_proposal_is_recoverable () =
+  let posts = ref 0 in
+  fixture
+    (fun _ ~uri:_ ~headers:_ ~body ~on_chunk ->
+      incr posts;
+      let open Yojson.Safe.Util in
+      let messages = Yojson.Safe.from_string body |> member "messages" |> to_list in
+      (match !posts with
+       | 1 ->
+           let call = `Assoc [ ("index", `Int 0); ("id", `String "bad"); ("type", `String "function");
+                               ("function", `Assoc [ ("name", `String "propose_categorize");
+                                 ("arguments", `String "{\"rows\":[{\"row\":\"row_ab_1\",\"category\":\"account_ab_1\"}]}") ]) ] in
+           let data = `Assoc [ ("choices", `List [ `Assoc [ ("index", `Int 0); ("delta", `Assoc [ ("tool_calls", `List [ call ]) ]); ("finish_reason", `String "tool_calls") ] ]) ] in
+           on_chunk ("data: " ^ Yojson.Safe.to_string data ^ "\n\ndata: [DONE]\n\n")
+       | 2 ->
+           let feedback = List.find (fun m -> member "tool_call_id" m = `String "bad") messages |> member "content" |> to_string |> Yojson.Safe.from_string in
+           Alcotest.(check string) "the model is told why" "proposal_rejected" (feedback |> member "error" |> to_string);
+           on_chunk "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"I could not file that.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+       | _ -> Alcotest.fail "unexpected extra model round");
+      Ok ())
+    (fun _ db service runtime _ ->
+      let owner, _, principal = login service "recoverable" in
+      let a = ok (R.submit runtime ~principal { (submit "recoverable") with user_text = "File my uncategorized rows" }) in
+      drain ();
+      check "the run still completes" (state db owner a = A.Completed);
+      Alcotest.(check int) "after one correction round" 2 !posts;
+      check "no proposal card was made"
+        (not (List.exists (function { A.payload = A.Evidence_added { proposal = Some _; _ }; _ } -> true | _ -> false) (journal db a))))
+
 let memory_notes_in_prompt () =
   let systems = ref [] in
   fixture
@@ -1076,6 +1106,7 @@ let () =
           Alcotest.test_case "holiday forecast validation correction" `Quick holiday_forecast_correction;
           Alcotest.test_case "memory notes in the prompt" `Quick memory_notes_in_prompt;
           Alcotest.test_case "proposal is recorded, not applied" `Quick proposal_is_recorded_not_applied;
+          Alcotest.test_case "a rejected proposal is recoverable" `Quick rejected_proposal_is_recoverable;
           Alcotest.test_case "durable_delivery_and_runtime_deadlines" `Quick durable_delivery_and_runtime_deadlines;
           Alcotest.test_case "silent deadlines" `Quick silent_deadlines;
           Alcotest.test_case "sessions and reconnect" `Quick sessions_and_reconnect;

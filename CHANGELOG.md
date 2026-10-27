@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Advisor can propose categories
+
+- Ask the advisor to categorize your uncategorized transactions. It reads the waiting rows and your categories, then
+  proposes where each of up to 20 rows should go, as a card listing every transaction, its amount and the category,
+  with Apply and Dismiss. Nothing is filed until you click Apply, which files them exactly as the Inbox does. If any row
+  changed since the proposal (you categorized it yourself, say), none is filed and the card says so; they are filed
+  together or not at all. Money out can only go to an expense category and money in to an income one.
+- Not built yet: proposing a new category or rule, goals and entries, and undoing an applied proposal.
+
 ### Command bar
 
 - Typing a question in the command palette (Ctrl+K or /) now offers "Ask the advisor: ..." after any page or action

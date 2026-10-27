@@ -4,11 +4,14 @@ type account_reference = private string
 (** Model references are syntax-checked opaque aliases, never database IDs. *)
 
 type series_reference = private string
+type row_reference = private string
 
 val account_reference : string -> account_reference option
 val series_reference : string -> series_reference option
+val row_reference : string -> row_reference option
 val account_reference_text : account_reference -> string
 val series_reference_text : series_reference -> string
+val row_reference_text : row_reference -> string
 
 type currency_code = private string
 
@@ -30,6 +33,10 @@ type request =
   | Budget_status of common * int
   | Goals of common
   | Forecast of common * int * scenario
+  | Inbox_rows of common
+  | Categories of common
+  | Propose_categorize of { rows : (row_reference * account_reference) list }
+      (** Up to 20 uncategorized rows, each with the category to file it under, for the user to confirm. *)
   | Propose_budget of { category : account_reference; monthly_amount : string; rollover : bool }
       (** A change for the user to confirm. Currency and scope are the conversation's. *)
 
@@ -106,6 +113,26 @@ type forecast = {
   scenario_count : int;
 }
 
+type inbox_row = {
+  reference : row_reference;
+  date : Date.t;
+  amount : int64;  (** minor units, always positive *)
+  outflow : bool;
+  description : string;
+  suggestion : (account * int * string) option;  (** category, confidence 0-100, where it came from *)
+}
+
+type categorize_row = {
+  transfer_id : Transfer_id.t;
+  date : Date.t;
+  amount : int64;
+  outflow : bool;
+  description : string;
+  category : account;
+  revision : int;  (** the inbox item's revision when proposed *)
+  current : Account_id.t;  (** where the row sat when proposed *)
+}
+
 type budget_proposal = {
   category : account;
   current : int64 option;  (** the monthly budget in force this cycle, if any *)
@@ -125,6 +152,9 @@ type result =
   | Goals_result of goal list
   | Forecast_result of forecast
   | Budget_proposal_result of budget_proposal
+  | Inbox_rows_result of inbox_row list
+  | Categories_result of account list
+  | Categorize_proposal_result of categorize_row list
 
 type evidence = {
   id : Advisor.Evidence_id.t;

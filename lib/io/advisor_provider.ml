@@ -54,6 +54,10 @@ let tool_schemas =
       "amount", `Assoc ["type", str "string"; "maxLength", `Int 30;
         "description", str "Nonzero signed decimal in the pinned currency (not minor units), within its decimal precision. Negative for expenses, positive for income; no currency symbols or thousands separators."];
       "description", string 512]); "follow_budgets", `Assoc ["type", str "boolean"]] in
+  let propose_categorize = `Assoc ["type", str "function"; "function", `Assoc [
+    "name", str "propose_categorize";
+    "description", str "Propose filing uncategorized transactions under categories, up to 20 rows. Use row references from inbox_rows and category references from categories (expense category for money out, income category for money in). Nothing changes until the user confirms it with Apply; you only see that it is awaiting confirmation.";
+    "parameters", object_ ["rows"] ["rows", array 20 (object_ ["row"; "category"] ["row", reference "row_"; "category", reference "account_"])]]] in
   (* A proposal acts in the conversation's own scope and currency, so it takes no currency argument. *)
   let propose_budget = `Assoc ["type", str "function"; "function", `Assoc [
     "name", str "propose_set_budget";
@@ -68,8 +72,9 @@ let tool_schemas =
      "category_trend", ["category"], [category; cycles];
      "relevant_transactions", [], [offset; category; "limit", integer 1 20];
      "recurring", [], []; "budget_status", [], [offset]; "goals", [], [];
+     "inbox_rows", [], []; "categories", [], [];
      "forecast", [], ["cycles", `Assoc ["type", str "integer"; "enum", `List [`Int 1; `Int 3; `Int 6];
-       "description", str "Forecast horizon in months from the current local date: 1, 3 or 6 (default 3). All one-off dates must fit this horizon."]; "scenario", scenario]] @ [propose_budget]
+       "description", str "Forecast horizon in months from the current local date: 1, 3 or 6 (default 3). All one-off dates must fit this horizon."]; "scenario", scenario]] @ [propose_budget; propose_categorize]
 
 let call_json (c : raw_call) = `Assoc ["id", str c.id; "type", str "function";
   "function", `Assoc ["name", str c.name; "arguments", str c.arguments]]

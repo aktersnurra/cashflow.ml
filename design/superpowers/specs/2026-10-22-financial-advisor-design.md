@@ -344,3 +344,12 @@ undecided, unexpired and still based on the budget the user saw (otherwise `Out_
 click returns the recorded state. States move from `Awaiting` to exactly one of `Applied`, `Declined`, `Out_of_date`,
 `Not_applied`, `Lapsed`. Snapshots overlay the recorded state onto the card, so a reload, a second tab and a restart agree.
 Goals, categorising and entries are further `propose_*` tools on the same path.
+
+### `propose_categorize` (same path)
+
+The model reads `inbox_rows` (waiting rows with run-local `row_...` aliases, never ids) and `categories` (expense and income
+categories with account aliases), then calls `propose_categorize` with up to 20 `{row, category}` pairs. The projection only
+accepts rows this run was shown, money out to an expense category and money in to an income one, in the bank account's own
+owner and the conversation's pinned scope and currency. The card lists each transaction, amount and category; the proposal
+stores the transfer and category ids with each row's revision and position. Apply re-checks every row is still open, unchanged
+and the category still valid, then claims the proposal and files all rows through `Inbox.categorize` in one transaction.

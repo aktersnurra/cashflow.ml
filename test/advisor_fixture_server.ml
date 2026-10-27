@@ -135,6 +135,11 @@ let () =
                   content = "Datum;Text;Belopp;Saldo\n2026-10-20;Synthetic purchase;-250,00;-250,00\n"; decisions = [] }));
               let item = List.hd (Inbox.list service access ~limit:10) in
               ignore (S.ok (Inbox.categorize service access ~transfer_id:item.item.transfer_id ~category_id:groceries ()));
+              (* The categorize scenario needs a row that is still uncategorized. *)
+              if privacy_mode = "propose-categorize" then
+                ignore (S.ok_import (Import.confirm (Import.context service access)
+                  { target = Import.Existing statement; file_name = None;
+                    content = "Datum;Text;Belopp;Saldo\n2026-10-21;Synthetic coffee;-35,00;-285,00\n"; decisions = [] }));
               ((fun () ->
                 let ctx = S.ok (Insights.context service access ~scope:Me ()) in
                 ignore (S.ok (Insights.set_budget ctx ~category_id:groceries ~monthly_amount:500000L ~rollover:false ~effective_from:None))),
@@ -186,7 +191,26 @@ let () =
                       ("index", `Int 0); ("id", `String id); ("type", `String "function");
                       ("function", `Assoc [("name", `String name); ("arguments", `String "{}")])]])]);
                     ("finish_reason", `String "tool_calls")]])]) ^ "\n\ndata: [DONE]\n\n") in
-                if privacy_mode = "propose" then (
+                if privacy_mode = "propose-categorize" then (
+                  (* Read the uncategorized rows and the categories, then file the first row under Groceries. *)
+                  let open Yojson.Safe.Util in
+                  let tools = Yojson.Safe.from_string body |> member "messages" |> to_list
+                    |> List.filter (fun m -> member "role" m = `String "tool") in
+                  let result id = List.find_opt (fun m -> member "tool_call_id" m = `String id) tools in
+                  let call index id name arguments = `Assoc [("index", `Int index); ("id", `String id); ("type", `String "function");
+                    ("function", `Assoc [("name", `String name); ("arguments", `String arguments)])] in
+                  let calls list = on_chunk ("data: " ^ Yojson.Safe.to_string (`Assoc [("choices", `List [`Assoc [
+                    ("index", `Int 0); ("delta", `Assoc [("tool_calls", `List list)]); ("finish_reason", `String "tool_calls")]])]) ^ "\n\ndata: [DONE]\n\n") in
+                  match result "rows", result "cats", result "filed" with
+                  | None, _, _ | _, None, _ -> calls [ call 0 "rows" "inbox_rows" "{}"; call 1 "cats" "categories" "{}" ]
+                  | Some _, Some _, Some _ -> on_chunk (text "I have proposed filing it; it is waiting for your confirmation."); finish ()
+                  | Some rows, Some cats, None ->
+                      let data m = member "content" m |> to_string |> Yojson.Safe.from_string |> member "data" |> to_list in
+                      let row = member "reference" (List.hd (data rows)) |> to_string in
+                      let category = List.find (fun c -> member "name" c = `String "Groceries") (data cats) |> member "reference" |> to_string in
+                      calls [ call 0 "filed" "propose_categorize"
+                        (Yojson.Safe.to_string (`Assoc [("rows", `List [`Assoc [("row", `String row); ("category", `String category)]])])) ])
+                else if privacy_mode = "propose" then (
                   (* Look at the categories, then propose a budget for the first one shown, then answer. *)
                   let open Yojson.Safe.Util in
                   let tools = Yojson.Safe.from_string body |> member "messages" |> to_list
