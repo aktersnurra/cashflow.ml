@@ -75,7 +75,7 @@ const sleep = ms => new Promise(r => setTimeout(r,ms));
   assert.equal(await composer().inputValue(),'next private draft');
   assert.equal(await original.evaluate(el=>el===document.querySelector('[data-testid="selected-finding"]')),true);
   const scroll=await page.evaluate(()=>window.scrollY);
-  await nav('Budgets').click();await page.getByText('No budgets yet. Set one for a category to see your pace.',{exact:true}).waitFor();await nav('Advisor').click();await sleep(100);
+  await nav('Plan').click();await page.getByText('No budgets yet. Set one for a category to see your pace.',{exact:true}).waitFor();await nav('Advisor').click();await sleep(100);
   assert.ok(Math.abs(await page.evaluate(()=>window.scrollY)-scroll)<=1,'window scroll restored after non-Advisor Remote consumer');
   assert.equal(await composer().inputValue(),'next private draft');
   assert.equal(await page.evaluate(()=>window.documentStamp),stamp,'ordinary financial navigation does not reload');

@@ -436,12 +436,12 @@ The UI follows Linear's style:
 
 The phone is a first-class target, designed mobile-first:
 
-- below 768 px, a bottom tab bar (Home · Inbox · Add · Budgets · More) replaces the sidebar;
+- below 768 px, a bottom tab bar (Home · Money · Add · Plan · Settings) replaces the sidebar;
 - in the Inbox, cards are swiped right to accept a suggestion and left to choose a category;
 - **Add** is a quick-entry sheet for cash and for spending you want logged before the bank file arrives (§6.7);
 - the app can be installed as a PWA (manifest plus icon; no offline writes in v1).
 
-On desktop, the same pages add the sidebar, the command palette and keyboard shortcuts.
+On desktop, the same pages add the sidebar, the command palette and keyboard shortcuts. The sidebar and tab bar show two sections instead of every page: **Money** (Transactions, Accounts, Cash flow) and **Plan** (Budgets, Forecast, Insights). Each page keeps its own address, and a pill strip above the page switches between a section's pages.
 
 ### 11.2 Pages
 
