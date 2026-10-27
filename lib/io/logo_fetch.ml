@@ -187,7 +187,18 @@ let fetch network link =
       if addresses = [] then Error Unreachable_site
       else if not (List.for_all public_address addresses) then Error Unsafe_address
       else
-        let* response = network.get ~uri ~address:(List.hd addresses) ~max_bytes in
+        (* Every address was checked public above. IPv4 goes first and a failed connection falls through to the next
+           address, as a browser or curl would: a host whose first record is IPv6 must not fail where IPv4 works.
+           Only "couldn't connect" moves on; any answer, even an error status, is final. *)
+        let v6 address = String.contains address ':' in
+        let ordered = List.filter (fun a -> not (v6 a)) addresses @ List.filter v6 addresses in
+        let rec connect = function
+          | [] -> Error Unreachable_site
+          | [ address ] -> network.get ~uri ~address ~max_bytes
+          | address :: rest -> (
+              match network.get ~uri ~address ~max_bytes with Error Unreachable_site -> connect rest | result -> result)
+        in
+        let* response = connect ordered in
         if String.length response.body > max_bytes then Error Oversized_body
         else Ok (uri, response)) in
     if List.mem response.status [ 301; 302; 303; 307; 308 ] then

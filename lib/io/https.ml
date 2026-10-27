@@ -210,14 +210,19 @@ let stream_post ?tls env : stream_post =
 let logo_network env : Logo_fetch.network =
   let with_request : type a. (unit -> (a, Logo_fetch.error) result) -> (a, Logo_fetch.error) result = fun f ->
     try Eio.Time.with_timeout_exn env#clock 5. f
-    with Eio.Time.Timeout -> Error Logo_fetch.Unreachable_site in
-  let protect f =
+    with Eio.Time.Timeout ->
+      Log.warn (fun m -> m "logo fetch gave up after 5 seconds");
+      Error Logo_fetch.Unreachable_site in
+  (* Every network failure reaches the person as "couldn't be reached"; the operator needs the reason. *)
+  let protect step f =
     try Ok (f ())
     with Eio.Cancel.Cancelled _ as exn -> raise exn
-       | _ -> Error Logo_fetch.Unreachable_site
+       | exn ->
+           Log.warn (fun m -> m "logo fetch failed at %s: %s" step (Printexc.to_string exn));
+           Error Logo_fetch.Unreachable_site
   in
   let resolve ~host =
-    match protect (fun () -> Eio.Net.getaddrinfo_stream ~service:"443" env#net host) with
+    match protect "dns" (fun () -> Eio.Net.getaddrinfo_stream ~service:"443" env#net host) with
     | Error e -> Error e
     | Ok addresses ->
         if addresses = [] || List.exists (function `Unix _ -> true | _ -> false) addresses then
@@ -227,7 +232,7 @@ let logo_network env : Logo_fetch.network =
           | `Unix _ -> None) addresses)
   in
   let get ~uri ~address ~max_bytes =
-    match protect (fun () ->
+    match protect "connect or request" (fun () ->
       let ip = Ipaddr.of_string_exn address |> Ipaddr.to_octets |> Eio.Net.Ipaddr.of_raw in
       Eio.Switch.run @@ fun sw ->
       let tls = match tls_config () with Ok tls -> tls | Error () -> failwith "TLS unavailable" in

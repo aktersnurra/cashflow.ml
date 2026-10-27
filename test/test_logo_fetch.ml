@@ -145,6 +145,32 @@ let request_scope () =
   Alcotest.(check int) "independent budget for each hop" 4 !count;
   Alcotest.(check bool) "scope released" false !active
 
+(* A host listing IPv6 first (or an address that will not connect) must still work where another address does. *)
+let tries_next_address () =
+  let tried = ref [] in
+  let net failing =
+    { with_request = (fun f -> f ());
+      resolve = (fun ~host:_ -> Ok [ "2606:4700:4700::1111"; "8.8.4.4"; "8.8.8.8" ]);
+      get = (fun ~uri:_ ~address ~max_bytes:_ ->
+        tried := address :: !tried;
+        if List.mem address failing then Error Unreachable_site
+        else Ok { status = 200; headers = [ "content-type", "image/png" ]; body = png }) } in
+  Alcotest.(check bool) "works" true (Result.is_ok (fetch (net []) "https://example.org/logo.png"));
+  Alcotest.(check (list string)) "IPv4 is tried before IPv6" [ "8.8.4.4" ] (List.rev !tried);
+  tried := [];
+  Alcotest.(check bool) "falls back to the next address" true (Result.is_ok (fetch (net [ "8.8.4.4" ]) "https://example.org/logo.png"));
+  Alcotest.(check (list string)) "in order" [ "8.8.4.4"; "8.8.8.8" ] (List.rev !tried);
+  tried := [];
+  Alcotest.(check bool) "IPv6 is the last resort" true (Result.is_ok (fetch (net [ "8.8.4.4"; "8.8.8.8" ]) "https://example.org/logo.png"));
+  Alcotest.(check (list string)) "all tried" [ "8.8.4.4"; "8.8.8.8"; "2606:4700:4700::1111" ] (List.rev !tried);
+  tried := [];
+  Alcotest.(check bool) "nothing connects" true (fetch (net [ "8.8.4.4"; "8.8.8.8"; "2606:4700:4700::1111" ]) "https://example.org/logo.png" = Error Unreachable_site);
+  tried := [];
+  let answers = { with_request = (fun f -> f ()); resolve = (fun ~host:_ -> Ok [ "8.8.4.4"; "8.8.8.8" ]);
+    get = (fun ~uri:_ ~address ~max_bytes:_ -> tried := address :: !tried; Ok { status = 404; headers = []; body = "" }) } in
+  Alcotest.(check bool) "an error status is an answer, not a reason to retry" true (fetch answers "https://example.org/logo.png" = Error Unreachable_site);
+  Alcotest.(check int) "one connection" 1 (List.length !tried)
+
 let image_boundaries () =
   let run body =
     let calls = ref [] in
@@ -270,4 +296,5 @@ let () = Alcotest.run "logo fetch" [
              Alcotest.test_case "failed candidate" `Quick failed_icon_falls_back;
              Alcotest.test_case "bounded distinct candidates" `Quick bounded_distinct_candidates;
              Alcotest.test_case "many timed-out candidates" `Quick many_timed_out_candidates;
-             Alcotest.test_case "shared request budget" `Quick shared_request_budget ] ]
+             Alcotest.test_case "shared request budget" `Quick shared_request_budget;
+             Alcotest.test_case "tries the next address" `Quick tries_next_address ] ]
