@@ -844,6 +844,74 @@ let proposal_endpoints () =
       Alcotest.(check (option int64)) "without writing" (Some 1L) (budget ());
       Alcotest.(check int) "wrong method" 405 (status (req ~meth:H.OTHER ("/api/advisor/proposals/" ^ apply ^ "/apply"))))
 
+(* A categorize proposal files every row it names, as the Inbox would, only if each is still untouched; nothing else. *)
+let categorize_proposal_endpoints () =
+  fixture (fun _ service token _ req ->
+      let open Yojson.Safe.Util in
+      ignore (req ~meth:POST ~body:"{\"enabled\":true}" "/api/advisor/consent");
+      let access = Test_service_support.sign_in service "http" in
+      let owner = (Access.user access).id in
+      let named name =
+        (List.find (fun (i : Account_info.t) -> i.account.name = name && Owner.equal i.account.owner (Access.personal access)) (Service.accounts service access)).account.id
+      in
+      let groceries = named "Groceries" and salary = named "Salary" in
+      let bank = Test_service_support.open_checking service access ~statement_backed:true "Bank" in
+      let csv = "Datum;Text;Belopp\n2026-10-02;ICA NARA;-250,00\n2026-10-03;SALARY ACME;10 000,00\n2026-10-04;KIOSK;-30,00\n" in
+      (match Import.confirm (Import.context service access) { Import.target = Existing bank; file_name = Some "export.csv"; content = csv; decisions = [] } with
+       | Ok (`Imported _) -> ()
+       | _ -> Alcotest.fail "import");
+      let item description =
+        (List.find (fun (v : Inbox.item_view) -> v.transfer.transfer.memo.description = description) (Inbox.list service access ~limit:50)).item
+      in
+      let store = Advisor_store.create ~clock:service.now service.db in
+      let reference = Web_auth.session_ref token in
+      let accepted = ok (Advisor_store.accept store ~owner ~session:reference ~now ~model:"synthetic" ~source_finding:None (submit "categorize")) in
+      ignore (ok (Advisor_store.transition store ~run:accepted.ids.run_id (Advisor.Fail { code = Provider_unavailable; context = No_context })));
+      let counter = ref 0 in
+      let propose ?(revision = 0) rows =
+        incr counter;
+        let id = Printf.sprintf "00000000-0000-4000-8000-%012d" (100 + !counter) in
+        let tid (i : Import_store.item) = Transfer_id.to_string i.transfer_id in
+        ok (Advisor_store.add_proposal store ~owner ~conversation_id:accepted.ids.conversation_id ~id ~kind:"categorize"
+              ~arguments:(`Assoc [ ("rows", `List (List.map (fun (i, c) -> `Assoc [ ("transfer_id", `String (tid i)); ("category_id", `String (Account_id.to_string c)) ]) rows)) ])
+              ~precondition:(`Assoc [ ("rows", `List (List.map (fun ((i : Import_store.item), _) ->
+                  `Assoc [ ("transfer_id", `String (tid i)); ("revision", `Int revision); ("current", `String (Account_id.to_string i.current_account_id)) ]) rows)) ])
+              ~now ~expires:(Option.get (Ptime.add_span now (Ptime.Span.of_int_s 3600))));
+        id
+      in
+      let post id action = req ~meth:POST ~body:"{}" ("/api/advisor/proposals/" ^ id ^ "/" ^ action) in
+      let state response = body response |> Yojson.Safe.from_string |> member "state" |> to_string in
+      let balance id = Account.posted_balance (Result.get_ok (Service.find_account service access id)).account in
+      let open_rows () = Inbox.count service access in
+      Alcotest.(check int) "three rows wait" 3 (open_rows ());
+      let ica = item "ICA NARA" and pay = item "SALARY ACME" and kiosk = item "KIOSK" in
+      let both = propose [ (ica, groceries); (pay, salary) ] in
+      Alcotest.(check int) "proposing files nothing" 3 (open_rows ());
+      Alcotest.(check string) "apply" "applied" (state (post both "apply"));
+      Alcotest.(check int) "both rows left the inbox" 1 (open_rows ());
+      Alcotest.(check int64) "the expense is in Groceries" 25000L (balance groceries);
+      Alcotest.(check int64) "the income is in Salary" 1000000L (balance salary);
+      Alcotest.(check string) "a second click reports the recorded outcome" "applied" (state (post both "apply"));
+      Alcotest.(check int64) "and files nothing twice" 25000L (balance groceries);
+      let stale = propose ~revision:7 [ (kiosk, groceries) ] in
+      Alcotest.(check string) "a row that changed since is out of date" "out_of_date" (state (post stale "apply"));
+      Alcotest.(check int) "and nothing is filed" 1 (open_rows ());
+      let again = propose [ (ica, groceries) ] in
+      Alcotest.(check string) "a row already filed is out of date" "out_of_date" (state (post again "apply"));
+      let dismissed = propose [ (kiosk, groceries) ] in
+      Alcotest.(check string) "dismiss" "declined" (state (post dismissed "dismiss"));
+      Alcotest.(check string) "then it cannot be applied" "declined" (state (post dismissed "apply"));
+      Alcotest.(check int) "the last row still waits" 1 (open_rows ());
+      let system =
+        (List.find (fun (i : Account_info.t) -> i.account.kind = Account.Expense && Option.is_some i.details.role && Owner.equal i.account.owner (Access.personal access)) (Service.accounts service access)).account.id
+      in
+      let into_system = propose [ (kiosk, system) ] in
+      Alcotest.(check string) "a system category is not a place to file a row" "out_of_date" (state (post into_system "apply"));
+      Alcotest.(check int) "so the row still waits" 1 (open_rows ());
+      let wrong_kind = propose [ (kiosk, Result.get_ok (Result.map (fun (i : Account_info.t) -> i.account.id) (Service.find_account service access bank))) ] in
+      Alcotest.(check string) "a bank account is not a category" "out_of_date" (state (post wrong_kind "apply"));
+      Alcotest.(check int) "so the row still waits" 1 (open_rows ()))
+
 let () =
   Alcotest.run "advisor_http"
     [
@@ -866,5 +934,6 @@ let () =
           Alcotest.test_case "commands idempotency retry deletion" `Quick commands;
           Alcotest.test_case "memory notes endpoints" `Quick memory_endpoints;
           Alcotest.test_case "proposal endpoints" `Quick proposal_endpoints;
+          Alcotest.test_case "categorize proposal endpoints" `Quick categorize_proposal_endpoints;
         ] );
     ]

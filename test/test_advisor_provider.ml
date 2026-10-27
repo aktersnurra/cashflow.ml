@@ -39,7 +39,7 @@ let policy requests =
     Alcotest.(check (list string)) "allowlist unchanged" ["amazon-bedrock"] (member "only" p |> to_list |> List.map to_string);
     Alcotest.(check bool) "stream" true (member "stream" r = `Bool true);
     List.iter (fun key -> Alcotest.(check bool) ("no " ^ key) true (member key r = `Null)) ["plugins"; "reasoning"; "server_tools"];
-    Alcotest.(check int) "nine schemas" 9 (member "tools" r |> to_list |> List.length)) requests
+    Alcotest.(check int) "twelve schemas" 12 (member "tools" r |> to_list |> List.length)) requests
 let fragmented_provider_rounds () =
   let wire = ": keepalive\r\n\r\n" ^ text "Hej €雪" ^ finish "stop" ^ usage ^ usage ^ done_ in
   for i = 0 to String.length wire do
@@ -183,14 +183,14 @@ let schemas () =
   let examples = ["cycle_summary", "{\"cycles\":6}"; "category_spending", "{\"cycle_offset\":-5}";
     "category_trend", "{\"category\":\"account_1\",\"cycles\":1}";
     "relevant_transactions", "{\"category\":\"account_1\",\"limit\":20}";
-    "recurring", "{}"; "budget_status", "{}"; "goals", "{\"currency\":\"SEK\"}";
+    "recurring", "{}"; "budget_status", "{}"; "goals", "{\"currency\":\"SEK\"}"; "inbox_rows", "{}"; "categories", "{\"currency\":\"SEK\"}";
     "forecast", "{\"cycles\":6,\"scenario\":{\"leave_out\":[\"series_1\"],\"one_off\":[{\"date\":\"2026-10-22\",\"amount\":\"-100\",\"description\":\"synthetic\"}],\"follow_budgets\":true}}"] in
   List.iter (fun (name,args) ->
     ok (Cashflow_io.Advisor_projection.parse_call ~name ~arguments:args);
     let result, _, requests = run [tools [full_call 0 "id" name args] ^ finish "tool_calls" ^ done_] in ok result; policy requests) examples;
   let open Yojson.Safe.Util in
   let name_of schema = member "function" schema |> member "name" |> to_string in
-  let reads = List.filter (fun schema -> name_of schema <> "propose_set_budget") P.tool_schemas in
+  let reads = List.filter (fun schema -> not (List.mem (name_of schema) [ "propose_set_budget"; "propose_categorize" ])) P.tool_schemas in
   Alcotest.(check (list string)) "schema names" (List.map fst examples) (List.map name_of reads);
   (* The one proposing tool takes no currency: it acts in the conversation's own. *)
   let propose = List.find (fun schema -> name_of schema = "propose_set_budget") P.tool_schemas in
@@ -201,10 +201,17 @@ let schemas () =
   ok (Cashflow_io.Advisor_projection.parse_call ~name:"propose_set_budget" ~arguments:"{\"category\":\"account_1\",\"monthly_amount\":\"3500.50\",\"rollover\":true}");
   failed (Cashflow_io.Advisor_projection.parse_call ~name:"propose_set_budget" ~arguments:"{\"category\":\"account_1\",\"monthly_amount\":\"1\",\"currency\":\"SEK\"}");
   failed (Cashflow_io.Advisor_projection.parse_call ~name:"propose_set_budget" ~arguments:"{\"category\":\"account_1\"}");
+  let categorize = List.find (fun schema -> name_of schema = "propose_categorize") P.tool_schemas |> member "function" |> member "parameters" in
+  Alcotest.(check (list string)) "categorize fields" ["rows"] (member "properties" categorize |> to_assoc |> List.map fst);
+  ok (Cashflow_io.Advisor_projection.parse_call ~name:"propose_categorize" ~arguments:"{\"rows\":[{\"row\":\"row_ab_1\",\"category\":\"account_1\"}]}");
+  failed (Cashflow_io.Advisor_projection.parse_call ~name:"propose_categorize" ~arguments:"{\"rows\":[{\"row\":\"account_1\",\"category\":\"account_1\"}]}");
+  failed (Cashflow_io.Advisor_projection.parse_call ~name:"propose_categorize" ~arguments:"{\"rows\":[{\"row\":\"row_ab_1\",\"category\":\"account_1\",\"currency\":\"USD\"}]}");
+  failed (Cashflow_io.Advisor_projection.parse_call ~name:"propose_categorize" ~arguments:"{\"rows\":[],\"currency\":\"SEK\"}");
+  failed (Cashflow_io.Advisor_projection.parse_call ~name:"propose_categorize" ~arguments:(Printf.sprintf "{\"rows\":[%s]}" (String.concat "," (List.init 21 (fun i -> Printf.sprintf "{\"row\":\"row_ab_%d\",\"category\":\"account_1\"}" i)))));
   let properties s = member "properties" s |> to_assoc |> List.map fst |> List.sort String.compare in
   let expected = ["cycle_summary", ["cycles"]; "category_spending", ["cycle_offset"];
     "category_trend", ["category"; "cycles"]; "relevant_transactions", ["cycle_offset"; "category"; "limit"];
-    "recurring", []; "budget_status", ["cycle_offset"]; "goals", []; "forecast", ["cycles"; "scenario"]] in
+    "recurring", []; "budget_status", ["cycle_offset"]; "goals", []; "inbox_rows", []; "categories", []; "forecast", ["cycles"; "scenario"]] in
   List.iter2 (fun schema (name, keys) ->
     let params = member "function" schema |> member "parameters" in
     Alcotest.(check (list string)) (name ^ " exact fields") (List.sort String.compare ("currency" :: keys)) (properties params);

@@ -466,6 +466,40 @@ let remember_proposal t r (run : A.run) (evidence : Cashflow_workflow.Advisor_to
               ("from_cycle", `String p.from_cycle);
             ])
         ~now ~expires:(Option.value (Ptime.add_span now (Ptime.Span.of_int_s 86400)) ~default:now)
+  | Categorize_proposal_result rows ->
+      let now = t.clock.now () in
+      let id = A.Evidence_id.to_string evidence.id in
+      S.add_proposal t.store ~owner:r.owner ~conversation_id:run.ids.conversation_id ~id ~kind:"categorize"
+        ~arguments:
+          (`Assoc
+            [
+              ( "rows",
+                `List
+                  (List.map
+                     (fun (x : Cashflow_workflow.Advisor_tools.categorize_row) ->
+                       `Assoc
+                         [
+                           ("transfer_id", `String (Cashflow_core.Transfer_id.to_string x.transfer_id));
+                           ("category_id", `String (Cashflow_core.Account_id.to_string x.category.id));
+                         ])
+                     rows) );
+            ])
+        ~precondition:
+          (`Assoc
+            [
+              ( "rows",
+                `List
+                  (List.map
+                     (fun (x : Cashflow_workflow.Advisor_tools.categorize_row) ->
+                       `Assoc
+                         [
+                           ("transfer_id", `String (Cashflow_core.Transfer_id.to_string x.transfer_id));
+                           ("revision", `Int x.revision);
+                           ("current", `String (Cashflow_core.Account_id.to_string x.current));
+                         ])
+                     rows) );
+            ])
+        ~now ~expires:(Option.value (Ptime.add_span now (Ptime.Span.of_int_s 86400)) ~default:now)
   | _ -> Ok ()
 
 let run_handler t r sw : E.handler =

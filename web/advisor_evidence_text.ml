@@ -12,6 +12,9 @@ let title locale = function
   | "goals" -> Msg.advisor_evidence_goals locale
   | "forecast" -> Msg.advisor_evidence_forecast locale
   | "propose_set_budget" -> Msg.advisor_evidence_propose_budget locale
+  | "propose_categorize" -> Msg.advisor_evidence_propose_categorize locale
+  | "inbox_rows" -> Msg.advisor_evidence_inbox_rows locale
+  | "categories" -> Msg.advisor_evidence_categories locale
   | other -> other
 
 let label locale = function
@@ -33,6 +36,9 @@ let label locale = function
   | "Proposed budget" -> Msg.advisor_evidence_label_proposed_budget locale
   | "From cycle" -> Msg.advisor_evidence_label_from_cycle locale
   | "Carry over" -> Msg.advisor_evidence_label_carry_over locale
+  | "Transaction" -> Msg.advisor_evidence_label_transaction locale
+  | "Amount" -> Msg.advisor_evidence_label_amount locale
+  | "New category" -> Msg.advisor_evidence_label_new_category locale
   | other -> other
 
 let value locale (f : Cashflow_advisor_protocol.Wire.fact) =
