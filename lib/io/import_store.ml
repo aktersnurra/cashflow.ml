@@ -231,6 +231,19 @@ let remove_rule db owner id =
   run db delete_rule id (Codec.owner_kind owner) (Codec.owner_id owner);
   Sql.changes db > 0
 
+(* Per bank account: apply confident history and LLM suggestions on import *)
+
+let threshold_of = stmt "SELECT min_confidence FROM account_auto_apply WHERE account_id = ?" (Codec.account_id @-> nil) (opt (row (int @-> nil) Fun.id))
+let upsert_threshold =
+  stmt "INSERT INTO account_auto_apply (account_id, min_confidence) VALUES (?, ?) ON CONFLICT (account_id) DO UPDATE SET min_confidence = excluded.min_confidence"
+    Codec.(account_id @-> int @-> nil) exec
+let delete_threshold = stmt "DELETE FROM account_auto_apply WHERE account_id = ?" (Codec.account_id @-> nil) exec
+let all_thresholds = stmt "SELECT account_id, min_confidence FROM account_auto_apply ORDER BY account_id" nil (many (row Codec.(account_id @-> int @-> nil) (fun id n -> (id, n))))
+
+let auto_apply_threshold db account = run db threshold_of account
+let auto_apply_thresholds db = run db all_thresholds
+let set_auto_apply_threshold db account = function Some minimum -> run db upsert_threshold account minimum | None -> run db delete_threshold account
+
 (* What triage posted for an inbox row, and which rows a triage transfer was about. *)
 let record_triage db ~item transfer = run db insert_triage item transfer
 let triage_transfers db item = run db triage_of_item item

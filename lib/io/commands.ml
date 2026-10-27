@@ -785,6 +785,23 @@ let add_rule =
       in
       Ok (rule_json rule))
 
+let auto_apply_settings =
+  command ~mcp:false "list_auto_apply" Read "Bank accounts that apply confident category suggestions on import without asking." []
+    (fun service access _ ->
+      let entry (id, n) = `Assoc [ ("account_id", `String (Account_id.to_string id)); ("min_confidence", `Int n) ] in
+      Ok (`Assoc [ ("accounts", `List (List.map entry (Inbox.auto_apply_settings service access))) ]))
+
+let set_auto_apply =
+  command ~mcp:false "set_auto_apply" Write "Choose how confident a category suggestion must be to be applied on import without asking, or turn it off."
+    ~required:[ "account_id" ]
+    [ string_prop "account_id" "The bank account."; ("min_confidence", `Assoc [ ("type", `String "integer"); ("description", `String "50 to 100. Leave out to turn off.") ]) ]
+    (fun service access fields ->
+      let* account_id = account_id "account_id" fields in
+      let* min_confidence = arg (A.int "min_confidence" ~default:0 ~min:50 ~max:100 fields) in
+      let min_confidence = if min_confidence = 0 then None else Some min_confidence in
+      let* () = lift (Inbox.set_auto_apply service access ~account_id ~min_confidence) in
+      Ok (`Assoc [ ("status", `String "saved") ]))
+
 let remove_rule =
   command "remove_rule" Write "Remove a categorisation rule." ~required:[ "rule_id" ] [ string_prop "rule_id" "The rule." ]
     (fun service access fields ->
@@ -919,7 +936,7 @@ let base =
   [ get_session; list_accounts; open_account; update_account; close_account; set_opening_balance; set_market_value; query_transactions;
     set_merchant_logo; clear_merchant_logo; get_transaction; add_transaction; reverse_transaction; correct_transaction; post_pending; void_pending; list_inbox; categorize; share;
     pair; pair_candidates; accept_candidate; dismiss; identify_statement; import_statement; undo_import; list_imports; reconcile; set_budget; save_goal; earmark;
-    list_rules; add_rule; remove_rule; update_settings; respond_to_invitation; leave_household; create_household; invite_member;
+    list_rules; add_rule; remove_rule; auto_apply_settings; set_auto_apply; update_settings; respond_to_invitation; leave_household; create_household; invite_member;
     update_household ]
   @ queries
 
