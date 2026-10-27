@@ -56,3 +56,23 @@ let title locale = function
   | Settings -> Msg.nav_settings locale
   | Add -> Msg.nav_add locale
   | Import -> Msg.nav_import locale
+
+(* The sidebar shows two sections instead of every page: Money (what happened) and Plan (what is
+   coming). Each page keeps its own address; a strip above the page switches between a section's pages. *)
+type section = Money | Plan [@@deriving equal]
+
+let section = function
+  | Transactions _ | Inbox | Accounts | Account _ | Cashflow -> Some Money
+  | Budgets | Forecast | Insights -> Some Plan
+  | Home | Advisor _ | Household | Settings | Add | Import -> None
+
+let section_entry = function Money -> Transactions { offset = 0; category = None } | Plan -> Budgets
+let section_pages = function Money -> [ Transactions { offset = 0; category = None }; Accounts; Cashflow ] | Plan -> [ Budgets; Forecast; Insights ]
+
+(* The page a strip highlights: the inbox is part of Transactions, an account part of Accounts. *)
+let section_page = function
+  | Inbox | Transactions _ -> Transactions { offset = 0; category = None }
+  | Account _ -> Accounts
+  | route -> route
+
+let section_title locale = function Money -> Msg.nav_money locale | Plan -> Msg.nav_plan locale
