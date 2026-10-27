@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Command bar
+
+- Typing a question in the command palette (Ctrl+K or /) now offers "Ask the advisor: ..." after any page or action
+  that matches. Choosing it opens a new personal conversation with your words as a draft; nothing is sent until you
+  press Send.
+- Not built yet: the advisor proposing changes you confirm (budgets, goals, categories, entries).
+
 ### Advisor memory
 
 - Settings has a Memory section: short notes (up to 280 characters, 20 per person) that the advisor reads

@@ -4,11 +4,11 @@ open! Bonsai_web.Cont
 open Bonsai.Let_syntax
 open Js_of_ocaml
 
-let component ~(ctx : Ctx.t) ~(open_ : bool Bonsai.t) ~(close : unit Effect.t Bonsai.t) graph =
+let component ~(ctx : Ctx.t) ~(ask : (string -> unit Effect.t) Bonsai.t) ~(open_ : bool Bonsai.t) ~(close : unit Effect.t Bonsai.t) graph =
   let query, set_query = Bonsai.state "" graph in
   let accounts = Remote.load ~name:"list_accounts" ~ctx graph in
   let focus = match%sub open_ with true -> Bonsai_web.Effect.Focus.on_activate () graph | false -> Bonsai.return Vdom.Attr.empty in
-  let%arr focus and open_ and close and query and set_query and accounts and locale = ctx.locale and navigate = ctx.navigate and theme = ctx.theme
+  let%arr focus and ask and open_ and close and query and set_query and accounts and locale = ctx.locale and navigate = ctx.navigate and theme = ctx.theme
   and set_theme = ctx.set_theme in
   if not open_ then Vdom.Node.none
   else
@@ -23,7 +23,11 @@ let component ~(ctx : Ctx.t) ~(open_ : bool Bonsai.t) ~(close : unit Effect.t Bo
     let entries = ((Msg.palette_add locale, navigate Route.Add) :: pages) @ accounts @ [ (Msg.palette_flip_theme locale, set_theme (Theme.flipped theme)) ] in
     let filter query =
       let q = String.lowercase (String.strip query) in
-      List.filter entries ~f:(fun (label, _) -> String.is_empty q || String.is_substring (String.lowercase label) ~substring:q)
+      let matching = List.filter entries ~f:(fun (label, _) -> String.is_empty q || String.is_substring (String.lowercase label) ~substring:q) in
+      (* Anything that names no page or action is a question: it goes to the advisor, last so a page match still wins Enter. *)
+      let question = String.strip query in
+      if String.is_empty question || String.length question > Advisor_chat_hooks.input_bytes_limit then matching
+      else List.take matching 9 @ [ (Msg.palette_ask ~question locale, ask question) ]
     in
     let entries = filter query in
     let run effect = Effect.Many [ set_query ""; effect ] in

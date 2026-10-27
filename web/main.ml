@@ -162,7 +162,9 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
            | None -> Effect.Ignore
            | Some currency -> Effect.Many [(match selected_finding with
                | Some key -> Effect.Many [advisor.open_finding ~key ~scope:selected_scope ~currency ~locale; advisor.dispatch (C.Follow false)]
-               | None -> advisor.open_empty ~scope:selected_scope ~currency ~locale); focus_advisor])
+               | None ->
+                   (* Enabling the advisor must not lose a question typed into the palette beforehand. *)
+                   Effect.Many [advisor.open_empty ~scope:selected_scope ~currency ~locale; advisor.dispatch (C.Draft_changed advisor.view.draft)]); focus_advisor])
       | _ -> Effect.Ignore in
   Bonsai.Edge.on_change' ~equal:Poly.equal consent_key ~callback:consent_changed graph;
   let accepted_key = let%arr advisor and route in advisor.view.first_acceptance, advisor.view.selected_conversation, route in
@@ -281,7 +283,12 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
     | Add -> Add_page.page ~ctx graph
     | Import -> Import_page.page ~ctx graph
   in
-  let palette_view = Palette.component ~ctx ~open_:palette ~close:(let%arr set_palette in set_palette false) graph in
+  (* The question becomes the draft of a new personal conversation only if that conversation opens. *)
+  let ask_advisor = let%arr new_conversation and advisor and session in
+    fun question -> match advisor_currency session W.Personal with
+      | None -> new_conversation W.Personal
+      | Some _ -> Effect.Many [ new_conversation W.Personal; advisor.dispatch (C.Draft_changed question); focus_advisor ] in
+  let palette_view = Palette.component ~ctx ~ask:ask_advisor ~open_:palette ~close:(let%arr set_palette in set_palette false) graph in
   let inbox_count = let%arr session in J.int (J.field "inbox_count" session) in
   let%arr page and home and route and locale and navigate and toast and pending_g and set_pending_g and set_palette and palette_view and inbox_count
   and set_route and theme and set_theme in
