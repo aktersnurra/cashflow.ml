@@ -283,7 +283,7 @@ let forecast_paired_imports () =
   let shared = open_checking service alice ~owner:(Household household.id) ~statement_backed:true "Shared" in
   let ctx = Import.context service alice in
   let import account rows =
-    match Import.confirm ctx { account_id = account; file_name = Some "export.csv"; content = "Datum;Text;Belopp\n" ^ rows; decisions = [] } with
+    match Import.confirm ctx { target = Import.Existing account; file_name = Some "export.csv"; content = "Datum;Text;Belopp\n" ^ rows; decisions = [] } with
     | Ok (`Imported _) -> ()
     | _ -> Alcotest.fail "import"
   in

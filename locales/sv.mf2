@@ -114,7 +114,7 @@ card.import.days =
   .match $days
   one {{Senaste importen var i går.}}
   * {{Senaste importen var för {$days} dagar sedan.}}
-card.import.drop = Släpp bankens Excel- eller CSV-fil här
+card.import.drop = Välj bankens Excel- eller CSV-fil, eller släpp den här
 card.import.reading = Läser {$file}…
 card.import.new =
   .input {$count :integer}
@@ -529,3 +529,14 @@ advisor.history_failed = Det gick inte att hämta samtalen.
 advisor.history_retry = Försök igen
 advisor.history_days = {$days} d
 advisor.history_unavailable_title = Samtalet är inte tillgängligt
+
+nav.import = Importera
+import.title = Importera ett kontoutdrag
+import.subtitle = Ladda ner transaktionslistan från banken (Excel eller CSV) och lägg till den här. Filen säger vilket konto den gäller.
+import.choose = Välj en fil från banken
+import.drop = eller släpp den här
+import.into = Konto
+import.new_account = Nytt konto
+import.name_prompt = Filen säger inte vilket konto det är. Välj ett, eller namnge det nya kontot.
+import.opens_with = Det nya kontot öppnas med bankens saldo, {$balance :currency} den {$date :date}.
+import.manual = Lägg till en transaktion för hand

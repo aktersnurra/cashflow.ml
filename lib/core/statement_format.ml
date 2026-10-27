@@ -10,6 +10,12 @@ type row = {
   reference : string option;  (** the bank's own transaction id, if any *)
 }
 
+(* What a file says about the account it was exported from, read from the preamble above the
+   header row. Only the last four digits of a number are kept. *)
+type identity = { institution : string option; account_name : string option; last4 : string option }
+
+let no_identity = { institution = None; account_name = None; last4 = None }
+
 module type S = sig
   val name : string
 
@@ -18,8 +24,8 @@ module type S = sig
 
   val parse : scale:int -> Csv.table -> (row list, string) result
 
-  val account_hint : Csv.table -> string option
-  (** The last four digits of the account number the file says it is for, if it says. *)
+  val identity : Csv.table -> identity
+  (** Which account the file says it is for, as far as it says. *)
 end
 
 (* Amounts as Swedish and English banks print them: "1 234,56", "-1234.56", "1.234,56", "−12,00". *)
@@ -93,10 +99,31 @@ let find_header table =
   in
   go 0 table
 
+(* The rows above the header: the bank's preamble. *)
+let preamble table =
+  let header = match find_header table with Some (i, _) -> i | None -> List.length table in
+  List.filteri (fun i _ -> i < header) table |> List.concat |> List.map String.trim |> List.filter (( <> ) "")
+
+let is_digits w = w <> "" && String.for_all (fun c -> c >= '0' && c <= '9') w
+
+(* "Lönekonto ****1234", "Card *1234": a name, then a masked number. *)
+let masked_account cell =
+  match String.rindex_opt cell '*' with
+  | Some star when not (String.contains cell ':') ->
+      let digits = String.trim (String.sub cell (star + 1) (String.length cell - star - 1)) in
+      let before = String.trim (String.sub cell 0 star) in
+      let name = String.trim (String.concat "" (String.split_on_char '*' before)) in
+      if String.length digits = 4 && is_digits digits then Some ((if name = "" then None else Some name), digits) else None
+  | _ -> None
+
 module Generic : S = struct
   let name = "generic"
   let detect table = Option.is_some (find_header table)
-  let account_hint _ = None
+
+  let identity table =
+    match List.find_map masked_account (preamble table) with
+    | Some (account_name, last4) -> { no_identity with account_name; last4 = Some last4 }
+    | None -> no_identity
 
   let parse ~scale table =
     match find_header table with
@@ -144,18 +171,19 @@ module Handelsbanken : S = struct
   (* The preamble line naming the account: its name followed by the number in groups of digits
      ("Lönekonto 123 456 789"). The clearing number has its own labelled cell, so a cell with a
      label (a colon) is never the account. *)
-  let account_hint table =
-    let header = match find_header table with Some (i, _) -> i | None -> List.length table in
-    let digits cell =
-      let words = String.split_on_char ' ' (String.trim cell) in
-      let rec trailing acc = function w :: rest when w <> "" && String.for_all (fun c -> c >= '0' && c <= '9') w -> trailing (w :: acc) rest | _ -> acc in
-      String.concat "" (trailing [] (List.rev words))
+  let identity table =
+    let account cell =
+      let words = List.filter (( <> ) "") (String.split_on_char ' ' cell) in
+      let rec split acc = function w :: rest when is_digits w -> split (w :: acc) rest | rest -> (List.rev rest, acc) in
+      let name, groups = split [] (List.rev words) in
+      let d = String.concat "" groups in
+      if String.contains cell ':' || String.length d < 6 then None
+      else Some ((match name with [] -> None | words -> Some (String.concat " " words)), String.sub d (String.length d - 4) 4)
     in
-    List.filteri (fun i _ -> i < header) table
-    |> List.concat
-    |> List.find_map (fun cell ->
-           let d = digits cell in
-           if String.contains cell ':' || String.length d < 6 then None else Some (String.sub d (String.length d - 4) 4))
+    let account_name, last4 =
+      match List.find_map account (preamble table) with Some (name, last4) -> (name, Some last4) | None -> (None, None)
+    in
+    { institution = Some "Handelsbanken"; account_name; last4 }
 
   let parse = Generic.parse
 end

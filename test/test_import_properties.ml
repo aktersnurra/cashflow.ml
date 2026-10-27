@@ -115,7 +115,7 @@ let test tc =
             (* Banks list newest or oldest first. *)
             let file = if draw tc (booleans ()) then List.rev file else file in
             let request decisions : Import.request =
-              { account_id = checking; file_name = None; content = export ~with_balance (List.rev_map (Array.get history) file); decisions }
+              { target = Import.Existing checking; file_name = None; content = export ~with_balance (List.rev_map (Array.get history) file); decisions }
             in
             let preview = ok_import (Import.preview ctx (request [])) in
             (* The user knows which of the file's rows really are new: those the ledger doesn't hold yet. *)

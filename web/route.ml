@@ -2,7 +2,7 @@ open! Core
 
 (* Transactions carries its filters, the pay cycle (0 the current one, -1 the one before) and
    optionally a category, so Back and links keep them. *)
-type t = Home | Advisor of string option | Cashflow | Transactions of { offset : int; category : string option } | Inbox | Accounts | Account of string | Budgets | Forecast | Household | Insights | Settings | Add [@@deriving equal, sexp]
+type t = Home | Advisor of string option | Cashflow | Transactions of { offset : int; category : string option } | Inbox | Accounts | Account of string | Budgets | Forecast | Household | Insights | Settings | Add | Import [@@deriving equal, sexp]
 
 let to_path = function
   | Home -> "/"
@@ -20,6 +20,7 @@ let to_path = function
   | Insights -> "/insights"
   | Settings -> "/settings"
   | Add -> "/add"
+  | Import -> "/import"
 
 let of_path path =
   match String.split (String.strip ~drop:(Char.equal '/') path) ~on:'/' with
@@ -38,6 +39,7 @@ let of_path path =
   | [ "insights" ] -> Insights
   | [ "settings" ] -> Settings
   | [ "add" ] -> Add
+  | [ "import" ] -> Import
   | _ -> Home
 
 let title locale = function
@@ -53,3 +55,4 @@ let title locale = function
   | Insights -> Msg.nav_insights locale
   | Settings -> Msg.nav_settings locale
   | Add -> Msg.nav_add locale
+  | Import -> Msg.nav_import locale

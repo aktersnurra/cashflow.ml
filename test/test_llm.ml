@@ -38,7 +38,7 @@ let test_suggestions_and_privacy () =
   let alice = sign_in service "alice" in
   let checking = open_checking service alice ~statement_backed:true "Alice's secret checking" in
   let csv = "Datum;Text;Belopp;Saldo\n2026-10-20;WILLYS HEMMA;-412,00;87 654,00\n" in
-  let preview = ok_import (Import.preview (Import.context service alice) { account_id = checking; file_name = None; content = csv; decisions = [] }) in
+  let preview = ok_import (Import.preview (Import.context service alice) { target = Import.Existing checking; file_name = None; content = csv; decisions = [] }) in
   (match (List.hd preview.rows).suggestion with
   | Some { source = Llm; confidence; category_id; _ } ->
       Alcotest.(check bool) "groceries" true (Account_id.equal category_id (account_named service alice "Groceries"));
@@ -59,7 +59,7 @@ let test_no_network_inside_the_import_transaction () =
   let alice = sign_in service "alice" in
   let checking = open_checking service alice ~statement_backed:true "Checking" in
   let csv = "Datum;Text;Belopp\n2026-10-20;WILLYS HEMMA;-412,00\n" in
-  ignore (ok_import (Import.confirm (Import.context service alice) { account_id = checking; file_name = None; content = csv; decisions = [] }));
+  ignore (ok_import (Import.confirm (Import.context service alice) { target = Import.Existing checking; file_name = None; content = csv; decisions = [] }));
   Alcotest.(check (list bool)) "asked once, outside" [ false ] !inside;
   match Inbox.list service alice ~limit:5 with
   | [ item ] -> Alcotest.(check bool) "suggestion kept" true (Option.is_some item.item.suggested_account_id)

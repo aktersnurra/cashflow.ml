@@ -131,7 +131,7 @@ let () =
                   ["2026-07-20"; "2026-08-20"; "2026-09-20"]);
               let statement = S.open_checking service access ~statement_backed:true "Import account" in
               ignore (S.ok_import (Import.confirm (Import.context service access)
-                { account_id = statement; file_name = None;
+                { target = Import.Existing statement; file_name = None;
                   content = "Datum;Text;Belopp;Saldo\n2026-10-20;Synthetic purchase;-250,00;-250,00\n"; decisions = [] }));
               let item = List.hd (Inbox.list service access ~limit:10) in
               ignore (S.ok (Inbox.categorize service access ~transfer_id:item.item.transfer_id ~category_id:groceries ()));
@@ -140,7 +140,7 @@ let () =
                 ignore (S.ok (Insights.set_budget ctx ~category_id:groceries ~monthly_amount:500000L ~rollover:false ~effective_from:None))),
                (fun () ->
                 ignore (S.ok_import (Import.confirm (Import.context service access)
-                  { account_id = statement; file_name = None;
+                  { target = Import.Existing statement; file_name = None;
                     content = "Datum;Text;Belopp;Saldo\n2026-10-21;Synthetic followup;-400,00;-650,00\n"; decisions = [] }));
                 List.iter (fun item -> ignore (S.ok (Inbox.categorize service access ~transfer_id:item.Inbox.item.transfer_id ~category_id:groceries ())))
                   (Inbox.list service access ~limit:10))))

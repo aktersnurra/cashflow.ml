@@ -18,6 +18,7 @@ module Idempotency_key = Cashflow_core.Idempotency_key
 module Ledger_core = Cashflow_core.Ledger_core
 module Ledger_error = Cashflow_core.Ledger_error
 module Ledger_event = Cashflow_core.Ledger_event
+module Owner = Cashflow_core.Owner
 module Statement_format = Cashflow_core.Statement_format
 module Suggest = Cashflow_core.Suggest
 module Transfer = Cashflow_core.Transfer
@@ -37,8 +38,14 @@ let error_to_string : [< error ] -> string = function
 (* What the user said about a row the data can't decide (§6.3). *)
 type decision = Is_duplicate | Is_new
 
+(* A bank account or card the import opens when the statement is for one that isn't here yet. Nothing
+   is created by a preview; [confirm] opens it and posts the rows in one transaction. *)
+type new_account = { name : string; kind : Account.kind; owner : Owner.t; institution : string option; number_last4 : string option }
+
+type target = Existing of Account_id.t | Create of new_account
+
 type request = {
-  account_id : Account_id.t;
+  target : target;
   file_name : string option;
   content : string;
   decisions : (int * decision) list;  (** by row index, for ambiguous rows *)
@@ -46,7 +53,15 @@ type request = {
 
 type ctx = { service : Service.t; access : Access.t; suggester : Suggest.t }
 
-type decoded = { ctx : ctx; request : request; account : Account_info.t; format : string; sha256 : string; rows : Statement_format.row list }
+type decoded = {
+  ctx : ctx;
+  request : request;
+  account : Account_info.t;  (** for a [Create] target, a draft that isn't in the ledger *)
+  format : string;
+  identity : Statement_format.identity;
+  sha256 : string;
+  rows : Statement_format.row list;
+}
 
 type keyed_row = {
   index : int;
@@ -93,27 +108,70 @@ type preview = {
 
 let max_file_bytes = 5 * 1024 * 1024
 
+let read_table content = if Xlsx.is_xlsx content then Result.map_error (fun e -> `Unreadable e) (Xlsx.table content) else Ok (Csv.parse content)
+
+let read_format content =
+  if String.length content > max_file_bytes then Error (`Invalid "the file is larger than 5 MB")
+  else
+    let* table = read_table content in
+    match Statement_format.detect table with
+    | None -> Error (`Unreadable "no header row with a date and an amount column was found")
+    | Some format -> Ok (table, format)
+
+(* The account a [Create] target will be, for the preview: an id that matches nothing, so the
+   preview finds no duplicates and no pending entries, as is right for an account that is new. *)
+let draft_account ctx (n : new_account) =
+  let* () = Service.may_open ctx.access n.owner n.kind in
+  if n.kind <> Asset && n.kind <> Liability then Error (`Invalid "statements import into bank accounts or cards")
+  else if String.trim n.name = "" then Error (`Invalid "the new account needs a name")
+  else
+    let* currency = Service.currency ctx.service (Access.user ctx.access).default_currency in
+    let* number_last4 = Account_info.validate_last4 n.number_last4 in
+    let account : Account.t =
+      { id = Id_generator.account (); key = Result.get_ok (Idempotency_key.of_string "import:draft"); owner = n.owner; kind = n.kind; currency;
+        name = String.trim n.name; flags = Account.no_flags; closed = false; balances = Account.zero_balances; created_at = ctx.service.now () }
+    in
+    Ok { Account_info.account; details = { Account_info.no_details with institution = n.institution; number_last4; statement_backed = true } }
+
 (* Stage 1: read the file and find its format. *)
 let decode ctx (request : request) =
-  if String.length request.content > max_file_bytes then Error (`Invalid "the file is larger than 5 MB")
-  else
-    let* account = Service.find_account ctx.service ctx.access request.account_id in
-    if account.account.kind <> Asset && account.account.kind <> Liability then Error (`Invalid "statements import into bank accounts or cards")
-    else
-      let* table = if Xlsx.is_xlsx request.content then Result.map_error (fun e -> `Unreadable e) (Xlsx.table request.content) else Ok (Csv.parse request.content) in
-      match Statement_format.detect table with
-      | None -> Error (`Unreadable "no header row with a date and an amount column was found")
-      | Some (module F) when (match F.account_hint table, account.details.number_last4 with Some a, Some b -> a <> b | _ -> false) ->
-          Error
-            (`Invalid
-              (Printf.sprintf "this statement is for account ****%s, but %s is ****%s" (Option.get (F.account_hint table)) account.account.name
-                 (Option.get account.details.number_last4)))
-      | Some (module F) -> (
-          match F.parse ~scale:(Currency.scale account.account.currency) table with
-          | Error reason -> Error (`Unreadable reason)
-          | Ok [] -> Error (`Unreadable "the file has no transactions")
-          | Ok rows ->
-              Ok { ctx; request; account; format = F.name; sha256 = Digestif.SHA256.(to_hex (digest_string request.content)); rows })
+  let* table, (module F : Statement_format.S) = read_format request.content in
+  let* account =
+    match request.target with
+    | Existing id ->
+        let* account = Service.find_account ctx.service ctx.access id in
+        if account.account.kind <> Asset && account.account.kind <> Liability then Error (`Invalid "statements import into bank accounts or cards") else Ok account
+    | Create n -> draft_account ctx n
+  in
+  let identity = F.identity table in
+  match identity.last4, account.details.number_last4 with
+  | Some a, Some b when a <> b ->
+      Error (`Invalid (Printf.sprintf "this statement is for account ****%s, but %s is ****%s" a account.account.name b))
+  | _ -> (
+      match F.parse ~scale:(Currency.scale account.account.currency) table with
+      | Error reason -> Error (`Unreadable reason)
+      | Ok [] -> Error (`Unreadable "the file has no transactions")
+      | Ok rows -> Ok { ctx; request; account; format = F.name; identity; sha256 = Digestif.SHA256.(to_hex (digest_string request.content)); rows })
+
+(* What a file says about its account, and which of the user's bank accounts and cards it could go
+   into: [matches] are those whose last four digits are the file's. *)
+type identified = { format : string; identity : Statement_format.identity; matches : Account_info.t list; candidates : Account_info.t list }
+
+let identify ctx content =
+  let* table, (module F : Statement_format.S) = read_format content in
+  let* () = match F.parse ~scale:2 table with Error reason -> Error (`Unreadable reason) | Ok [] -> Error (`Unreadable "the file has no transactions") | Ok _ -> Ok () in
+  let identity = F.identity table in
+  let candidates =
+    List.filter
+      (fun (i : Account_info.t) -> (not i.account.closed) && (i.account.kind = Asset || i.account.kind = Liability) && Option.is_none i.details.role)
+      (Service.accounts ctx.service ctx.access)
+  in
+  let matches =
+    match identity.last4 with
+    | None -> []
+    | Some last4 -> List.filter (fun (i : Account_info.t) -> i.details.number_last4 = Some last4) candidates
+  in
+  Ok { format = F.name; identity; matches; candidates }
 
 let normalize_text s = String.lowercase_ascii s |> String.split_on_char ' ' |> List.filter (( <> ) "") |> String.concat " "
 
@@ -312,7 +370,7 @@ let check_balance (d, rows) =
           in
           Some { on_date; statement_balance = Int64.mul sign statement_balance; ledger_balance = Int64.add existing added })
   in
-  let opening =
+  let opening_of_rows =
     match oldest_row d.rows with
     | Some ({ balance = Some after; _ } as first) ->
         let day_before = Date.add_days first.booking_date (-1) in
@@ -320,12 +378,20 @@ let check_balance (d, rows) =
         if Int64.equal opening 0L || not (Int64.equal (Import_store.posted_balance_on db account day_before) 0L) then None else Some (day_before, opening)
     | _ -> None
   in
+  let opening = opening_of_rows in
+  (* A new account is opened with that balance, so the check counts it already. Whatever the
+     account's kind, the ledger shows an opening balance as the bank wrote it. *)
+  let balance =
+    match d.request.target, opening, balance with
+    | Create _, Some (_, b), Some check -> Some { check with ledger_balance = Int64.add check.ledger_balance b }
+    | _ -> balance
+  in
   Ok { decoded_file = d; rows; already_imported; balance; opening }
 
 let pipeline ?answered ctx = decode ctx >=> fingerprint >=> classify >=> suggest >=> suggest_with_llm ?answered >=> check_balance
 let preview ctx request = pipeline ctx request
 
-type summary = { batch : Import_store.batch; inbox_count : int; balance : balance_check option }
+type summary = { account : Account_info.t; batch : Import_store.batch; inbox_count : int; balance : balance_check option }
 
 exception Abort of error
 
@@ -383,6 +449,29 @@ let confirm ctx request =
   try
     let result = Sql.transaction db (fun () ->
         let fail e = raise (Abort e) in
+        let request =
+          match request.target with
+          | Existing _ -> request
+          | Create n ->
+              let key = Result.get_ok (Idempotency_key.of_string ("import-account:" ^ outside.decoded_file.sha256)) in
+              let details = outside.decoded_file.account.details in
+              let info =
+                match
+                  Service.open_account ctx.service ctx.access ~key ~owner:n.owner ~kind:n.kind ~name:(String.trim n.name)
+                    ~currency:(Currency.code outside.decoded_file.account.account.currency) ~flags:Account.no_flags ~details
+                with
+                | Ok (`Created info | `Exists info) -> info
+                | Error e -> fail (e :> error)
+              in
+              (match outside.opening with
+              | Some (value_date, balance) -> (
+                  match Service.set_opening_balance ctx.service ctx.access ~account_id:info.account.id ~balance ~value_date with
+                  | Ok (Ok _) -> ()
+                  | Ok (Error e) -> fail (`Invalid ("opening balance: " ^ Ledger_error.transfer_to_string e))
+                  | Error e -> fail (e :> error))
+              | None -> ());
+              { request with target = Existing info.account.id }
+        in
         let p = match pipeline ~answered ctx request with Ok p -> p | Error e -> fail e in
         match p.already_imported with
         | Some batch -> Ok (`Already_imported batch)
@@ -468,8 +557,15 @@ let confirm ctx request =
                         candidate_pending_id = Option.map (fun (t : Transfer.t) -> t.id) planned.near_pending;
                         merchant_key = Suggest.merchant_key planned.row; status = "open" })
               posted;
-            if not d.account.details.statement_backed then
-              Account_store.save_details db account.id { d.account.details with statement_backed = true };
+            (* The file teaches the account what it is, so the next one finds it by itself. *)
+            let details = d.account.details in
+            let learned =
+              { details with
+                statement_backed = true;
+                number_last4 = (match details.number_last4 with Some _ as known -> known | None -> d.identity.last4);
+                institution = (match details.institution with Some _ as known -> known | None -> d.identity.institution) }
+            in
+            if learned <> details then Account_store.save_details db account.id learned;
             let balance =
               Option.map
                 (fun (b : balance_check) ->
@@ -480,7 +576,7 @@ let confirm ctx request =
                   { b with ledger_balance })
                 p.balance
             in
-            Ok (`Imported { batch; inbox_count = !inbox_count; balance })) in
+            Ok (`Imported { account = { d.account with details = learned }; batch; inbox_count = !inbox_count; balance })) in
     (match result with
      | Ok (`Imported _) when Option.is_some ctx.service.assistant && Option.is_some ctx.service.logo_network ->
          let owner = outside.decoded_file.account.account.owner in

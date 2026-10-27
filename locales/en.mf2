@@ -115,7 +115,7 @@ card.import.days =
   .match $days
   one {{Last import was yesterday.}}
   * {{Last import was {$days} days ago.}}
-card.import.drop = Drop the bank's Excel or CSV file here
+card.import.drop = Choose the bank's Excel or CSV file, or drop it here
 card.import.reading = Reading {$file}…
 card.import.new =
   .input {$count :integer}
@@ -530,3 +530,14 @@ advisor.history_failed = Could not load conversations.
 advisor.history_retry = Try again
 advisor.history_days = {$days}d
 advisor.history_unavailable_title = Conversation unavailable
+
+nav.import = Import
+import.title = Import a statement
+import.subtitle = Download the transaction list from your bank (Excel or CSV) and add it here. The file says which account it is for.
+import.choose = Choose a bank file
+import.drop = or drop it here
+import.into = Account
+import.new_account = New account
+import.name_prompt = The file doesn't say which account this is. Choose one, or name the new account.
+import.opens_with = The new account opens with the bank's balance, {$balance :currency} on {$date :date}.
+import.manual = Add a transaction by hand
