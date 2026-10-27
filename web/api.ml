@@ -7,14 +7,29 @@ type json = Yojson.Safe.t
 
 let csrf_token = ref ""
 
+(* Every completed response is [Ok (code, body)]; [Error] is only a request that never got one.
+   Async_js.Http turns non-2xx into an error and drops the body, so it can't tell the two apart. *)
 let http ~meth ~url ?body () =
-  let headers = [ ("x-csrf-token", !csrf_token); ("content-type", "application/json") ] in
-  let args : Async_js.Http.Method_with_args.t =
-    match meth with `Get -> Get [] | `Post -> Post (Option.map body ~f:(fun b -> Async_js.Http.Post_body.String b))
+  let open Js_of_ocaml in
+  let req = XmlHttpRequest.create () in
+  let result = Ivar.create () in
+  let settle value = Ivar.fill_if_empty result value in
+  let network message _ =
+    settle (Error (`Network message));
+    Js._true
   in
-  match%map Async_js.Http.request ~headers ~url ~response_type:Default args with
-  | Error e -> Error (`Network (Error.to_string_hum e))
-  | Ok response -> Ok (response.code, response.content)
+  req##_open (Js.string (match meth with `Get -> "GET" | `Post -> "POST")) (Js.string url) Js._true;
+  req##setRequestHeader (Js.string "x-csrf-token") (Js.string !csrf_token);
+  req##setRequestHeader (Js.string "content-type") (Js.string "application/json");
+  req##.onerror := Dom.handler (network "Network error");
+  req##.onabort := Dom.handler (network "Request aborted");
+  req##.ontimeout := Dom.handler (network "Timeout");
+  req##.onreadystatechange :=
+    Js.wrap_callback (fun () ->
+        if Poly.equal req##.readyState XmlHttpRequest.DONE && req##.status <> 0 then
+          settle (Ok (req##.status, Js.Opt.case req##.responseText (fun () -> "") Js.to_string)));
+  req##send (Js.Opt.option (Option.map body ~f:Js.string));
+  Ivar.read result
 
 let parse body = try Some (Yojson.Safe.from_string body) with Yojson.Json_error _ -> None
 

@@ -25,6 +25,7 @@ SERVER=$!
 trap 'kill "$SERVER" 2>/dev/null || true' EXIT
 for i in $(seq 1 30); do curl -s -o /dev/null "$BASE_URL/health" && break; sleep 0.2; done
 cd "$ROOT/web/e2e"
+OUT=$WORK node signed_out.js
 OUT=$WORK TOKEN=$TOKEN node budget_rollover.js
 OUT=$WORK TOKEN=$TOKEN node test.js
 kill $SERVER

@@ -45,3 +45,10 @@
 - `cashflow.opam` lists every library the server uses directly (`ppx_sexp_conv`, `sexplib`,
   `sexplib0`, `httpun`, `gluten`, `bigstringaf`), so `opam install . --deps-only` is enough
   on a fresh FreeBSD build jail.
+
+### Fixes
+
+- Visiting without a session shows the sign-in page again instead of "Something went wrong",
+  and a failed command shows the server's message instead of the raw HTTP failure. The UI's
+  requests now return the status and body of every response; only a request that got no
+  response is an error. `web/e2e/signed_out.js` loads the page without a session.
