@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Automatic categories
+
+- Settings has an Automatic categories section: for each bank account with statements, choose how sure the app must
+  be (90%, 80% or 70%) before it files an imported row without asking. It covers categories learned from your history
+  and the assistant's suggestions; rules you marked automatic work as before. It is off by default, per account, and
+  rows below the bar wait in the inbox. Undoing the import takes automatically filed rows back.
+- A suggestion is only filed automatically when its category has the bank account's owner and currency; otherwise it
+  waits in the inbox. History suggestions reach at most 90% (and 70% needs two earlier choices); the assistant's reach
+  at most 80%. Only an admin can change this for a household bank account.
+- Not built yet: a "done, undo" list for individual automatically filed rows.
+
 ### Advisor memory
 
 - Settings has a Memory section: short notes (up to 280 characters, 20 per person) that the advisor reads
