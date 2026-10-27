@@ -206,6 +206,9 @@ let feed ?(narrative = true) (service : Service.t) access =
   let user = Access.user access in
   let db = service.db in
   let cards = ref [] in
+  (* Every calculation below reads the same ledger; load the fourteen months they need together once. *)
+  let shared = Insights.new_shared () in
+  Insights.preload_range shared service access ~first:(Date.add_days today (-420)) ~last:(Date.add_days today 70);
   (* Recurring payments scan a year of transfers and the shortfall and price-change cards both need them: work them
      out once per scope and currency rather than once per card kind. *)
   let recurring_memo = Hashtbl.create 4 in
@@ -224,7 +227,7 @@ let feed ?(narrative = true) (service : Service.t) access =
   List.iter (fun (d : import_due) -> add Import_due ("import:" ^ Account_id.to_string d.account.account.id ^ ":" ^ Date.to_string today) d) (import_due service access ~today);
   (match Inbox.count service access with 0 -> () | n -> add ~resolvable:false Inbox "inbox" n);
   List.iter (fun (v : Service.transfer_view) -> add Unmatched_entry ("unmatched:" ^ Transfer_id.to_string v.transfer.id) v) (unmatched service access);
-  (match Insights.context service access ~scope:Me () with
+  (match Insights.context service access ~scope:Me ~shared () with
   | Error _ -> ()
   | Ok ctx ->
       let current = Insights.current_cycle ctx in
@@ -247,7 +250,7 @@ let feed ?(narrative = true) (service : Service.t) access =
       add ~resolvable:false Overview "overview" { cycle = current; summary; currency = ctx.currency };
       List.iter
         (fun scope ->
-          match Insights.context service access ~scope () with
+          match Insights.context service access ~scope ~shared () with
           | Error _ -> ()
           | Ok ctx ->
               let report = Insights.budget_status ctx ~cycle_offset:0 in
@@ -298,12 +301,12 @@ let feed ?(narrative = true) (service : Service.t) access =
       | Ok plan when Date.days_between ~first:plan.plan_cycle.first ~last:today < 7 -> (
           match List.find_opt (fun (m : Insights.member_plan) -> User_id.equal m.member user.id) plan.members with
           | Some me when Int64.compare me.contributed me.contribution < 0 ->
-              let household_ctx = Result.get_ok (Insights.context service access ~scope:Household ()) in
+              let household_ctx = Result.get_ok (Insights.context service access ~scope:Household ~shared ()) in
               add Contributions_due ("contributions:" ^ Cycle.label plan.plan_cycle) (me, household_ctx.currency)
           | _ -> ())
       | _ -> ());
       (match Insights.settle_up ctx with
-      | Ok (_ :: _ as owed) -> add Settle_up "settle_up" (owed, (Result.get_ok (Insights.context service access ~scope:Household ())).currency)
+      | Ok (_ :: _ as owed) -> add Settle_up "settle_up" (owed, (Result.get_ok (Insights.context service access ~scope:Household ~shared ())).currency)
       | _ -> ());
       List.iter
         (fun (r : Analytics.recurring) ->

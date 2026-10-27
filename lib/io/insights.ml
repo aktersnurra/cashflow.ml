@@ -18,7 +18,14 @@ module User_id = Cashflow_core.User_id
 
 let ( let* ) = Result.bind
 
+(* The transfers a run has already loaded, so the calculations of one feed or report read the ledger once rather
+   than once each. It lives only as long as the run that made it, so it cannot go stale. *)
+type shared = { mutable span : (Date.t * Date.t * Transfer.t list) option }
+
+let new_shared () = { span = None }
+
 type ctx = {
+  shared : shared;
   service : Service.t;
   access : Access.t;
   scope : Analytics.scope;
@@ -28,7 +35,7 @@ type ctx = {
   today : Date.t;
 }
 
-let context (service : Service.t) access ~scope ?currency () =
+let context (service : Service.t) access ~scope ?currency ?(shared = new_shared ()) () =
   let user = Access.user access in
   let household = Access.household access in
   let* owners =
@@ -44,11 +51,20 @@ let context (service : Service.t) access ~scope ?currency () =
     | (Household | Family), Some h -> (h.pay_cycle, h.default_currency)
   in
   let* currency = Service.currency service (Option.value currency ~default:default_currency) in
-  Ok { service; access; scope; owners; currency; setting; today = Service.today service access }
+  Ok { shared; service; access; scope; owners; currency; setting; today = Service.today service access }
 
 let accounts ctx = Service.accounts ctx.service ctx.access
 let book ctx = Analytics.make_book ~accounts:(accounts ctx) ~owners:ctx.owners ~currency:ctx.currency
-let transfers ctx ~first ~last = Transfer_query.between ctx.service.db ctx.access ~first ~last
+let transfers ctx ~first ~last =
+  match ctx.shared.span with
+  | Some (loaded_first, loaded_last, loaded) when Date.compare loaded_first first <= 0 && Date.compare last loaded_last <= 0 ->
+      (* Same order as the query: oldest first, in the order recorded. *)
+      List.filter (fun (t : Transfer.t) -> Date.compare t.value_date first >= 0 && Date.compare t.value_date last <= 0) loaded
+  | _ -> Transfer_query.between ctx.service.db ctx.access ~first ~last
+
+(* Load a date range once for every later [transfers] call inside it. *)
+let preload_range shared (service : Service.t) access ~first ~last =
+  shared.span <- Some (first, last, Transfer_query.between service.db access ~first ~last)
 let current_cycle ctx = Cycle.cycle_of ctx.setting ctx.today
 
 (* The current cycle and [count - 1] before it, oldest first. *)

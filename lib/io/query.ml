@@ -55,7 +55,7 @@ let run : type a. Service.t -> Access.t -> a t -> (a * Insights.ctx, [> Service.
   in
   (* The encoders take the legacy context; a workflow report carries everything it needs. *)
   let ctx_of_context context : Insights.ctx =
-    { service; access = W.Reporting_context.access context; scope = W.Reporting_context.scope context;
+    { shared = Insights.new_shared (); service; access = W.Reporting_context.access context; scope = W.Reporting_context.scope context;
       owners = W.Reporting_context.owners context; currency = W.Reporting_context.currency context;
       setting = W.Reporting_context.setting context; today = W.Reporting_context.today context }
   in
