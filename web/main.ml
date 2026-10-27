@@ -39,8 +39,11 @@ let navigate_to set_route route =
       set_route route ]
 
 (* The sidebar: what you look at, then where the money lives; Settings sits at the foot. *)
-let nav_groups = Route.[ [ (Home, None); (Advisor None, None) ]; [ (section_entry Money, Some Money); (section_entry Plan, Some Plan) ]; [ (Household, None) ] ]
-let tab_items = Route.[ (Home, None); (section_entry Money, Some Money); (Add, None); (section_entry Plan, Some Plan); (Settings, None) ]
+let nav_groups = Route.[ [ (Home, None); (Import, None); (Advisor None, None) ]; [ (section_entry Money, Some Money); (section_entry Plan, Some Plan) ]; [ (Household, None) ] ]
+
+(* On a phone, importing a statement is the way money gets in, so it has the middle tab; adding a
+   transaction by hand is a link from there. *)
+let tab_items = Route.[ (Home, None); (section_entry Money, Some Money); (Import, None); (section_entry Plan, Some Plan); (Settings, None) ]
 
 let icon route =
   let name : Feather_icon.t =
@@ -57,6 +60,7 @@ let icon route =
     | Insights -> Trending_up
     | Settings -> Settings
     | Add -> Plus_circle
+    | Import -> Upload
   in
   Feather_icon.svg ~size:(`Px 18) ~stroke:(`Name "currentColor") ~stroke_width:(`Px 2) name
 
@@ -275,6 +279,7 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
     | Insights -> Insights_page.page ~ctx graph
     | Settings -> Settings_page.page ~ctx ~advisor graph
     | Add -> Add_page.page ~ctx graph
+    | Import -> Import_page.page ~ctx graph
   in
   let palette_view = Palette.component ~ctx ~open_:palette ~close:(let%arr set_palette in set_palette false) graph in
   let inbox_count = let%arr session in J.int (J.field "inbox_count" session) in

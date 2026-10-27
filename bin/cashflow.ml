@@ -144,7 +144,10 @@ let read_statement path =
   match In_channel.with_open_bin path In_channel.input_all with
   | exception Sys_error reason -> Logs.err (fun m -> m "%s" reason); 1
   | content -> (
-      let table = if Xlsx.is_xlsx content then Xlsx.table content else Ok (Csv.parse content) in
+      let table =
+        Result.bind (Xlsx.unzip_statement ~max_bytes:(5 * 1024 * 1024) content) (fun content ->
+            if Xlsx.is_xlsx content then Xlsx.table content else Ok (Csv.parse content))
+      in
       match Result.map (fun t -> (t, Statement_format.detect t)) table with
       | Error reason -> Logs.err (fun m -> m "can't read %s: %s" path reason); 1
       | Ok (_, None) -> Logs.err (fun m -> m "%s: no header row with a date and an amount column" path); 1
@@ -154,7 +157,7 @@ let read_statement path =
           | Ok rows ->
               let money v = Json.decimal ~scale:2 v in
               Printf.printf "format: %s\naccount: %s\nrows: %d\n" F.name
-                (Option.fold ~none:"(not stated)" ~some:(fun d -> "****" ^ d) (F.account_hint table)) (List.length rows);
+                (Option.fold ~none:"(not stated)" ~some:(fun d -> "****" ^ d) (F.identity table).last4) (List.length rows);
               List.iter
                 (fun (r : Statement_format.row) ->
                   Printf.printf "%s  %-30s %12s %12s\n" (Date.to_string r.booking_date) r.description (money r.amount)

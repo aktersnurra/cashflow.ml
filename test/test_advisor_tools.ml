@@ -118,7 +118,7 @@ let fixture f =
     {
       model = "fake";
       complete =
-        (fun ~system:_ ~user:_ ->
+        (fun ?schema:_ ~system:_ ~user:_ () ->
           incr calls;
           Alcotest.fail "unexpected narrative call");
     }
@@ -275,7 +275,7 @@ let isolation_and_freshness () =
     (S.ok_import
        (Import.confirm
           (Import.context { service with assistant = None } access)
-          { account_id = bank; file_name = None; content = csv; decisions = [] }));
+          { target = Import.Existing bank; file_name = None; content = csv; decisions = [] }));
   let item = List.hd (Inbox.list service access ~limit:10) in
   ignore (S.ok (Inbox.categorize service access ~transfer_id:item.item.transfer_id ~category_id:category ()));
   check "import changed facts" (before_import <> digest_tables service.db financial_tables);

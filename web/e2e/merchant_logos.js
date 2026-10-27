@@ -44,7 +44,7 @@ const fs = require('node:fs');
         const rows = [...document.querySelectorAll('.txn-table .txn-row:not(.table-head)')];
         const ica = rows.find(row => row.querySelector('.row-title')?.textContent?.includes('ICA NARA'));
         if (rows.length !== 4 || !ica || !ica.querySelector('.txn-account')?.textContent?.includes('Lönekonto') ||
-            !ica.querySelector('.txn-category')?.textContent?.includes('Groceries') ||
+            !/Groceries|Mat & hushåll/.test(ica.querySelector('.txn-category')?.textContent || '') ||
             !/[-−]\s*250/.test(ica.querySelector('.amount')?.textContent || '') || ica.querySelector('.amount.positive')) return false;
         const image = ica.querySelector('.logo-tile img');
         return withLogo ? !!image && image.complete && image.naturalWidth > 0 && image.naturalHeight > 0 && getComputedStyle(image).display !== 'none'

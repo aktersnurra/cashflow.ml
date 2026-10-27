@@ -11,11 +11,18 @@ const csv = `Bokföringsdag;Transaktionsdatum;Text;Belopp;Saldo
 2026-09-24;2026-09-24;HYRA;-9 000,00;881,00
 `;
 fs.writeFileSync(out + '/export.csv', csv);
+// A statement for an account that isn't opened yet: the file names it and gives its number.
+const savings = `Kontoutdrag;Sparkonto ****4321
+Bokföringsdag;Text;Belopp;Saldo
+2026-08-03;FRÅN LÖNEKONTO;1 000,00;6 000,00
+2026-08-01;RÄNTA;12,00;5 000,00
+`;
+fs.writeFileSync(out + '/savings.csv', savings);
 (async () => {
   const browser = await chromium.launch();
   const errors = [];
-  const run = async (name, viewport, steps) => {
-    const context = await browser.newContext({ viewport, locale: 'sv-SE' });
+  const run = async (name, viewport, steps, options = {}) => {
+    const context = await browser.newContext({ viewport, locale: 'sv-SE', ...options });
     await context.addCookies([{ name: 'cashflow_session', value: process.env.TOKEN, domain: '127.0.0.1', path: '/' }]);
     const page = await context.newPage();
     page.on('pageerror', e => errors.push(`${name}: ${e.message}`));
@@ -124,15 +131,33 @@ fs.writeFileSync(out + '/export.csv', csv);
     await page.goto(base + '/');
     await page.waitForSelector('.page .panel, .page .empty', { timeout: 15000 });
     await page.screenshot({ path: out + '/20-phone-home.png' });
-    await page.click('.tabbar >> text=Lägg till');
-    await page.waitForTimeout(800);
-    await page.screenshot({ path: out + '/21-phone-add.png' });
+    // Importing is the middle tab; the file says which account it is for.
+    await page.click('.tabbar >> text=Importera');
+    const upload = page.locator('.page:visible .dropzone:visible');
+    await upload.waitFor({ timeout: 10000 });
+    assert.equal(await upload.locator('.dropzone-hint').isVisible(), false, 'a touch screen offers no drop');
+    await page.screenshot({ path: out + '/21-phone-import.png' });
+    await upload.locator('input[type=file]').setInputFiles(out + '/savings.csv');
+    await page.waitForSelector('.import-preview', { timeout: 10000 });
+    const destination = page.locator('.import-destination');
+    assert.equal(await destination.locator('select').first().inputValue(), 'new', 'no account has ****4321, so a new one');
+    assert.equal(await destination.locator('input').inputValue(), 'Sparkonto', 'named from the file');
+    await page.screenshot({ path: out + '/22-phone-preview.png', fullPage: true });
+    await page.click('.import-preview .button.primary');
+    await page.waitForSelector('.import-result', { timeout: 10000 });
+    await page.click('.import-result >> text=Sparkonto');
+    await page.waitForSelector('h1 >> text=Sparkonto', { timeout: 10000 });
+    await page.screenshot({ path: out + '/23-phone-account.png', fullPage: true });
+    // Adding by hand is the way round.
+    await page.click('.tabbar >> text=Importera');
+    await page.click('.import-manual a');
+    await page.waitForSelector('.add-form', { timeout: 10000 });
     await page.click('.tabbar >> text=Pengar');
     await page.waitForSelector('.section-nav');
     const strip = await page.locator('.section-nav').boundingBox();
     assert.ok(strip.x >= 0 && strip.width <= 390, 'the section strip fits the phone width');
     assert.ok((await page.locator('.section-nav a').first().boundingBox()).x >= 16, 'the strip keeps the page gutter');
-  });
+  }, { hasTouch: true, isMobile: true });
   await browser.close();
   console.log(errors.length ? 'ERRORS:\n' + errors.join('\n') : 'no browser errors');
 })().catch(e => { console.error('FAILED', e.message); process.exit(1); });

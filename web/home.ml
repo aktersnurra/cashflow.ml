@@ -8,7 +8,7 @@ open Bonsai.Let_syntax
 let act ~key ~action = Api.run "act_on_card" (`Assoc [ ("key", `String key); ("action", `String action) ])
 
 let card_view ~(ctx : Ctx.t) (key : string Bonsai.t) (card : J.t Bonsai.t) graph =
-  let account_id = let%arr card in J.str (J.path [ "data"; "account"; "id" ] card) in
+  let account_id = let%arr card in Some (J.str (J.path [ "data"; "account"; "id" ] card)) in
   let import = Import_widget.component ~ctx ~account_id graph in
   let%arr card and key and import and locale = ctx.locale and changed = ctx.changed and navigate = ctx.navigate and notify = ctx.notify and session = ctx.session in
   ignore key;
@@ -251,7 +251,7 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
     | Loaded _, None -> Ui.empty (Msg.overview_empty locale)
     | Loaded _, Some c when Float.(Fmt.to_float (J.field "income" c) = 0. && Fmt.to_float (J.field "spending" c) = 0.) ->
         Ui.div ~cls:"panel empty-panel"
-          [ Ui.p (Msg.overview_empty locale); Ui.div ~cls:"actions" [ Ui.button ~kind:"primary" (Msg.nav_accounts locale) (navigate Route.Accounts) ] ]
+          [ Ui.p (Msg.overview_empty locale); Ui.div ~cls:"actions" [ Ui.button ~kind:"primary" (Msg.import_title locale) (navigate Route.Import) ] ]
     | Loaded _, Some c -> Ui.div [ figures c; Remote.view ~locale categories ~f:(flow c) ]
   in
   let attention =

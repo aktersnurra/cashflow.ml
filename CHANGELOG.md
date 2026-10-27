@@ -15,7 +15,34 @@
 - The sidebar shows Home, Advisor, Money, Plan and Household instead of every page. Money groups
   Transactions, Accounts and Cash flow; Plan groups Budgets, Forecast and Insights. Every page keeps
   its address, and a strip above the page switches between a section's pages. The phone tab bar is
-  Home, Money, Add, Plan, Settings.
+  Home, Money, Import, Plan, Settings.
+
+### Import
+
+- An Import page (`/import`), the middle tab on phones in place of Add: one file box, which on a
+  touch screen reads as a "Choose a bank file" button. Adding a transaction by hand is a link
+  from there.
+- The file says which account it is for. `identify_statement` reads its format, bank, account
+  name and the last four digits of its number; the rows go into the account with those digits,
+  or else into a new account named from the file, which `import_statement` (with `new_account`
+  instead of `account_id`) opens with the bank's opening balance only when the import is
+  confirmed. The name is asked for only when the file doesn't give one, and the account can be
+  changed in the preview. An account imported into learns its number and bank from the file.
+- A statement in a layout no format knows is read by the assistant, when one is configured: it
+  sees the first rows with every digit masked and answers as structured output (OpenRouter
+  `json_schema`, strict, only from endpoints that honour it) which column holds what and how
+  dates are written. The rows are then read from the file, so no figure comes from the model.
+  The answer is checked against the file and cached.
+- A statement can be uploaded in the zip the bank downloads it in (Handelsbanken's download is an
+  .xlsx named .zip); a spreadsheet without its workbook relationships still reads.
+
+### Interface
+
+- Starter categories follow the user's language: saving a language in Settings renames those
+  that still have a starter name (personal and household ones), and so does signing in in the
+  browser (personal ones). Categories someone renamed keep their names.
+- Drop-downs draw the app's chevron and, where the browser supports customizable select, open as
+  a themed list in light and dark.
 
 ### Forecast
 

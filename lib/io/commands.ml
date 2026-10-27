@@ -531,8 +531,7 @@ let decisions fields =
   | Some _ -> invalid "decisions must be a list"
 
 (* The file as text (CSV), or base64 for a binary one (an .xlsx). *)
-let import_request fields =
-  let* account_id = account_id "account_id" fields in
+let file_content fields =
   let* text = arg (A.string "content" fields) in
   let* encoded = arg (A.string "content_base64" fields) in
   let* content =
@@ -542,9 +541,30 @@ let import_request fields =
     | None, None -> invalid "content or content_base64 is required"
     | Some _, Some _ -> invalid "give content or content_base64, not both"
   in
+  Ok content
+
+(* Into an existing account, or into a new one the import opens. *)
+let import_target access fields =
+  match List.assoc_opt "account_id" fields, List.assoc_opt "new_account" fields with
+  | (None | Some `Null), Some (`Assoc n) ->
+      let* name = required_string "name" n in
+      let* kind = arg (A.string "kind" n) in
+      let* kind = match kind with None | Some "asset" -> Ok Account.Asset | Some "liability" -> Ok Liability | Some _ -> invalid "new_account.kind must be asset or liability" in
+      let* owner = owner_arg access n in
+      let* institution = arg (A.string "institution" n) in
+      let* number_last4 = arg (A.string "number_last4" n) in
+      Ok (Import.Create { name; kind; owner; institution; number_last4 })
+  | Some _, Some (`Assoc _) -> invalid "give account_id or new_account, not both"
+  | _ ->
+      let* id = account_id "account_id" fields in
+      Ok (Import.Existing id)
+
+let import_request access fields =
+  let* target = import_target access fields in
+  let* content = file_content fields in
   let* file_name = arg (A.string "file_name" fields) in
   let* decisions = decisions fields in
-  Ok { Import.account_id; file_name; content; decisions }
+  Ok { Import.target; file_name; content; decisions }
 
 let batch_json (b : Import_store.batch) =
   `Assoc
@@ -553,17 +573,46 @@ let batch_json (b : Import_store.batch) =
       ("first_date", Json.option Json.date b.first_date); ("last_date", Json.option Json.date b.last_date); ("imported_at", Json.time b.created_at);
       ("undone", `Bool b.undone) ]
 
+let identify_statement =
+  command "identify_statement" Read
+    "Read a bank statement (CSV, or a Handelsbanken .xlsx export) without importing it: its format, what it says about its account \
+     (bank, account name, last four digits of the number), the account it belongs to if one of yours has those digits, and the bank \
+     accounts and cards it could go into. Then import it with import_statement, into that account or, when none matches, into a \
+     new_account named from the file. A file in a layout cashflow doesn't know is read by the assistant, when one is configured: \
+     it sees the first rows with every digit masked and says which column holds what; the rows are then read from the file."
+    [ string_prop "content" "A CSV file's text."; string_prop "content_base64" "An .xlsx file, base64-encoded (instead of content)." ]
+    (fun service access fields ->
+      let* content = file_content fields in
+      let* (i : Import.identified) = Import.identify (Import.context service access) content in
+      let text = Json.option (fun s -> `String s) in
+      Ok
+        (`Assoc
+           [ ("format", `String i.format); ("institution", text i.identity.institution); ("account_name", text i.identity.account_name);
+             ("number_last4", text i.identity.last4); ("account", match i.matches with [ only ] -> Json.account only | _ -> `Null);
+             ("accounts", `List (List.map Json.account i.candidates)) ]))
+
 let import_statement =
   command "import_statement" Write
-    "Import a bank statement (CSV, or a Handelsbanken .xlsx export) into an account. Without confirm it only previews: which rows are new, which are duplicates of earlier \
+    "Import a bank statement (CSV, or a Handelsbanken .xlsx export) into an account, or with new_account instead of account_id into \
+     a bank account or card the import opens (with the bank's opening balance, when the file shows it). Without confirm it only previews: which rows are new, which are duplicates of earlier \
      imports, which confirm pending manual entries, and whether the balance will agree with the bank. With confirm: true it posts the \
      new rows; uncategorised ones go to the inbox. A file without running balances can have ambiguous rows: on its first or last day, \
      identical (same day, text and amount) to rows already imported. Ask the user whether each is already imported or a new \
      purchase, and pass the answers as decisions; confirm refuses until every ambiguous row is decided. For an account with nothing \
      before the file, the preview suggests an opening balance from the bank's running balance; offer to set it with \
      set_opening_balance so the balance check agrees."
-    ~required:[ "account_id" ]
-    [ string_prop "account_id" "The bank account or card the statement belongs to."; string_prop "content" "A CSV file's text.";
+    [ string_prop "account_id" "The bank account or card the statement belongs to.";
+      ( "new_account",
+        `Assoc
+          [ ("type", `String "object");
+            ( "properties",
+              `Assoc
+                [ ("name", `Assoc [ ("type", `String "string") ]); ("kind", `Assoc [ ("type", `String "string"); ("enum", `List [ `String "asset"; `String "liability" ]) ]);
+                  ("owner", `Assoc [ ("type", `String "string"); ("enum", `List [ `String "personal"; `String "household" ]) ]);
+                  ("institution", `Assoc [ ("type", `String "string") ]); ("number_last4", `Assoc [ ("type", `String "string") ]) ] );
+            ("required", `List [ `String "name" ]);
+            ("description", `String "Instead of account_id: the bank account (asset) or card (liability) to open for this statement.") ] );
+      string_prop "content" "A CSV file's text.";
       string_prop "content_base64" "An .xlsx file, base64-encoded (instead of content).";
       string_prop "file_name" "The file's name, for the import history.";
       ( "decisions",
@@ -578,7 +627,7 @@ let import_statement =
             ("description", `String "For each ambiguous row of the preview: duplicate (already imported) or new.") ] );
       ("confirm", `Assoc [ ("type", `String "boolean"); ("description", `String "Post the rows; otherwise only preview.") ]) ]
     (fun service access fields ->
-      let* request = import_request fields in
+      let* request = import_request access fields in
       let* confirm = arg (A.bool "confirm" ~default:false fields) in
       let ctx = Import.context service access in
       if not confirm then
@@ -595,11 +644,10 @@ let import_statement =
         match result with
         | `Already_imported batch -> Ok (`Assoc [ ("status", `String "already_imported"); ("import", batch_json batch) ])
         | `Imported (s : Import.summary) ->
-            let* info = lift (Service.find_account service access request.account_id) in
             Ok
               (`Assoc
-                 [ ("status", `String "imported"); ("import", batch_json s.batch); ("inbox", `Int s.inbox_count);
-                   ("balance_check", balance_json info.account.currency s.balance) ]))
+                 [ ("status", `String "imported"); ("account", Json.account s.account); ("import", batch_json s.batch); ("inbox", `Int s.inbox_count);
+                   ("balance_check", balance_json s.account.account.currency s.balance) ]))
 
 let undo_import =
   command "undo_import" Write "Reverse everything an import posted, including categorisations made since." ~required:[ "import_id" ] [ string_prop "import_id" "The import." ]
@@ -870,7 +918,7 @@ let queries =
 let base =
   [ get_session; list_accounts; open_account; update_account; close_account; set_opening_balance; set_market_value; query_transactions;
     set_merchant_logo; clear_merchant_logo; get_transaction; add_transaction; reverse_transaction; correct_transaction; post_pending; void_pending; list_inbox; categorize; share;
-    pair; pair_candidates; accept_candidate; dismiss; import_statement; undo_import; list_imports; reconcile; set_budget; save_goal; earmark;
+    pair; pair_candidates; accept_candidate; dismiss; identify_statement; import_statement; undo_import; list_imports; reconcile; set_budget; save_goal; earmark;
     list_rules; add_rule; remove_rule; update_settings; respond_to_invitation; leave_household; create_household; invite_member;
     update_household ]
   @ queries

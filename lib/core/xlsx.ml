@@ -7,7 +7,35 @@
 (* A zip member is refused above this, so a small file can't unpack into a huge one. *)
 let max_part_bytes = 20 * 1024 * 1024
 
-let is_xlsx content = Zipc.string_has_magic content
+let is_zip content = Zipc.string_has_magic content
+
+(* An .xlsx is a zip too; what makes it one is its workbook part. *)
+let is_xlsx content =
+  is_zip content && match Zipc.of_binary_string content with Ok zip -> Option.is_some (Zipc.find "xl/workbook.xml" zip) | Error _ -> false
+
+(* Banks hand out exports zipped (Handelsbanken does): the statement inside, an .xlsx or a CSV, as
+   if it had been uploaded itself. Anything else is returned as it is. A zip holding several
+   statements is refused rather than guessed at. *)
+let unzip_statement ~max_bytes content =
+  if not (is_zip content) || is_xlsx content then Ok content
+  else
+    match Zipc.of_binary_string content with
+    | Error e -> Error ("the zip couldn't be read: " ^ e)
+    | Ok zip -> (
+        let statement path =
+          let base = Filename.basename path and lower = String.lowercase_ascii path in
+          (not (String.starts_with ~prefix:"__MACOSX/" path)) && (not (String.starts_with ~prefix:"." base))
+          && List.exists (fun ext -> Filename.check_suffix lower ext) [ ".xlsx"; ".csv"; ".txt" ]
+        in
+        let members =
+          Zipc.fold (fun m acc -> match Zipc.Member.kind m with Zipc.Member.File f when statement (Zipc.Member.path m) -> (Zipc.Member.path m, f) :: acc | _ -> acc) zip []
+        in
+        match members with
+        | [] -> Error "the zip holds no spreadsheet or CSV file"
+        | [ (path, file) ] ->
+            if Zipc.File.decompressed_size file > max_bytes then Error (path ^ " in the zip is too large")
+            else Result.map_error (fun e -> path ^ ": " ^ e) (Zipc.File.to_binary_string file)
+        | several -> Error ("the zip holds several files (" ^ String.concat ", " (List.rev_map fst several) ^ "); upload one of them"))
 
 type tree = Element of string * (string * string) list * tree list | Text of string
 
@@ -35,8 +63,14 @@ let part zip path =
           if Zipc.File.decompressed_size file > max_part_bytes then Error (path ^ " is too large")
           else Result.map_error (fun e -> path ^ ": " ^ e) (Zipc.File.to_binary_string file))
 
-(* The first sheet's part, through the workbook's relationships. *)
-let first_sheet zip =
+(* The first sheet's part, through the workbook's relationships; a file written without them
+   still has its first sheet where every spreadsheet program puts it. *)
+let rec first_sheet zip =
+  match listed_sheet zip with
+  | Ok path -> Ok path
+  | Error _ as missing -> if Option.is_some (Zipc.find "xl/worksheets/sheet1.xml" zip) then Ok "xl/worksheets/sheet1.xml" else missing
+
+and listed_sheet zip =
   let* workbook = Result.bind (part zip "xl/workbook.xml") parse_xml in
   let* id =
     match Option.bind (child "sheets" workbook) (child "sheet") with

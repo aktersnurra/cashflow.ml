@@ -64,7 +64,7 @@ let test tc =
   let money minor = Printf.sprintf "%s%d,%02d" (if minor < 0 then "-" else "") (abs minor / 100) (abs minor mod 100) in
   let import (b, access) rows =
     let csv = "Datum;Text;Belopp\n" ^ String.concat "" (List.map (fun (d, t, a) -> Printf.sprintf "%s;%s;%s\n" d t (money a)) rows) in
-    match Import.confirm (Import.context service access) { account_id = b.id; file_name = None; content = csv; decisions = [] } with
+    match Import.confirm (Import.context service access) { target = Import.Existing b.id; file_name = None; content = csv; decisions = [] } with
     | Ok (`Imported (s : Import.summary)) -> b.rows <- List.map (fun (_, _, a) -> (s.batch.batch_id, a)) rows @ b.rows; true
     | Ok (`Already_imported _) | Error _ -> false
   in

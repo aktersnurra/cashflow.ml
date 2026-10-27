@@ -38,3 +38,18 @@ let applies scope entry =
   match entry.scope, scope with Both, _ | Personal, `Personal | Shared, `Shared -> true | _ -> false
 
 let key entry = Result.get_ok (Idempotency_key.of_string ("seed:" ^ entry.slug))
+
+(* A starter account still bearing a starter name (in any language) follows the language; one
+   someone renamed keeps its name. Accounts opened later for another currency carry it in their
+   key and name: "seed:uncategorized-expense-EUR", "Uncategorized (EUR)". *)
+let localized_name ~locale ~key ~name =
+  List.find_map
+    (fun entry ->
+      let base = "seed:" ^ entry.slug in
+      let follows label = if name = label entry.en || name = label entry.sv then Some (label (if String.starts_with ~prefix:"sv" locale then entry.sv else entry.en)) else None in
+      if key = base then follows Fun.id
+      else if String.starts_with ~prefix:(base ^ "-") key then
+        let currency = String.sub key (String.length base + 1) (String.length key - String.length base - 1) in
+        follows (fun n -> n ^ " (" ^ currency ^ ")")
+      else None)
+    entries

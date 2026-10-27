@@ -86,6 +86,15 @@ let seed_chart service access owner ~locale ~currency =
         | Error error -> invalid_arg (Ledger_error.account_to_string error))
     Chart.entries
 
+(* Starter accounts that still have their starter name, renamed into [locale]. *)
+let localize_chart service owner ~locale =
+  List.iter
+    (fun (info : Account_info.t) ->
+      match Chart.localized_name ~locale ~key:(Idempotency_key.to_string info.account.key) ~name:info.account.name with
+      | Some name when name <> info.account.name -> Store_sqlite.save_account service.db { info.account with name }
+      | _ -> ())
+    (Account_store.for_owner service.db owner)
+
 let currency service code =
   match Sql.(run service.db (stmt "SELECT scale FROM currencies WHERE code = ?" (text @-> nil) (opt (row (int @-> nil) Fun.id)))) code with
   | Some scale -> Result.map_error (fun (`Invalid_currency reason) -> `Invalid reason) (Currency.make ~code ~scale)
@@ -106,7 +115,11 @@ let update_settings service access (settings : User.settings) =
   let* _ = Result.map_error (fun _ -> `Invalid ("unsupported timezone " ^ settings.timezone)) (Time.parse_zone settings.timezone) in
   if not (List.mem settings.locale I18n_locale.supported) then Error (`Invalid ("unsupported locale " ^ settings.locale))
   else (
-    Directory.save_settings service.db (Access.user access) settings;
+    Sql.transaction service.db (fun () ->
+        Directory.save_settings service.db (Access.user access) settings;
+        (* A household's starter categories follow whoever last chose a language. *)
+        localize_chart service (Access.personal access) ~locale:settings.locale;
+        Option.iter (fun (h : Household.t) -> localize_chart service (Owner.Household h.id) ~locale:settings.locale) (Access.household access));
     Ok (access_for service (Option.get (Directory.find_user service.db (Access.user access).id))))
 
 let require_admin access = if Access.is_admin access then Ok () else Error (`Forbidden "only an admin can do this")

@@ -90,7 +90,7 @@ let resolve service access ~owner names =
         let user = Yojson.Safe.to_string (`Assoc ["merchants", `List (List.map
           (fun (_, name, _) -> `String name) batch)]) in
         let system = "Suggest a bare public website hostname for each merchant name. Reply JSON only: {\"merchants\":[{\"name\":\"name\",\"domain\":\"domain.tld\",\"confidence\":70}]}." in
-        let reply = llm.Llm.complete ~system ~user in
+        let reply = llm.Llm.complete ~system ~user () in
         Service.log_llm_call service access ~purpose:"logos" ~items:(List.length batch) ~ok:(Result.is_ok reply);
         let entries = Option.bind (Result.to_option reply) proposals in
         List.iter (fun (key, name, prior) ->

@@ -1,19 +1,28 @@
 (* A chat-completion client. It's a record of functions so tests can pass a fake; the real one
-   talks to OpenRouter, restricting routing to allowed zero-data-retention endpoints. *)
-type t = { model : string; complete : system:string -> user:string -> (string, string) result }
+   talks to OpenRouter, restricting routing to allowed zero-data-retention endpoints. With a
+   [schema] (a name and a JSON Schema) the reply is structured output: JSON that the provider
+   guarantees matches it. *)
+type t = { model : string; complete : ?schema:string * Yojson.Safe.t -> system:string -> user:string -> unit -> (string, string) result }
 
 let openrouter ~(post : Https.post) ~api_key ~model ~provider_only =
-  let complete ~system ~user =
+  let complete ?schema ~system ~user () =
     if provider_only = [] then Error "OpenRouter provider allowlist must not be empty"
     else
     let body =
       `Assoc
-        [ ("model", `String model);
+        ([ ("model", `String model);
           ("messages", `List [ `Assoc [ ("role", `String "system"); ("content", `String system) ]; `Assoc [ ("role", `String "user"); ("content", `String user) ] ]);
           ("temperature", `Float 0.2);
-          (* Financial data must never fall back to providers with weaker retention policies. *)
-          ("provider", `Assoc [ ("only", `List (List.map (fun provider -> `String provider) provider_only));
-                                ("zdr", `Bool true); ("data_collection", `String "deny") ]) ]
+          (* Financial data must never fall back to providers with weaker retention policies; with a
+             schema, only to endpoints that honour it. *)
+          ("provider", `Assoc ([ ("only", `List (List.map (fun provider -> `String provider) provider_only));
+                                 ("zdr", `Bool true); ("data_collection", `String "deny") ]
+                               @ if Option.is_some schema then [ ("require_parameters", `Bool true) ] else [])) ]
+        @
+        match schema with
+        | None -> []
+        | Some (name, schema) ->
+            [ ("response_format", `Assoc [ ("type", `String "json_schema"); ("json_schema", `Assoc [ ("name", `String name); ("strict", `Bool true); ("schema", schema) ]) ]) ])
     in
     match
       post ~uri:"https://openrouter.ai/api/v1/chat/completions"

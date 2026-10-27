@@ -140,7 +140,7 @@ let detail ~(ctx : Ctx.t) ~(account_id : string Bonsai.t) graph =
   in
   let transactions = Remote.load ~name:"query_transactions" ~args ~ctx graph in
   let imports = Remote.load ~name:"list_imports" ~args:(let%arr account_id in `Assoc [ ("account_id", `String account_id) ]) ~ctx graph in
-  let import = Import_widget.component ~ctx ~account_id graph in
+  let import = Import_widget.component ~ctx ~account_id:(let%arr account_id in Some account_id) graph in
   let tool, set_tool = Bonsai.state No_tool graph in
   let%arr accounts and transactions and imports and import and account_id and tool and set_tool and locale = ctx.locale and changed = ctx.changed
   and notify = ctx.notify and navigate = ctx.navigate and session = ctx.session in

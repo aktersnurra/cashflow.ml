@@ -18,7 +18,8 @@ It is a single OCaml binary serving MCP, a JSON API and the web UI over HTTP, ba
   - contributions split in proportion to income;
   - shared costs paid from a personal card are tracked until settled.
 - **Import:**
-  - Handelsbanken's .xlsx export, and CSV statements using common Swedish and English column names;
+  - Handelsbanken's .xlsx export (also as the zip the bank downloads it in), and CSV statements using common Swedish and English column names; any other layout is read by the assistant, when one is configured, from the file's first rows with every digit masked (structured output), and the rows are then read from the file;
+  - the file says which account it is for: it goes into the account with the same last four digits, or into a new account named from the file, opened with the bank's balance when the import is confirmed;
   - a statement for another account is refused, checked against the account number's last four digits;
   - fingerprinted rows, so overlapping files are safe; a row the data can't place is asked about, never dropped;
   - manual entries a statement confirms are matched instead of counted twice, including both sides of a move between two imported accounts;

@@ -49,7 +49,7 @@ let status_name (p : Import.planned) =
   | Confirms_leg _ -> "confirms_leg"
   | Ambiguous _ -> "ambiguous"
 
-let request ?(decisions = []) account_id content : Import.request = { account_id; file_name = Some "export.csv"; content; decisions }
+let request ?(decisions = []) account_id content : Import.request = { target = Existing account_id; file_name = Some "export.csv"; content; decisions }
 
 let imported = function
   | Ok (`Imported (s : Import.summary)) -> s
@@ -228,7 +228,7 @@ let test_manual_merchant_query () =
 let test_logo_scheduling () =
   let db = Store_sqlite.open_memory () in
   let pending = ref [] and calls = ref 0 in
-  let assistant = Llm.{model="fake"; complete=(fun ~system ~user:_ -> if Str_compat.contains ~sub:"website hostname" system then incr calls; Ok {|{"merchants":[]}|})} in
+  let assistant = Llm.{model="fake"; complete=(fun ?schema:_ ~system ~user:_ () -> if Str_compat.contains ~sub:"website hostname" system then incr calls; Ok {|{"merchants":[]}|})} in
   let service = Service.make ~assistant ~logo_network:(Logo_fetch.{ with_request=(fun f -> f ());
     resolve=(fun ~host:_ -> Alcotest.fail "unexpected DNS"); get=(fun ~uri:_ ~address:_ ~max_bytes:_ -> Alcotest.fail "unexpected fetch") })
     ~schedule:(fun work -> Alcotest.(check bool) "after commit" false (Sql.in_transaction db); pending := work :: !pending) db in
@@ -521,6 +521,110 @@ let test_handelsbanken_xlsx () =
   | Error (`Invalid message) -> Alcotest.(check bool) "names both" true (Str_compat.contains ~sub:"****4321" message && Str_compat.contains ~sub:"****6789" message)
   | _ -> Alcotest.fail "imported into the wrong account"
 
+(* A file for an account that isn't here yet: it says which one (the bank, the account's name and
+   number), the preview opens nothing, and the import opens the account with the bank's balance. *)
+let test_new_account_from_the_file () =
+  let service = make_service () in
+  let alice = sign_in service "alice" in
+  let ctx = Import.context service alice in
+  let rows = [ ("2026-10-06", "Överf Mobil", "12345.67", "19945.67"); ("2026-10-06", "ICA NARA", "-2400", "7600.00"); ("2026-09-30", "LÖN", "8000", "10000") ] in
+  let file = handelsbanken_xlsx rows in
+  let identified = ok_import (Import.identify ctx file) in
+  Alcotest.(check (list (option string))) "what the file says" [ Some "Handelsbanken"; Some "Lönekonto"; Some "6789" ]
+    [ identified.identity.institution; identified.identity.account_name; identified.identity.last4 ];
+  Alcotest.(check int) "no account has those digits" 0 (List.length identified.matches);
+  let request : Import.request =
+    { target = Create { name = "Lönekonto"; kind = Asset; owner = Access.personal alice; institution = Some "Handelsbanken"; number_last4 = Some "6789" };
+      file_name = Some "export.xlsx"; content = file; decisions = [] }
+  in
+  let preview = ok_import (Import.preview ctx request) in
+  Alcotest.(check (list string)) "all new" [ "new"; "new"; "new" ] (List.map status_name preview.rows);
+  (match preview.balance with
+  | Some b -> Alcotest.(check int64) "counts the opening balance it will set" b.statement_balance b.ledger_balance
+  | None -> Alcotest.fail "no balance check");
+  let banks () = List.filter (fun (i : Account_info.t) -> i.account.kind = Asset && Option.is_none i.details.role) (Service.accounts service alice) in
+  Alcotest.(check int) "a preview opens nothing" 0 (List.length (banks ()));
+  let summary = imported (Import.confirm ctx request) in
+  Alcotest.(check string) "named" "Lönekonto" summary.account.account.name;
+  Alcotest.(check (option string)) "numbered" (Some "6789") summary.account.details.number_last4;
+  Alcotest.(check int) "one account" 1 (List.length (banks ()));
+  Alcotest.(check int64) "opened with the bank's balance" 19_945_67L (balance service alice summary.account.account.id);
+  (match summary.balance with
+  | Some b -> Alcotest.(check int64) "agrees with the bank" b.statement_balance b.ledger_balance
+  | None -> Alcotest.fail "no balance check");
+  let again = ok_import (Import.identify ctx file) in
+  Alcotest.(check (list string)) "the next file finds it" [ Account_id.to_string summary.account.account.id ]
+    (List.map (fun (i : Account_info.t) -> Account_id.to_string i.account.id) again.matches)
+
+(* Handelsbanken hands its export out zipped: the zip is read as the statement inside it. *)
+let test_zipped_statement () =
+  let service = make_service () in
+  let alice = sign_in service "alice" in
+  let ctx = Import.context service alice in
+  let rows = [ ("2026-10-06", "ICA NARA", "-2400", "7600.00"); ("2026-09-30", "LÖN", "8000", "10000") ] in
+  let xlsx = handelsbanken_xlsx rows in
+  let zip members =
+    List.fold_left
+      (fun zip (path, content) ->
+        let file = Result.get_ok (Zipc.File.deflate_of_binary_string content) in
+        Zipc.add (Result.get_ok (Zipc.Member.make ~path (Zipc.Member.File file))) zip)
+      Zipc.empty members
+    |> Zipc.to_binary_string |> Result.get_ok
+  in
+  let zipped = zip [ ("Transaktioner.xlsx", xlsx); ("__MACOSX/._Transaktioner.xlsx", "junk") ] in
+  let identified = ok_import (Import.identify ctx zipped) in
+  Alcotest.(check string) "the spreadsheet inside" "handelsbanken" identified.format;
+  Alcotest.(check (option string)) "its account" (Some "6789") identified.identity.last4;
+  let request content : Import.request =
+    { target = Create { name = "Lönekonto"; kind = Asset; owner = Access.personal alice; institution = Some "Handelsbanken"; number_last4 = Some "6789" };
+      file_name = Some "Transaktioner.zip"; content; decisions = [] }
+  in
+  let summary = imported (Import.confirm ctx (request zipped)) in
+  Alcotest.(check int) "rows" 2 summary.batch.new_count;
+  (* The same statement unzipped, or zipped again, is the same file. *)
+  (match Import.preview ctx { (request xlsx) with target = Existing summary.account.account.id } with
+  | Ok p -> Alcotest.(check bool) "already imported" true (Option.is_some p.already_imported)
+  | Error e -> Alcotest.fail (Import.error_to_string e));
+  (match Import.identify ctx (zip [ ("a.csv", october); ("b.csv", october) ]) with
+  | Error (`Unreadable message) -> Alcotest.(check bool) "names them" true (Str_compat.contains ~sub:"a.csv" message)
+  | _ -> Alcotest.fail "guessed among several files");
+  match Import.identify ctx (zip [ ("readme.pdf", "%PDF") ]) with
+  | Error (`Unreadable _) -> ()
+  | _ -> Alcotest.fail "read a zip with no statement"
+
+(* A card's statement writes the debt as negative; the card opens owing it. *)
+let test_new_card_opens_owing () =
+  let service = make_service () in
+  let alice = sign_in service "alice" in
+  let ctx = Import.context service alice in
+  let request : Import.request =
+    { target = Create { name = "Kreditkort"; kind = Liability; owner = Access.personal alice; institution = None; number_last4 = None };
+      file_name = Some "card.csv"; content = "Datum;Text;Belopp;Saldo\n2026-10-20;Purchase;-100,00;-1000,00\n"; decisions = [] }
+  in
+  let preview = ok_import (Import.preview ctx request) in
+  Alcotest.(check (option (pair string int64))) "owed the day before" (Some ("2026-10-19", 900_00L))
+    (Option.map (fun (d, b) -> (Date.to_string d, b)) preview.opening);
+  (match preview.balance with
+  | Some b -> Alcotest.(check (list int64)) "agrees with the bank" [ 1_000_00L; 1_000_00L ] [ b.statement_balance; b.ledger_balance ]
+  | None -> Alcotest.fail "no balance check");
+  let summary = imported (Import.confirm ctx request) in
+  Alcotest.(check int64) "owes 1000" 1_000_00L (balance service alice summary.account.account.id);
+  match summary.balance with
+  | Some b -> Alcotest.(check int64) "reconciled" b.statement_balance b.ledger_balance
+  | None -> Alcotest.fail "no checkpoint"
+
+(* An account opened by hand learns its number from the first file, so the next one finds it. *)
+let test_an_account_learns_its_number () =
+  let service, alice, checking = setup () in
+  let ctx = Import.context service alice in
+  let identified = ok_import (Import.identify ctx october) in
+  Alcotest.(check (list (option string))) "a masked number in the preamble" [ Some "Lönekonto"; Some "1234" ]
+    [ identified.identity.account_name; identified.identity.last4 ];
+  Alcotest.(check int) "nothing matches yet" 0 (List.length identified.matches);
+  ignore (imported (Import.confirm ctx (request checking october)));
+  Alcotest.(check (list string)) "now it does" [ Account_id.to_string checking ]
+    (List.map (fun (i : Account_info.t) -> Account_id.to_string i.account.id) (ok_import (Import.identify ctx october)).matches)
+
 let test_reconcile () =
   let service, alice, checking = setup () in
   ignore (imported (Import.confirm (Import.context service alice) (request checking october)));
@@ -539,6 +643,10 @@ let () =
           Alcotest.test_case "identical rows without balances" `Quick test_identical_rows_without_balances;
           Alcotest.test_case "closing balance, oldest first" `Quick test_closing_balance_oldest_first;
           Alcotest.test_case "handelsbanken xlsx" `Quick test_handelsbanken_xlsx;
+          Alcotest.test_case "a new account from the file" `Quick test_new_account_from_the_file;
+          Alcotest.test_case "a new card opens owing" `Quick test_new_card_opens_owing;
+          Alcotest.test_case "an account learns its number" `Quick test_an_account_learns_its_number;
+          Alcotest.test_case "a zipped statement" `Quick test_zipped_statement;
           Alcotest.test_case "categorise, learn and undo" `Quick test_categorize_learn_and_undo;
           Alcotest.test_case "query folds triage" `Quick test_query_folds_triage;
           Alcotest.test_case "fold triage counts visible rows" `Quick test_fold_triage_limit;

@@ -1,10 +1,11 @@
 module Xlsx = Cashflow_core.Xlsx
 
-let workbook rows =
+let workbook ?(rels = true) rows =
   let parts =
     [ ("xl/workbook.xml", {|<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet r:id="rId1"/></sheets></workbook>|});
       ("xl/_rels/workbook.xml.rels", {|<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>|});
       ("xl/worksheets/sheet1.xml", "<worksheet><sheetData>" ^ rows ^ "</sheetData></worksheet>") ]
+    |> List.filter (fun (path, _) -> rels || path <> "xl/_rels/workbook.xml.rels")
   in
   let add zip (path, content) =
     let file = Result.get_ok (Zipc.File.deflate_of_binary_string content) in
@@ -44,9 +45,15 @@ let test_sparse_cells () =
   Alcotest.(check int) "last supported column" 16_384 (List.length last_row);
   Alcotest.(check string) "sparse value" "1" (List.nth last_row 16_383)
 
+(* Written without the workbook's relationships: the first sheet is still found. *)
+let test_without_relationships () =
+  let table = Result.get_ok (Xlsx.table (workbook ~rels:false {|<row><c t="inlineStr"><is><t>Lön</t></is></c></row>|})) in
+  Alcotest.(check (list (list string))) "first sheet" [ [ "Lön" ] ] table
+
 let () =
   Alcotest.run "xlsx"
     [ ("bounds", [ Alcotest.test_case "column limit" `Quick test_column_limit;
                    Alcotest.test_case "expanded cell limit" `Quick test_expanded_cell_limit;
                    Alcotest.test_case "invalid references" `Quick test_invalid_references ]);
-      ("parsing", [ Alcotest.test_case "sparse cells" `Quick test_sparse_cells ]) ]
+      ("parsing", [ Alcotest.test_case "sparse cells" `Quick test_sparse_cells;
+                    Alcotest.test_case "without relationships" `Quick test_without_relationships ]) ]
