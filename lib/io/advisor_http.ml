@@ -175,6 +175,18 @@ let read t p f =
       let* user = X.user t.service p in
       f user (Advisor_store.create ~clock:t.service.now t.service.db))
 
+(* Writes open their own transaction in the store; they must not run inside a read snapshot. *)
+let write t p f =
+  let* user = Sql.read_snapshot t.service.db (fun () -> X.user t.service p) in
+  f user (Advisor_store.create ~clock:t.service.now t.service.db)
+
+let memory_json (m : Advisor_store.memory) =
+  `Assoc [ ("id", `String m.id); ("text", `String m.text); ("updated_at", `String (Ptime.to_rfc3339 m.updated_at)) ]
+
+let memory_text json =
+  let* fields = object_fields [ "text" ] json in
+  match List.assoc_opt "text" fields with Some (`String text) -> Ok text | _ -> Error invalid
+
 let route t req p path query parsed =
   let result f = match f () with Ok r -> r | Error e -> error e in
   match (req.meth, path) with
@@ -208,6 +220,31 @@ let route t req p path query parsed =
               R.signal_cancel t.runtime ids;
               Ok (json 200 (`Assoc [ ("enabled", `Bool enabled) ]))
           | _ -> Error invalid)
+  | GET, [ "memories" ] ->
+      result (fun () ->
+          read t p (fun user store ->
+              let* notes = Advisor_store.memories store ~owner:user.id in
+              Ok (json 200 (`Assoc [ ("memories", `List (List.map memory_json notes)) ]))))
+  | POST, [ "memories" ] ->
+      result (fun () ->
+          let* text = memory_text (Option.get parsed) in
+          write t p (fun user store ->
+              match Advisor_store.add_memory store ~owner:user.id ~now:(t.service.now ()) text with
+              | Ok note -> Ok (json 200 (`Assoc [ ("memory", memory_json note) ]))
+              | Error { A.code = A.Capacity_exceeded; _ } -> Ok (code 409 "Memory_full")
+              | Error e -> Error e))
+  | POST, [ "memories"; id ] ->
+      result (fun () ->
+          let* text = memory_text (Option.get parsed) in
+          write t p (fun user store ->
+              let* note = Advisor_store.update_memory store ~owner:user.id ~now:(t.service.now ()) ~id text in
+              Ok (json 200 (`Assoc [ ("memory", memory_json note) ]))))
+  | POST, [ "memories"; id; "forget" ] ->
+      result (fun () ->
+          let* () = unit_body (Option.get parsed) in
+          write t p (fun user store ->
+              let* () = Advisor_store.forget_memory store ~owner:user.id ~id in
+              Ok (json 200 (`Assoc [ ("status", `String "forgotten") ]))))
   | POST, [ "turns" ] ->
       result (fun () ->
           let* () =
@@ -299,6 +336,9 @@ let route t req p path query parsed =
   | ( (GET | POST | HEAD | OTHER),
       ( [ "status" ]
       | [ "consent" ]
+      | [ "memories" ]
+      | [ "memories"; _ ]
+      | [ "memories"; _; "forget" ]
       | [ "turns" ]
       | [ "conversations" ]
       | [ "conversations"; _ ]

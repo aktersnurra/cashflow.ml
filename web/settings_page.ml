@@ -15,7 +15,8 @@ let sign_out = Effect.of_deferred_thunk Api.sign_out
 
 let page ~(ctx : Ctx.t) ~(advisor : Advisor.controller Bonsai.t) graph =
   let edits, set_edits = Bonsai.state None graph in
-  let%arr advisor and edits and set_edits and session = ctx.session and locale = ctx.locale and changed = ctx.changed and notify = ctx.notify and theme = ctx.theme
+  let memory = Advisor_memory.component ~locale:ctx.locale graph in
+  let%arr advisor and memory and edits and set_edits and session = ctx.session and locale = ctx.locale and changed = ctx.changed and notify = ctx.notify and theme = ctx.theme
   and set_theme = ctx.set_theme in
   let draft = Option.value edits ~default:(draft_of_session session) in
   let set f = set_edits (Some (f draft)) in
@@ -53,6 +54,7 @@ let page ~(ctx : Ctx.t) ~(advisor : Advisor.controller Bonsai.t) graph =
                   Effect.of_thunk (fun () -> Js_of_ocaml.Dom_html.window##alert (Js_of_ocaml.Js.string (Msg.signout_failed locale)))) ] ];
       section (Msg.nav_advisor locale)
         [Advisor_view.consent ~locale ~view:advisor.view ~dispatch:advisor.dispatch ~decline:Effect.Ignore];
+      memory;
       section (Msg.settings_general locale)
         [ setting (Msg.label_language locale) (Ui.select ~value:draft.locale ~options:[ ("en", "English"); ("sv", "Svenska") ] ~on_change:(fun v -> set (fun d -> { d with locale = v })));
           setting (Msg.label_timezone locale) (Ui.select ~value:draft.timezone ~options:timezones ~on_change:(fun v -> set (fun d -> { d with timezone = v })));

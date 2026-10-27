@@ -1036,3 +1036,95 @@ let prune_batch t ~now ~limit =
                (one (row (bool @-> nil) Fun.id))))
           cutoff cutoff)
 
+
+type memory = { id : string; text : string; updated_at : Ptime.t }
+
+let memory_limit = 20
+let memory_chars = 280
+
+(* A note becomes one line of plain text. Line breaks and tabs of every kind fold into spaces, so a note can never
+   start a new prompt line; other control characters and bidirectional overrides are refused, not repaired. *)
+let normalize_memory text =
+  if not (String.is_valid_utf_8 text) then None
+  else
+    let folded u =
+      match Uchar.to_int u with
+      | 0x09 | 0x0a | 0x0b | 0x0c | 0x0d | 0x20 | 0x85 | 0x2028 | 0x2029 -> true
+      | _ -> false
+    in
+    let refused u =
+      match Uchar.to_int u with
+      | c when c < 0x20 || (c >= 0x7f && c <= 0x9f) -> true
+      | c when (c >= 0x202a && c <= 0x202e) || (c >= 0x2066 && c <= 0x2069) -> true
+      | _ -> false
+    in
+    let out = Buffer.create (String.length text) in
+    let words = ref 0 and characters = ref 0 and gap = ref false and valid = ref true in
+    let rec go i =
+      if i < String.length text && !valid then begin
+        let d = String.get_utf_8_uchar text i in
+        let u = Uchar.utf_decode_uchar d in
+        if folded u then gap := true
+        else if refused u then valid := false
+        else begin
+          if !gap && Buffer.length out > 0 then (Buffer.add_char out ' '; incr characters);
+          gap := false;
+          Buffer.add_utf_8_uchar out u;
+          incr characters;
+          incr words
+        end;
+        go (i + Uchar.utf_decode_length d)
+      end
+    in
+    go 0;
+    if (not !valid) || !words = 0 || !characters > memory_chars then None else Some (Buffer.contents out)
+
+let memory_row =
+  Sql.(row (text @-> text @-> text @-> nil) (fun id text updated_at -> { id; text; updated_at = time updated_at }))
+
+let memories t ~owner =
+  read t (fun () ->
+      Sql.(run t.db
+             (stmt "SELECT id,text,updated_at FROM advisor_memories WHERE owner_id=? ORDER BY created_at,id" (text @-> nil)
+                (many memory_row)))
+        (uid owner))
+
+let add_memory t ~owner ~now text =
+  match normalize_memory text with
+  | None -> Error (error A.Invalid_request)
+  | Some text ->
+      tx t (fun () ->
+          let held =
+            Sql.(run t.db (stmt "SELECT count(*) FROM advisor_memories WHERE owner_id=?" (text @-> nil) (one (row (int @-> nil) Fun.id))))
+              (uid owner)
+          in
+          if held >= memory_limit then raise (Reject (error A.Capacity_exceeded));
+          let id = fresh () in
+          let at = stamp now in
+          Sql.(run t.db
+                 (stmt "INSERT INTO advisor_memories(id,owner_id,text,created_at,updated_at) VALUES (?,?,?,?,?)"
+                    (text @-> text @-> text @-> text @-> text @-> nil) exec))
+            id (uid owner) text at at;
+          { id; text; updated_at = now })
+
+let update_memory t ~owner ~now ~id text =
+  match normalize_memory text with
+  | None -> Error (error A.Invalid_request)
+  | Some text ->
+      tx t (fun () ->
+          let at = stamp now in
+          Sql.(run t.db
+                 (stmt "UPDATE advisor_memories SET text=?,updated_at=? WHERE id=? AND owner_id=? RETURNING id"
+                    (text @-> text @-> text @-> text @-> nil) (opt (row (text @-> nil) Fun.id))))
+            text at id (uid owner)
+          |> function
+          | None -> raise (Reject (error A.Not_found))
+          | Some _ -> { id; text; updated_at = now })
+
+let forget_memory t ~owner ~id =
+  tx t (fun () ->
+      Sql.(run t.db (stmt "DELETE FROM advisor_memories WHERE id=? AND owner_id=? RETURNING id" (text @-> text @-> nil) (opt (row (text @-> nil) Fun.id))))
+        id (uid owner)
+      |> function
+      | None -> raise (Reject (error A.Not_found))
+      | Some _ -> ())

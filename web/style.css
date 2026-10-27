@@ -141,6 +141,8 @@ kbd { font: 11px/16px var(--mono); padding: 0 4px; border: 1px solid var(--line-
 .setting-control > select, .setting-control > input { width: 100%; }
 .setting-control .segmented { margin: 0; }
 .row.table-foot { display: flex; justify-content: flex-end; }
+.row-title.memory-note { white-space: normal; overflow-wrap: anywhere; }
+.row.memory-form { display: flex; gap: 8px; } .row.memory-form input { flex: 1; min-width: 0; }
 .add-form .actions { margin-top: 20px; }
 .amount-field input { height: 48px; font-size: 24px; font-weight: 600; letter-spacing: -.02em; font-variant-numeric: lining-nums tabular-nums; }
 .empty-panel p { margin: 0 auto; max-width: 52ch; } .empty-panel p:first-child { color: var(--text); font-weight: 500; } .empty-panel p + p { margin-top: 4px; }
