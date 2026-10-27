@@ -187,6 +187,52 @@ let test_unversioned_assets_revalidate () =
           ["/transactions"; "/assets/style.css"; "/assets/main.bc.js"])
         ["build-one"; "build-two"])
 
+(* The bundle is large: content-hashed URLs are cached for good, everything revalidates by ETag, and text is sent
+   gzipped to a client that accepts it, so a refresh on a slow link downloads nothing or a third of the bytes. *)
+let test_static_caching_and_compression () =
+  let dir = Filename.temp_file "cashflow-assets-" "" in
+  Sys.remove dir;
+  Unix.mkdir dir 0o700;
+  let bundle = String.concat "" (List.init 4000 (fun n -> Printf.sprintf "function f%d(){return %d}\n" n (n * 7))) in
+  let files = [ ("index.html", "<!doctype html><title>x</title>" ^ String.make 2000 ' '); ("main.bc.js", bundle); ("icon.png", "\x89PNG" ^ String.make 100 'x') ] in
+  let file name = Filename.concat dir name in
+  Fun.protect
+    ~finally:(fun () -> List.iter (fun (name, _) -> if Sys.file_exists (file name) then Sys.remove (file name)) files; Unix.rmdir dir)
+    (fun () ->
+      List.iter (fun (name, body) -> Out_channel.with_open_bin (file name) (fun out -> output_string out body)) files;
+      let deps = deps () in
+      let deps = { deps with config = { deps.config with static_dir = dir } } in
+      let get ?(headers = []) target = Http_server.handle deps (request ~headers target) in
+      let versioned = get "/assets/main.bc.js?v=abc" and plain = get "/assets/main.bc.js" in
+      Alcotest.(check (option string)) "a content-hashed URL is cached for good" (Some "public, max-age=31536000, immutable") (header versioned "cache-control");
+      Alcotest.(check (option string)) "an unhashed URL revalidates" (Some "no-cache") (header plain "cache-control");
+      Alcotest.(check (option string)) "the page itself revalidates, whatever its query" (Some "no-cache") (header (get "/transactions?v=abc") "cache-control");
+      Alcotest.(check string) "no Accept-Encoding: the bytes as they are" bundle versioned.body;
+      Alcotest.(check (option string)) "and no content-encoding" None (header versioned "content-encoding");
+      let zipped = get ~headers:[ ("Accept-Encoding", "br, gzip;q=0.8") ] "/assets/main.bc.js?v=abc" in
+      Alcotest.(check (option string)) "gzip when accepted" (Some "gzip") (header zipped "content-encoding");
+      Alcotest.(check bool) "a good deal smaller" true (String.length zipped.body * 3 < String.length bundle);
+      let raw_deflate = String.sub zipped.body 10 (String.length zipped.body - 18) in
+      (match Zipc_deflate.inflate raw_deflate with
+       | Ok text -> Alcotest.(check string) "and it decompresses to the file" bundle text
+       | Error e -> Alcotest.fail e);
+      let tail = String.sub zipped.body (String.length zipped.body - 4) 4 in
+      Alcotest.(check int) "with the right length in the trailer" (String.length bundle) (Char.code tail.[0] lor (Char.code tail.[1] lsl 8) lor (Char.code tail.[2] lsl 16) lor (Char.code tail.[3] lsl 24));
+      Alcotest.(check (option string)) "responses differ by encoding" (Some "accept-encoding") (header zipped "vary");
+      let png = get ~headers:[ ("Accept-Encoding", "gzip") ] "/assets/icon.png" in
+      Alcotest.(check (option string)) "an image is not recompressed" None (header png "content-encoding");
+      let etag = Option.get (header zipped "etag") in
+      let again = get ~headers:[ ("Accept-Encoding", "gzip"); ("If-None-Match", etag) ] "/assets/main.bc.js?v=abc" in
+      Alcotest.(check int) "a client that has it is told so" 304 again.status;
+      Alcotest.(check string) "with no body" "" again.body;
+      Alcotest.(check int) "the identity copy's tag does not match the gzip copy" 200
+        (get ~headers:[ ("Accept-Encoding", "gzip"); ("If-None-Match", Option.get (header versioned "etag")) ] "/assets/main.bc.js").status;
+      (* A new build under the same URL is never served from the old bytes. *)
+      Out_channel.with_open_bin (file "main.bc.js") (fun out -> output_string out (bundle ^ "// next build\n"));
+      let next = get ~headers:[ ("Accept-Encoding", "gzip"); ("If-None-Match", etag) ] "/assets/main.bc.js?v=abc" in
+      Alcotest.(check int) "so a changed file is sent again" 200 next.status;
+      Alcotest.(check bool) "with a new tag" true (header next "etag" <> Some etag))
+
 let test_static_paths_stay_inside () =
   let deps = deps () in
   Alcotest.(check int) "traversal" 404 (Http_server.handle deps (request "/assets/../../etc/passwd")).status;
@@ -305,4 +351,5 @@ let () =
           Alcotest.test_case "mcp requires a token" `Quick test_mcp_requires_a_token; Alcotest.test_case "mcp tools" `Quick test_mcp_tools;
           Alcotest.test_case "mcp scopes" `Quick test_mcp_scopes; Alcotest.test_case "web login and csrf" `Quick test_web_login_and_csrf;
           Alcotest.test_case "login return paths" `Quick test_login_return_paths;
+          Alcotest.test_case "static caching and compression" `Quick test_static_caching_and_compression;
           Alcotest.test_case "static paths stay inside" `Quick test_static_paths_stay_inside ] ) ]
