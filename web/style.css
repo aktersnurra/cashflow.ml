@@ -271,6 +271,11 @@ kbd { font: 11px/16px var(--mono); padding: 0 4px; border: 1px solid var(--line-
 .inline-select:hover { border-color: var(--line-strong); background: var(--panel); }
 .review-link { display: inline-flex; align-items: center; gap: 8px; color: var(--text-2); }
 .review-tag { flex: none; padding: 0 7px; border-radius: 999px; background: var(--tint-amber); color: var(--warning); font-size: 12px; line-height: 18px; font-weight: 600; }
+.section-nav { display: flex; gap: 4px; max-width: 760px; margin: 0 auto; padding: 20px 32px 0; overflow-x: auto; scrollbar-width: none; }
+.section-nav + .page { padding-top: 16px; }
+.section-nav a { flex: none; padding: 4px 12px; border-radius: 999px; font-size: 13px; line-height: 20px; font-weight: 500; color: var(--text-2); }
+.section-nav a:hover { background: var(--surface-2); color: var(--text); }
+.section-nav a.active { background: var(--surface-2); color: var(--text); font-weight: 600; }
 .tab-button { display: inline-flex; align-items: center; gap: 6px; }
 .tab-count { min-width: 18px; height: 18px; line-height: 18px; font-size: 11px; }
 
@@ -419,6 +424,8 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
   .shell { grid-template-columns: 1fr; }
   .sidebar { display: none; }
   .page { padding: 20px 16px calc(88px + env(safe-area-inset-bottom)); }
+  .section-nav { padding: 16px 16px 0; }
+  .section-nav + .page { padding-top: 12px; }
   .page-head { flex-wrap: wrap; }
   .page-controls { flex-wrap: wrap; }
   .panel, .card { padding: 16px; }

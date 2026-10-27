@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Navigation
+
+- The sidebar shows Home, Advisor, Money, Plan and Household instead of every page. Money groups
+  Transactions, Accounts and Cash flow; Plan groups Budgets, Forecast and Insights. Every page keeps
+  its address, and a strip above the page switches between a section's pages. The phone tab bar is
+  Home, Money, Add, Plan, Settings.
+
 ### Forecast
 
 - A Forecast page (`/forecast`, `g f`): cash day by day over the next 1, 3 or 6 months, with

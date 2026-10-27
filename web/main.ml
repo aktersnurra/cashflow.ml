@@ -39,8 +39,8 @@ let navigate_to set_route route =
       set_route route ]
 
 (* The sidebar: what you look at, then where the money lives; Settings sits at the foot. *)
-let nav_groups = Route.[ [ Home; Advisor None; Cashflow; Transactions { offset = 0; category = None }; Budgets; Forecast; Insights ]; [ Accounts; Household ] ]
-let tab_items = Route.[ Home; Transactions { offset = 0; category = None }; Add; Budgets; Settings ]
+let nav_groups = Route.[ [ (Home, None); (Advisor None, None) ]; [ (section_entry Money, Some Money); (section_entry Plan, Some Plan) ]; [ (Household, None) ] ]
+let tab_items = Route.[ (Home, None); (section_entry Money, Some Money); (Add, None); (section_entry Plan, Some Plan); (Settings, None) ]
 
 let icon route =
   let name : Feather_icon.t =
@@ -286,15 +286,33 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
         let dest = Route.of_path (Js.to_string Dom_html.window##.location##.pathname) in
         Effect.Expert.handle_non_dom_event_exn (scroll_transition ~from:route ~dest (set_route dest));
         Js._true);
-  let link ~cls r =
-    let active = Route.equal r route || (match r, route with Route.Advisor _, Advisor _ -> true | _ -> false) in
+  let link ~cls (r, section) =
+    let active =
+      match section with
+      | Some s -> Option.equal Route.equal_section (Route.section route) (Some s)
+      | None -> Route.equal r route || (match r, route with Route.Advisor _, Advisor _ -> true | _ -> false)
+    in
     Vdom.Node.a
       ~attrs:
         ([ Vdom.Attr.class_ (cls ^ if active then " active" else ""); Vdom.Attr.href (Route.to_path r);
           Vdom.Attr.on_click (fun _ -> Effect.Many [ Effect.Prevent_default; navigate r ]) ]
-         @ if active then [Vdom.Attr.create "aria-current" "page"] else [])
-      [ Ui.span ~cls:"icon" [ icon r ]; Ui.span ~cls:"label" [ Ui.text (Route.title locale r) ];
+         @ if active then [Vdom.Attr.create "aria-current" (if Option.is_some section then "true" else "page")] else [])
+      [ Ui.span ~cls:"icon" [ icon r ]; Ui.span ~cls:"label" [ Ui.text (match section with Some s -> Route.section_title locale s | None -> Route.title locale r) ];
         (match r with Route.Transactions _ when inbox_count > 0 -> Ui.span ~cls:"badge" [ Ui.text (Int.to_string inbox_count) ] | _ -> Vdom.Node.none) ]
+  in
+  let section_strip =
+    match Route.section route with
+    | None -> Vdom.Node.none
+    | Some s ->
+        Vdom.Node.create "nav" ~attrs:[ Vdom.Attr.class_ "section-nav"; Vdom.Attr.create "aria-label" (Route.section_title locale s) ]
+          (List.map (Route.section_pages s) ~f:(fun r ->
+               let active = Route.equal r (Route.section_page route) in
+               Vdom.Node.a
+                 ~attrs:
+                   ([ Vdom.Attr.class_ (if active then "active" else ""); Vdom.Attr.href (Route.to_path r);
+                      Vdom.Attr.on_click (fun _ -> Effect.Many [ Effect.Prevent_default; navigate r ]) ]
+                    @ if active then [ Vdom.Attr.create "aria-current" "page" ] else [])
+                 [ Ui.text (Route.title locale r) ]))
   in
   (* Keyboard: ⌘K or / opens the palette; g then a letter goes to a page. Typing in a field is left alone. *)
   let on_key (event : Dom_html.keyboardEvent Js.t) =
@@ -329,7 +347,7 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
                  [ Feather_icon.svg ~size:(`Px 16) ~stroke:(`Name "currentColor") ~stroke_width:(`Px 2) Search ] ] ]
         @ List.concat_map nav_groups ~f:(fun routes -> Ui.div ~cls:"nav-gap" [] :: List.map routes ~f:(link ~cls:"nav-link"))
         @ [ Ui.div ~cls:"sidebar-foot"
-              [ link ~cls:"nav-link" Route.Settings;
+              [ link ~cls:"nav-link" (Route.Settings, None);
                 Vdom.Node.button
                   ~attrs:
                     [ Vdom.Attr.class_ "button icon-button"; Vdom.Attr.type_ "button"; Vdom.Attr.title (Msg.palette_flip_theme locale);
@@ -337,7 +355,7 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
                   [ Feather_icon.svg ~size:(`Px 16) ~stroke:(`Name "currentColor") ~stroke_width:(`Px 2)
                       (if (match theme with Theme.Light -> false | Dark -> true | System -> Theme.system_is_dark ()) then Sun else Moon) ] ] ]);
       Ui.div ~cls:"content" [Vdom.Node.div
-        ~attrs:(if (match route with Route.Home | Advisor _ -> true | _ -> false) then [] else [Vdom.Attr.create "hidden" ""]) [home]; page];
+        ~attrs:(if (match route with Route.Home | Advisor _ -> true | _ -> false) then [] else [Vdom.Attr.create "hidden" ""]) [home]; section_strip; page];
       Vdom.Node.create "nav" ~attrs:[ Vdom.Attr.class_ "tabbar" ] (List.map tab_items ~f:(link ~cls:"tab"));
       palette_view;
       (match toast with Some message -> Ui.div ~cls:"toast" [ Ui.text message ] | None -> Vdom.Node.none) ]
