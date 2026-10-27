@@ -110,13 +110,18 @@ let max_file_bytes = 5 * 1024 * 1024
 
 let read_table content = if Xlsx.is_xlsx content then Result.map_error (fun e -> `Unreadable e) (Xlsx.table content) else Ok (Csv.parse content)
 
-let read_format content =
+(* A format cashflow knows, or else the layout the assistant reads from the file, if there is one. *)
+let read_format ctx content =
   if String.length content > max_file_bytes then Error (`Invalid "the file is larger than 5 MB")
   else
     let* table = read_table content in
     match Statement_format.detect table with
-    | None -> Error (`Unreadable "no header row with a date and an amount column was found")
     | Some format -> Ok (table, format)
+    | None -> (
+        match Llm_features.statement_layout ctx.service ctx.access table with
+        | Ok layout -> Ok (table, Statement_format.of_layout layout)
+        | Error None -> Error (`Unreadable "no header row with a date and an amount column was found")
+        | Error (Some reason) -> Error (`Unreadable ("it isn't a format cashflow knows, and the assistant couldn't read it either: " ^ reason)))
 
 (* The account a [Create] target will be, for the preview: an id that matches nothing, so the
    preview finds no duplicates and no pending entries, as is right for an account that is new. *)
@@ -135,7 +140,7 @@ let draft_account ctx (n : new_account) =
 
 (* Stage 1: read the file and find its format. *)
 let decode ctx (request : request) =
-  let* table, (module F : Statement_format.S) = read_format request.content in
+  let* table, (module F : Statement_format.S) = read_format ctx request.content in
   let* account =
     match request.target with
     | Existing id ->
@@ -158,7 +163,7 @@ let decode ctx (request : request) =
 type identified = { format : string; identity : Statement_format.identity; matches : Account_info.t list; candidates : Account_info.t list }
 
 let identify ctx content =
-  let* table, (module F : Statement_format.S) = read_format content in
+  let* table, (module F : Statement_format.S) = read_format ctx content in
   let* () = match F.parse ~scale:2 table with Error reason -> Error (`Unreadable reason) | Ok [] -> Error (`Unreadable "the file has no transactions") | Ok _ -> Ok () in
   let identity = F.identity table in
   let candidates =

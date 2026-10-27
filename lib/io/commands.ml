@@ -578,7 +578,8 @@ let identify_statement =
     "Read a bank statement (CSV, or a Handelsbanken .xlsx export) without importing it: its format, what it says about its account \
      (bank, account name, last four digits of the number), the account it belongs to if one of yours has those digits, and the bank \
      accounts and cards it could go into. Then import it with import_statement, into that account or, when none matches, into a \
-     new_account named from the file."
+     new_account named from the file. A file in a layout cashflow doesn't know is read by the assistant, when one is configured: \
+     it sees the first rows with every digit masked and says which column holds what; the rows are then read from the file."
     [ string_prop "content" "A CSV file's text."; string_prop "content_base64" "An .xlsx file, base64-encoded (instead of content)." ]
     (fun service access fields ->
       let* content = file_content fields in

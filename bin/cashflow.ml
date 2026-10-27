@@ -154,7 +154,7 @@ let read_statement path =
           | Ok rows ->
               let money v = Json.decimal ~scale:2 v in
               Printf.printf "format: %s\naccount: %s\nrows: %d\n" F.name
-                (Option.fold ~none:"(not stated)" ~some:(fun d -> "****" ^ d) (F.account_hint table)) (List.length rows);
+                (Option.fold ~none:"(not stated)" ~some:(fun d -> "****" ^ d) (F.identity table).last4) (List.length rows);
               List.iter
                 (fun (r : Statement_format.row) ->
                   Printf.printf "%s  %-30s %12s %12s\n" (Date.to_string r.booking_date) r.description (money r.amount)

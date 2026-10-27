@@ -63,7 +63,7 @@ let field path json = List.fold_left (fun json name -> Yojson.Safe.Util.member n
 (* Groceries usually cost 1 000 a cycle; this cycle (from 25 September) it is 2 500 by the 21st. *)
 let test_unusual_spending () =
   let prompts = ref [] in
-  let assistant : Llm.t = { model = "fake"; complete = (fun ~system:_ ~user -> prompts := user :: !prompts; Ok "Mostly the 1 500 at ICA MAXI.") } in
+  let assistant : Llm.t = { model = "fake"; complete = (fun ?schema:_ ~system:_ ~user () -> prompts := user :: !prompts; Ok "Mostly the 1 500 at ICA MAXI.") } in
   let service = Service.make ~now:(fun () -> now) ~assistant (Store_sqlite.open_memory ()) in
   let alice = sign_in service "alice" in
   let checking = open_checking service alice "Checking" in

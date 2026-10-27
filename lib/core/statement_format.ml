@@ -116,6 +116,37 @@ let masked_account cell =
       if String.length digits = 4 && is_digits digits then Some ((if name = "" then None else Some name), digits) else None
   | _ -> None
 
+(* Reads the rows below [header_index], taking each field from the column [column] names. Dates
+   are read with [date]; [negate] flips amounts for exports that list spending as positive. *)
+let parse_columns ?(date = parse_date) ?(negate = false) ~scale ~header_index ~column table =
+  let rows = List.filteri (fun i _ -> i > header_index) table in
+  let cell row kind = Option.bind (column kind) (fun i -> List.nth_opt row i) |> Option.map String.trim |> Option.map (fun s -> if s = "" then None else Some s) |> Option.join in
+  let amount row =
+    match cell row `Amount with
+    | Some text -> parse_amount ~scale text
+    | None ->
+        let get kind = match cell row kind with None -> Some 0L | Some t -> Option.map Int64.abs (parse_amount ~scale t) in
+        Option.bind (get `In) (fun i -> Option.map (fun o -> Int64.sub i o) (get `Out))
+  in
+  let rec go line acc = function
+    | [] -> Ok (List.rev acc)
+    | row :: rest -> (
+        let booking = match cell row `Booking with Some t -> date t | None -> Option.bind (cell row `Transaction) date in
+        let transaction = Option.bind (cell row `Transaction) date in
+        match booking, Option.map (fun a -> if negate then Int64.neg a else a) (amount row) with
+        | Some booking_date, Some amount ->
+            let balance = Option.bind (cell row `Balance) (parse_amount ~scale) in
+            let description = Option.value (cell row `Description) ~default:"" in
+            let counterparty = cell row `Counterparty in
+            go (line + 1)
+              ({ booking_date; transaction_date = transaction; description; counterparty; amount; balance; reference = cell row `Reference } :: acc)
+              rest
+        | None, _ when List.for_all (fun c -> String.trim c = "") row -> go (line + 1) acc rest
+        | None, _ -> Error (Printf.sprintf "line %d: no readable date" (header_index + line + 2))
+        | _, None -> Error (Printf.sprintf "line %d: no readable amount" (header_index + line + 2)))
+  in
+  go 0 [] rows
+
 module Generic : S = struct
   let name = "generic"
   let detect table = Option.is_some (find_header table)
@@ -128,34 +159,7 @@ module Generic : S = struct
   let parse ~scale table =
     match find_header table with
     | None -> Error "no header row with a date and an amount column"
-    | Some (header_index, column) ->
-        let rows = List.filteri (fun i _ -> i > header_index) table in
-        let cell row kind = Option.bind (column kind) (fun i -> List.nth_opt row i) |> Option.map String.trim |> Option.map (fun s -> if s = "" then None else Some s) |> Option.join in
-        let amount row =
-          match cell row `Amount with
-          | Some text -> parse_amount ~scale text
-          | None ->
-              let get kind = match cell row kind with None -> Some 0L | Some t -> Option.map Int64.abs (parse_amount ~scale t) in
-              Option.bind (get `In) (fun i -> Option.map (fun o -> Int64.sub i o) (get `Out))
-        in
-        let rec go line acc = function
-          | [] -> Ok (List.rev acc)
-          | row :: rest -> (
-              let booking = match cell row `Booking with Some t -> parse_date t | None -> Option.bind (cell row `Transaction) parse_date in
-              let transaction = Option.bind (cell row `Transaction) parse_date in
-              match booking, amount row with
-              | Some booking_date, Some amount ->
-                  let balance = Option.bind (cell row `Balance) (parse_amount ~scale) in
-                  let description = Option.value (cell row `Description) ~default:"" in
-                  let counterparty = cell row `Counterparty in
-                  go (line + 1)
-                    ({ booking_date; transaction_date = transaction; description; counterparty; amount; balance; reference = cell row `Reference } :: acc)
-                    rest
-              | None, _ when List.for_all (fun c -> String.trim c = "") row -> go (line + 1) acc rest
-              | None, _ -> Error (Printf.sprintf "line %d: no readable date" (header_index + line + 2))
-              | _, None -> Error (Printf.sprintf "line %d: no readable amount" (header_index + line + 2)))
-        in
-        go 0 [] rows
+    | Some (header_index, column) -> parse_columns ~scale ~header_index ~column table
 end
 
 (* Handelsbanken's account export (.xlsx, or the same cells as CSV): a preamble with the bank's
@@ -192,3 +196,73 @@ end
 let formats : (module S) list = [ (module Handelsbanken); (module Generic) ]
 let detect table = List.find_opt (fun (module F : S) -> F.detect table) formats
 let names = List.map (fun (module F : S) -> F.name) formats
+
+(* A file no format knows, described by a model: which row is the header, which column holds what,
+   how dates are written and where the account is named. The model sees only the layout; the rows
+   are read here, like any format's, so every amount comes from the file itself. *)
+type column = [ `Booking | `Transaction | `Description | `Counterparty | `Amount | `Out | `In | `Balance | `Reference ]
+type date_order = Ymd | Dmy | Mdy
+
+type layout = {
+  header_row : int;  (** counted from 0 *)
+  columns : (column * int) list;
+  date_order : date_order;
+  spending_positive : bool;  (** a card export that lists purchases as positive amounts *)
+  institution : string option;
+  account_name_cell : (int * int) option;  (** row, column *)
+  account_number_cell : (int * int) option;
+}
+
+let digit_groups text =
+  let groups = ref [] and current = Buffer.create 8 in
+  let flush () = if Buffer.length current > 0 then (groups := Buffer.contents current :: !groups; Buffer.clear current) in
+  String.iter (fun c -> if c >= '0' && c <= '9' then Buffer.add_char current c else flush ()) text;
+  flush ();
+  List.rev !groups
+
+(* "20.10.2026", "10/20/26", "2026-10-20 13:45": the first three groups of digits, in [order],
+   unless the first is a four-digit year. *)
+let parse_date_in order text =
+  match digit_groups text with
+  | a :: b :: c :: _ ->
+      let y, m, d = if String.length a = 4 then (a, b, c) else match order with Ymd -> (a, b, c) | Dmy -> (c, b, a) | Mdy -> (c, a, b) in
+      let y = if String.length y = 2 then "20" ^ y else y in
+      if String.length y = 4 && String.length m <= 2 && String.length d <= 2 then Date.of_ymd (int_of_string y) (int_of_string m) (int_of_string d)
+      else None
+  | _ -> parse_date text
+
+let layout_valid (l : layout) table =
+  let width = List.fold_left (fun w row -> max w (List.length row)) 0 table in
+  let has k = List.mem_assoc k l.columns in
+  if l.header_row < 0 || l.header_row >= List.length table then Error "the header row is outside the file"
+  else if List.exists (fun (_, i) -> i < 0 || i >= width) l.columns then Error "a column is outside the file"
+  else if not (has `Booking || has `Transaction) then Error "no date column"
+  else if not (has `Amount || (has `In && has `Out)) then Error "no amount column"
+  else Ok ()
+
+let of_layout (l : layout) : (module S) =
+  (module struct
+    let name = "llm"
+    let detect _ = true
+
+    let parse ~scale table =
+      parse_columns ~date:(parse_date_in l.date_order) ~negate:l.spending_positive ~scale ~header_index:l.header_row
+        ~column:(fun k -> List.assoc_opt k l.columns) table
+
+    let identity table =
+      let cell (r, c) = Option.map String.trim (Option.bind (List.nth_opt table r) (fun row -> List.nth_opt row c)) in
+      let last4 =
+        Option.bind (Option.bind l.account_number_cell cell) (fun text ->
+            let d = String.concat "" (digit_groups text) in
+            if String.length d >= 4 then Some (String.sub d (String.length d - 4) 4) else None)
+      in
+      (* The name, without a number written in the same cell. *)
+      let account_name =
+        Option.bind (Option.bind l.account_name_cell cell) (fun text ->
+            let letters = String.map (fun c -> if (c >= '0' && c <= '9') || c = '*' then ' ' else c) text in
+            let word w = String.exists (fun c -> Char.lowercase_ascii c <> Char.uppercase_ascii c || Char.code c >= 128) w in
+            let words = List.filter word (String.split_on_char ' ' letters) in
+            match String.trim (String.concat " " words) with "" -> None | name -> Some name)
+      in
+      { institution = l.institution; account_name; last4 }
+  end)

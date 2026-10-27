@@ -118,7 +118,7 @@ let fixture f =
     {
       model = "fake";
       complete =
-        (fun ~system:_ ~user:_ ->
+        (fun ?schema:_ ~system:_ ~user:_ () ->
           incr calls;
           Alcotest.fail "unexpected narrative call");
     }

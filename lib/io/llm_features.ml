@@ -6,6 +6,7 @@ module Access = Cashflow_core.Access
 module Account = Cashflow_core.Account
 module Account_id = Cashflow_core.Account_id
 module Account_info = Cashflow_core.Account_info
+module Csv = Cashflow_core.Csv
 module Amount = Cashflow_core.Amount
 module Analytics = Cashflow_core.Analytics
 module Currency = Cashflow_core.Currency
@@ -51,7 +52,7 @@ let suggest_categories (service : Service.t) access ~(bank_account : Account_inf
          row choose the best category id from the list (expense categories for spending, income ones for income), or skip the row if \
          none fits. Reply with JSON only: {\"suggestions\": [{\"row\": <row>, \"category_id\": \"<id>\", \"confidence\": <0-100>}]}."
       in
-      let result = llm.complete ~system ~user in
+      let result = llm.complete ~system ~user () in
       Service.log_llm_call service access ~purpose:"categorise" ~items:(List.length rows) ~ok:(Result.is_ok result);
       let valid id = List.find_opt (fun (i : Account_info.t) -> Account_id.to_string i.account.id = id) categories in
       match Result.map Llm.json_of_reply result with
@@ -76,6 +77,103 @@ let suggest_categories (service : Service.t) access ~(bank_account : Account_inf
 
 let cache_get = Sql.(stmt "SELECT content FROM llm_cache WHERE cache_key = ?" (text @-> nil) (opt (row (text @-> nil) Fun.id)))
 let cache_put = Sql.(stmt "INSERT OR REPLACE INTO llm_cache (cache_key, content, model, created_at) VALUES (?, ?, ?, ?)" Codec.(text @-> text @-> text @-> time @-> nil) exec)
+
+(* The layout of a statement no format knows, read by the model from the file's first rows with
+   every digit masked: it sees the shape and the words (headers, merchant text), never an amount,
+   balance or account number. Its answer is structured output, checked here and then used to read
+   the whole file, so every figure comes from the file. Cached by the masked rows, so a preview and
+   its import ask once, and never inside the import's transaction. [Error None]: no model. *)
+let layout_rows = 25
+
+let layout_schema =
+  let typ t = `Assoc [ ("type", t) ] in
+  let nullable t = `List [ `String t; `String "null" ] in
+  let obj ?(null = false) props =
+    `Assoc
+      [ ("type", if null then nullable "object" else `String "object"); ("properties", `Assoc props);
+        ("required", `List (List.map (fun (k, _) -> `String k) props)); ("additionalProperties", `Bool false) ]
+  in
+  let cell = obj ~null:true [ ("row", typ (`String "integer")); ("column", typ (`String "integer")) ] in
+  obj
+    [ ("header_row", typ (`String "integer"));
+      ( "columns",
+        obj
+          (List.map (fun k -> (k, typ (nullable "integer")))
+             [ "booking_date"; "transaction_date"; "description"; "counterparty"; "amount"; "money_out"; "money_in"; "balance"; "reference" ]) );
+      ("date_order", `Assoc [ ("type", `String "string"); ("enum", `List [ `String "YMD"; `String "DMY"; `String "MDY" ]) ]);
+      ("spending_positive", typ (`String "boolean")); ("institution", typ (nullable "string")); ("account_name_cell", cell); ("account_number_cell", cell) ]
+
+let layout_system =
+  "You read the layout of a bank statement export for a personal finance ledger. Every digit in it has been replaced by 9, so you \
+   see the shape of the file, not its figures. Rows are numbered from 0, and so are the cells in a row. Give the row holding the \
+   column headers above the transactions, and the column of each field, or null when the file has none: booking_date (the day the \
+   bank booked the row; when there is only one date, that one), transaction_date (the purchase day, if given separately), \
+   description, counterparty, amount (one signed column), money_out and money_in (separate columns instead of amount), balance (the \
+   running balance after each row) and reference (the bank's own transaction id). date_order is the order of year, month and day \
+   in the dates, judged from the headers' language and the bank. spending_positive is true only when purchases are written as \
+   positive amounts, as some card exports do. institution is the bank's name if the file gives it. account_name_cell and \
+   account_number_cell are the cells above the headers naming the account and holding its number, or null."
+
+let layout_of_json json : (Statement_format.layout, string) result =
+  let open Yojson.Safe.Util in
+  try
+    let int_opt = function `Int i -> Some i | _ -> None in
+    let cell = function `Assoc _ as c -> Some (to_int (member "row" c), to_int (member "column" c)) | _ -> None in
+    let columns = member "columns" json in
+    let column (name, kind) = Option.map (fun i -> (kind, i)) (int_opt (member name columns)) in
+    Ok
+      { Statement_format.header_row = to_int (member "header_row" json);
+        columns =
+          List.filter_map column
+            [ ("booking_date", `Booking); ("transaction_date", `Transaction); ("description", `Description); ("counterparty", `Counterparty);
+              ("amount", `Amount); ("money_out", `Out); ("money_in", `In); ("balance", `Balance); ("reference", `Reference) ];
+        date_order = (match member "date_order" json with `String "DMY" -> Statement_format.Dmy | `String "MDY" -> Statement_format.Mdy | _ -> Statement_format.Ymd);
+        spending_positive = (match member "spending_positive" json with `Bool b -> b | _ -> false);
+        institution = (match member "institution" json with `String s when String.trim s <> "" -> Some (String.trim s) | _ -> None);
+        account_name_cell = cell (member "account_name_cell" json);
+        account_number_cell = cell (member "account_number_cell" json) }
+  with Type_error (reason, _) -> Error reason
+
+let statement_layout (service : Service.t) access (table : Csv.table) =
+  match service.assistant with
+  | None -> Error None
+  | Some llm -> (
+      let mask cell =
+        let cell = if String.length cell > 80 then String.sub cell 0 80 else cell in
+        String.map (fun c -> if c >= '0' && c <= '9' then '9' else c) cell
+      in
+      let sample = List.filteri (fun i _ -> i < layout_rows) table in
+      let user =
+        Yojson.Safe.to_string
+          (`Assoc [ ("rows", `List (List.mapi (fun i row -> `Assoc [ ("row", `Int i); ("cells", `List (List.map (fun c -> `String (mask c)) row)) ]) sample)) ])
+      in
+      let key = "layout:" ^ Digestif.SHA256.(to_hex (digest_string user)) in
+      let check reply =
+        match Llm.json_of_reply reply with
+        | None -> Error "the reply wasn't JSON"
+        | Some json ->
+            let ( let* ) = Result.bind in
+            let* layout = layout_of_json json in
+            let* () = Statement_format.layout_valid layout table in
+            let (module F) = Statement_format.of_layout layout in
+            (match F.parse ~scale:2 table with
+            | Ok (_ :: _) -> Ok layout
+            | Ok [] -> Error "no transactions under the header it found"
+            | Error reason -> Error reason)
+      in
+      match Sql.run service.db cache_get key with
+      | Some reply -> Result.map_error Option.some (check reply)
+      | None -> (
+          let result = llm.complete ~schema:("statement_layout", layout_schema) ~system:layout_system ~user () in
+          Service.log_llm_call service access ~purpose:"statement_layout" ~items:(List.length sample) ~ok:(Result.is_ok result);
+          match result with
+          | Error reason -> Error (Some reason)
+          | Ok reply -> (
+              match check reply with
+              | Ok layout ->
+                  Sql.run service.db cache_put key reply llm.model (service.now ());
+                  Ok layout
+              | Error reason -> Error (Some reason))))
 
 (* A few sentences on a finished cycle, written from the computed figures alone, once per user,
    cycle and language. *)
@@ -103,7 +201,7 @@ let month_summary (service : Service.t) access ~(cycle : Cycle.t) ~currency ~(su
               "Write two or three short, plain sentences in %s summarising a household's month from the figures given: how spending \
                and savings compare with the previous month and which categories explain it. No advice, no greetings, no markdown." language
           in
-          let result = llm.complete ~system ~user:(Yojson.Safe.to_string figures) in
+          let result = llm.complete ~system ~user:(Yojson.Safe.to_string figures) () in
           Service.log_llm_call service access ~purpose:"month_summary" ~items:1 ~ok:(Result.is_ok result);
           match result with
           | Ok text when String.trim text <> "" ->
@@ -145,7 +243,7 @@ let unusual_spending (service : Service.t) access ~(cycle : Cycle.t) ~currency ~
               "Write one short, plain sentence in %s saying what made this category's spending higher than usual, naming the \
                transactions or merchants that explain most of it. Use only the figures given. No advice, no greetings, no markdown." language
           in
-          let result = llm.complete ~system ~user:(Yojson.Safe.to_string figures) in
+          let result = llm.complete ~system ~user:(Yojson.Safe.to_string figures) () in
           Service.log_llm_call service access ~purpose:"unusual_spending" ~items:1 ~ok:(Result.is_ok result);
           match result with
           | Ok text when String.trim text <> "" ->
