@@ -592,6 +592,27 @@ let test_zipped_statement () =
   | Error (`Unreadable _) -> ()
   | _ -> Alcotest.fail "read a zip with no statement"
 
+(* A card's statement writes the debt as negative; the card opens owing it. *)
+let test_new_card_opens_owing () =
+  let service = make_service () in
+  let alice = sign_in service "alice" in
+  let ctx = Import.context service alice in
+  let request : Import.request =
+    { target = Create { name = "Kreditkort"; kind = Liability; owner = Access.personal alice; institution = None; number_last4 = None };
+      file_name = Some "card.csv"; content = "Datum;Text;Belopp;Saldo\n2026-10-20;Purchase;-100,00;-1000,00\n"; decisions = [] }
+  in
+  let preview = ok_import (Import.preview ctx request) in
+  Alcotest.(check (option (pair string int64))) "owed the day before" (Some ("2026-10-19", 900_00L))
+    (Option.map (fun (d, b) -> (Date.to_string d, b)) preview.opening);
+  (match preview.balance with
+  | Some b -> Alcotest.(check (list int64)) "agrees with the bank" [ 1_000_00L; 1_000_00L ] [ b.statement_balance; b.ledger_balance ]
+  | None -> Alcotest.fail "no balance check");
+  let summary = imported (Import.confirm ctx request) in
+  Alcotest.(check int64) "owes 1000" 1_000_00L (balance service alice summary.account.account.id);
+  match summary.balance with
+  | Some b -> Alcotest.(check int64) "reconciled" b.statement_balance b.ledger_balance
+  | None -> Alcotest.fail "no checkpoint"
+
 (* An account opened by hand learns its number from the first file, so the next one finds it. *)
 let test_an_account_learns_its_number () =
   let service, alice, checking = setup () in
@@ -623,6 +644,7 @@ let () =
           Alcotest.test_case "closing balance, oldest first" `Quick test_closing_balance_oldest_first;
           Alcotest.test_case "handelsbanken xlsx" `Quick test_handelsbanken_xlsx;
           Alcotest.test_case "a new account from the file" `Quick test_new_account_from_the_file;
+          Alcotest.test_case "a new card opens owing" `Quick test_new_card_opens_owing;
           Alcotest.test_case "an account learns its number" `Quick test_an_account_learns_its_number;
           Alcotest.test_case "a zipped statement" `Quick test_zipped_statement;
           Alcotest.test_case "categorise, learn and undo" `Quick test_categorize_learn_and_undo;

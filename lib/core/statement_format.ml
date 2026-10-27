@@ -236,6 +236,11 @@ let layout_valid (l : layout) table =
   let has k = List.mem_assoc k l.columns in
   if l.header_row < 0 || l.header_row >= List.length table then Error "the header row is outside the file"
   else if List.exists (fun (_, i) -> i < 0 || i >= width) l.columns then Error "a column is outside the file"
+  else if
+    List.exists
+      (function Some (r, c) -> r < 0 || r >= List.length table || c < 0 || c >= width | None -> false)
+      [ l.account_name_cell; l.account_number_cell ]
+  then Error "an account cell is outside the file"
   else if not (has `Booking || has `Transaction) then Error "no date column"
   else if not (has `Amount || (has `In && has `Out)) then Error "no amount column"
   else Ok ()
@@ -250,7 +255,7 @@ let of_layout (l : layout) : (module S) =
         ~column:(fun k -> List.assoc_opt k l.columns) table
 
     let identity table =
-      let cell (r, c) = Option.map String.trim (Option.bind (List.nth_opt table r) (fun row -> List.nth_opt row c)) in
+      let cell (r, c) = if r < 0 || c < 0 then None else Option.map String.trim (Option.bind (List.nth_opt table r) (fun row -> List.nth_opt row c)) in
       let last4 =
         Option.bind (Option.bind l.account_number_cell cell) (fun text ->
             let d = String.concat "" (digit_groups text) in

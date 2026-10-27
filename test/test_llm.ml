@@ -2,6 +2,7 @@ module Config = Cashflow_io.Config
 module Import = Cashflow_io.Import
 module Inbox = Cashflow_io.Inbox
 module Llm = Cashflow_io.Llm
+module Llm_features = Cashflow_io.Llm_features
 module Service = Cashflow_io.Service
 module Sql = Cashflow_io.Sql
 module Store_sqlite = Cashflow_io.Store_sqlite
@@ -117,6 +118,18 @@ let test_unknown_format_read_by_the_assistant () =
   | Error (`Unreadable _) -> ()
   | _ -> Alcotest.fail "read without an assistant"
 
+(* A layout pointing outside the file is refused with a reason, never an exception later. *)
+let test_layout_cells_outside_the_file () =
+  let table = Cashflow_core.Csv.parse unknown_bank in
+  let layout cell = Result.get_ok (Llm_features.layout_of_json (Yojson.Safe.from_string (Str_compat.replace_all ~sub:{|{"row": 1, "column": 0}|} ~by:cell layout_reply))) in
+  Alcotest.(check bool) "inside" true (Result.is_ok (Cashflow_core.Statement_format.layout_valid (layout {|{"row": 1, "column": 0}|}) table));
+  List.iter
+    (fun cell ->
+      match Cashflow_core.Statement_format.layout_valid (layout cell) table with
+      | Error _ -> ()
+      | Ok () -> Alcotest.fail ("accepted " ^ cell))
+    [ {|{"row": -1, "column": 0}|}; {|{"row": 0, "column": -1}|}; {|{"row": 99, "column": 0}|}; {|{"row": 1, "column": 9}|} ]
+
 let openrouter_config fields =
   match Config.parse
     (Printf.sprintf
@@ -190,7 +203,8 @@ let () =
     [ ( "features",
         [ Alcotest.test_case "suggestions and privacy" `Quick test_suggestions_and_privacy;
           Alcotest.test_case "no network inside the import transaction" `Quick test_no_network_inside_the_import_transaction;
-          Alcotest.test_case "an unknown format read by the assistant" `Quick test_unknown_format_read_by_the_assistant ] );
+          Alcotest.test_case "an unknown format read by the assistant" `Quick test_unknown_format_read_by_the_assistant;
+          Alcotest.test_case "layout cells outside the file" `Quick test_layout_cells_outside_the_file ] );
       ( "openrouter",
         [ Alcotest.test_case "privacy policy in requests" `Quick test_openrouter_privacy_policy;
           Alcotest.test_case "never relax the policy" `Quick test_openrouter_does_not_relax_policy;

@@ -389,13 +389,15 @@ let check_balance (d, rows) =
     match oldest_row d.rows with
     | Some ({ balance = Some after; _ } as first) ->
         let day_before = Date.add_days first.booking_date (-1) in
-        let opening = Int64.sub after first.amount in
+        (* The bank writes a card's debt as negative; the ledger counts it in the account's own
+           direction, where a liability's debt is positive. *)
+        let sign = if Account.debit_normal account.kind then 1L else -1L in
+        let opening = Int64.mul sign (Int64.sub after first.amount) in
         if Int64.equal opening 0L || not (Int64.equal (Import_store.posted_balance_on db account day_before) 0L) then None else Some (day_before, opening)
     | _ -> None
   in
   let opening = opening_of_rows in
-  (* A new account is opened with that balance, so the check counts it already. Whatever the
-     account's kind, the ledger shows an opening balance as the bank wrote it. *)
+  (* A new account is opened with that balance, so the check counts it already. *)
   let balance =
     match d.request.target, opening, balance with
     | Create _, Some (_, b), Some check -> Some { check with ledger_balance = Int64.add check.ledger_balance b }
