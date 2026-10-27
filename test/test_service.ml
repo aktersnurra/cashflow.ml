@@ -5,6 +5,8 @@ module Holidays = Cashflow_core.Holidays
 module Household = Cashflow_core.Household
 module Ledger_event = Cashflow_core.Ledger_event
 module Pay_cycle_setting = Cashflow_core.Pay_cycle_setting
+module Owner = Cashflow_core.Owner
+module User = Cashflow_core.User
 
 open Test_service_support
 
@@ -15,6 +17,29 @@ let test_sign_in_seeds_the_chart_once () =
   Alcotest.(check bool) "seeded" true (count > 10);
   let alice = sign_in service "alice" in
   Alcotest.(check int) "not seeded twice" count (List.length (Service.accounts service alice))
+
+(* Starter categories follow the language until someone renames them, the household's too. *)
+let test_starter_categories_follow_the_language () =
+  let service = make_service () in
+  let alice = sign_in service ~admin:true "alice" in
+  ignore (ok (Service.create_household service alice ~name:"Home" ~default_currency:"SEK"));
+  let alice = Service.access_for service (Access.user alice) in
+  let other = account_named service alice "Other" in
+  ignore (ok (Service.update_account service alice other ~name:(Some "Misc") ~details:Account_info.no_details));
+  let user = Access.user alice in
+  let alice =
+    ok (Service.update_settings service alice { User.locale = "sv"; timezone = user.timezone; default_currency = user.default_currency; pay_cycle = user.pay_cycle })
+  in
+  let names owner =
+    List.filter_map (fun (i : Account_info.t) -> if Owner.equal i.account.owner owner then Some i.account.name else None) (Service.accounts service alice)
+  in
+  let personal = names (Access.personal alice) and shared = names (Owner.Household (Option.get (Access.household alice)).id) in
+  List.iter
+    (fun (label, names) ->
+      Alcotest.(check bool) (label ^ ": translated") true (List.mem "Mat & hushåll" names && List.mem "Okategoriserat" names);
+      Alcotest.(check bool) (label ^ ": no English left") false (List.mem "Groceries" names))
+    [ ("personal", personal); ("household", shared) ];
+  Alcotest.(check bool) "a renamed one keeps its name" true (List.mem "Misc" personal && not (List.mem "Övrigt" personal))
 
 let test_users_are_isolated () =
   let service = make_service () in
@@ -140,6 +165,7 @@ let () =
   Alcotest.run "service"
     [ ( "access",
         [ Alcotest.test_case "sign-in seeds the chart once" `Quick test_sign_in_seeds_the_chart_once;
+          Alcotest.test_case "starter categories follow the language" `Quick test_starter_categories_follow_the_language;
           Alcotest.test_case "users are isolated" `Quick test_users_are_isolated;
           Alcotest.test_case "household sharing and masking" `Quick test_household_sharing_and_masking;
           Alcotest.test_case "only admins add household bank accounts" `Quick test_only_admins_add_household_bank_accounts ] );

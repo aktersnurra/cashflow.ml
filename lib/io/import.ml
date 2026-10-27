@@ -11,6 +11,7 @@ module Account = Cashflow_core.Account
 module Account_id = Cashflow_core.Account_id
 module Account_info = Cashflow_core.Account_info
 module Amount = Cashflow_core.Amount
+module Chart = Cashflow_core.Chart
 module Csv = Cashflow_core.Csv
 module Currency = Cashflow_core.Currency
 module Date = Cashflow_core.Date
@@ -407,7 +408,8 @@ let uncategorized ctx (account : Account.t) kind =
   | Some info -> Ok info
   | None -> (
       let key = Result.get_ok (Idempotency_key.of_string ("seed:uncategorized-" ^ Account.kind_to_string kind ^ "-" ^ currency)) in
-      let name = if kind = Account.Expense then "Uncategorized" else "Uncategorized income" in
+      let slug = if kind = Account.Expense then "uncategorized-expense" else "uncategorized-income" in
+      let name = Chart.name (Access.user ctx.access).locale (List.find (fun (e : Chart.entry) -> e.slug = slug) Chart.entries) in
       match
         Service.open_account ctx.service ctx.access ~key ~owner:account.owner ~kind ~name:(name ^ " (" ^ currency ^ ")") ~currency
           ~flags:Account.no_flags ~details:{ Account_info.no_details with role = Some Uncategorized }
