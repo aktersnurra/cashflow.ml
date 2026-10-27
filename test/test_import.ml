@@ -228,7 +228,7 @@ let test_manual_merchant_query () =
 let test_logo_scheduling () =
   let db = Store_sqlite.open_memory () in
   let pending = ref [] and calls = ref 0 in
-  let assistant = Llm.{model="fake"; complete=(fun ~system ~user:_ -> if Str_compat.contains ~sub:"website hostname" system then incr calls; Ok {|{"merchants":[]}|})} in
+  let assistant = Llm.{model="fake"; complete=(fun ?schema:_ ~system ~user:_ () -> if Str_compat.contains ~sub:"website hostname" system then incr calls; Ok {|{"merchants":[]}|})} in
   let service = Service.make ~assistant ~logo_network:(Logo_fetch.{ with_request=(fun f -> f ());
     resolve=(fun ~host:_ -> Alcotest.fail "unexpected DNS"); get=(fun ~uri:_ ~address:_ ~max_bytes:_ -> Alcotest.fail "unexpected fetch") })
     ~schedule:(fun work -> Alcotest.(check bool) "after commit" false (Sql.in_transaction db); pending := work :: !pending) db in

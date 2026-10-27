@@ -53,7 +53,7 @@ let manual () =
 let chain () =
   let calls = ref 0 and prompts = ref [] and clock = ref now in
   let db = Store_sqlite.open_memory () in
-  let assistant = Llm.{model="fake"; complete=(fun ~system ~user ->
+  let assistant = Llm.{model="fake"; complete=(fun ?schema:_ ~system ~user () ->
     let prefix = "Reply JSON only: " in
     Alcotest.(check bool) "prompt introduces JSON example" true (Str_compat.contains ~sub:prefix system);
     let at = String.index system ':' + 2 in
@@ -84,7 +84,7 @@ let chain () =
 let automatic_uses_original_display_name () =
   let db = Store_sqlite.open_memory () in
   let prompts = ref [] in
-  let assistant = Llm.{ model="fake"; complete=(fun ~system:_ ~user ->
+  let assistant = Llm.{ model="fake"; complete=(fun ?schema:_ ~system:_ ~user () ->
     prompts := user :: !prompts;
     Ok {|{"merchants":[{"name":"7-Eleven","domain":"seven-eleven.com","confidence":90}]}|}) } in
   let service = Service.make ~assistant ~logo_network:(network (ref 0)) db in
@@ -104,7 +104,7 @@ let automatic_uses_original_display_name () =
 let automatic_without_display_name () =
   let db = Store_sqlite.open_memory () in
   let calls = ref 0 in
-  let assistant = Llm.{ model="fake"; complete=(fun ~system:_ ~user:_ -> incr calls; Ok {|{"merchants":[]}|}) } in
+  let assistant = Llm.{ model="fake"; complete=(fun ?schema:_ ~system:_ ~user:_ () -> incr calls; Ok {|{"merchants":[]}|}) } in
   let service = Service.make ~assistant ~logo_network:(network (ref 0)) db in
   let access = sign_in service "alice" in
   let owner = Access.personal access in
@@ -122,7 +122,7 @@ let resolver_cases () =
   let clock = ref now and calls = ref 0 and prompts = ref [] in
   let response = ref "" and during = ref (fun () -> ()) in
   let db = Store_sqlite.open_memory () in
-  let assistant = Llm.{model="fake"; complete=(fun ~system:_ ~user ->
+  let assistant = Llm.{model="fake"; complete=(fun ?schema:_ ~system:_ ~user () ->
     Alcotest.(check bool) "LLM outside SQL transaction" false (Sql.in_transaction db);
     prompts := user :: !prompts; !during (); Ok !response)} in
   let service = Service.make ~now:(fun () -> !clock) ~assistant ~logo_network:(network calls) db in
@@ -166,7 +166,7 @@ let resolver_cases () =
 
 let batching () =
  let db = Store_sqlite.open_memory () and sizes = ref [] in
- let assistant = Llm.{model="fake"; complete=(fun ~system:_ ~user ->
+ let assistant = Llm.{model="fake"; complete=(fun ?schema:_ ~system:_ ~user () ->
    sizes := (match Yojson.Safe.from_string user with `Assoc [_, `List names] -> List.length names | _ -> 0) :: !sizes;
    Ok {|{"merchants":[]}|})} in
  let service = Service.make ~assistant ~logo_network:(network (ref 0)) db in
@@ -219,7 +219,7 @@ let retry_projection () =
   let db = Store_sqlite.open_memory () in
   let prompts = ref 0 and calls = ref 0 in
   let reply = ref {|{"merchants":[]}|} in
-  let assistant = Llm.{model="fake"; complete=(fun ~system:_ ~user:_ -> incr prompts; Ok !reply)} in
+  let assistant = Llm.{model="fake"; complete=(fun ?schema:_ ~system:_ ~user:_ () -> incr prompts; Ok !reply)} in
   let service = Service.make ~assistant ~logo_network:(network calls) db in
   let alice = sign_in service "alice" and bob = sign_in service "bob" in
   let owner = Access.personal alice in
@@ -258,7 +258,7 @@ let failed_provider_replies =
 let provider_failures_retry () =
   List.iter (fun (label, reply) ->
     let db = Store_sqlite.open_memory () and calls = ref 0 in
-    let assistant = Llm.{model="fake"; complete=(fun ~system:_ ~user:_ -> reply)} in
+    let assistant = Llm.{model="fake"; complete=(fun ?schema:_ ~system:_ ~user:_ () -> reply)} in
     let service = Service.make ~now:(fun () -> now) ~assistant ~logo_network:(network calls) db in
     let access = sign_in service "alice" in
     let owner = Access.personal access in
@@ -289,7 +289,7 @@ let provider_failures_retry () =
 let provider_failures_preserve_edits () =
   List.iter (fun (label, reply) ->
     let db = Store_sqlite.open_memory () and during = ref (fun () -> ()) in
-    let assistant = Llm.{model="fake"; complete=(fun ~system:_ ~user:_ -> !during (); reply)} in
+    let assistant = Llm.{model="fake"; complete=(fun ?schema:_ ~system:_ ~user:_ () -> !during (); reply)} in
     let service = Service.make ~assistant ~logo_network:(network (ref 0)) db in
     let access = sign_in service "alice" in
     let owner = Access.personal access in
@@ -306,7 +306,7 @@ let provider_failures_preserve_edits () =
 let provider_failures_check_membership () =
   List.iter (fun (label, reply) ->
     let db = Store_sqlite.open_memory () and during = ref (fun () -> ()) in
-    let assistant = Llm.{model="fake"; complete=(fun ~system:_ ~user:_ -> !during (); reply)} in
+    let assistant = Llm.{model="fake"; complete=(fun ?schema:_ ~system:_ ~user:_ () -> !during (); reply)} in
     let service = Service.make ~assistant ~logo_network:(network (ref 0)) db in
     let access = sign_in service ~admin:true "alice" in
     let household = ok (Service.create_household service access ~name:"Home" ~default_currency:"SEK") in

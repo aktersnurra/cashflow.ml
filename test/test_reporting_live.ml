@@ -311,7 +311,7 @@ let forecast_categorised_imports () =
   let alice = sign_in service "alice" in
   let checking = open_checking service alice ~statement_backed:true "Checking" in
   let ctx = Import.context service alice in
-  (match Import.confirm ctx { account_id = checking; file_name = Some "export.csv"; decisions = [];
+  (match Import.confirm ctx { target = Import.Existing checking; file_name = Some "export.csv"; decisions = [];
                               content = "Datum;Text;Belopp\n2026-07-03;ICA;-2000,00\n2026-07-29;ICA;-4000,00\n2026-09-14;ICA;-3000,00\n" } with
    | Ok (`Imported _) -> ()
    | _ -> Alcotest.fail "import");
