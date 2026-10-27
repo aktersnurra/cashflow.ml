@@ -151,3 +151,22 @@ let consent ~enabled ~household_id =
     ~body:(Yojson.Safe.to_string (`Assoc fields))
     "consent"
     (json (fun j -> Option.map (bool (field "enabled" j)) ~f:(fun _ -> ())))
+
+type memory = { id : string; text : string }
+
+let memory_of j = match str (field "id" j), str (field "text" j) with Some id, Some text -> Some { id; text } | _ -> None
+
+let memories () =
+  request "memories"
+    (json (fun j -> match field "memories" j with Some (`List xs) -> Option.all (List.map xs ~f:memory_of) | _ -> None))
+
+let write_memory path text =
+  request ~body:(Yojson.Safe.to_string (`Assoc [ ("text", `String text) ])) path
+    (json (fun j -> Option.map (field "memory" j) ~f:ignore))
+
+let add_memory text = write_memory "memories" text
+let update_memory ~id text = write_memory ("memories/" ^ Js_of_ocaml.Url.urlencode id) text
+
+let forget_memory id =
+  request ~body:"{}" ("memories/" ^ Js_of_ocaml.Url.urlencode id ^ "/forget")
+    (json (fun j -> match str (field "status" j) with Some "forgotten" -> Some () | _ -> None))

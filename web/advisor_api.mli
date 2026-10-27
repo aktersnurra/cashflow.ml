@@ -9,3 +9,10 @@ val history : limit:int -> offset:int -> (C.history_page, C.failure) result Asyn
 val cancel : string -> (string, C.failure) result Async_kernel.Deferred.t
 val delete : string -> (unit, C.failure) result Async_kernel.Deferred.t
 val consent : enabled:bool -> household_id:string option -> (unit, C.failure) result Async_kernel.Deferred.t
+
+type memory = { id : string; text : string }
+
+val memories : unit -> (memory list, C.failure) result Async_kernel.Deferred.t
+val add_memory : string -> (unit, C.failure) result Async_kernel.Deferred.t
+val update_memory : id:string -> string -> (unit, C.failure) result Async_kernel.Deferred.t
+val forget_memory : string -> (unit, C.failure) result Async_kernel.Deferred.t
