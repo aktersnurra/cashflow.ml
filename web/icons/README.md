@@ -67,7 +67,8 @@ PNG are available at 64, 192, 256, 512, and 1024 pixels:
 
 Run `python -m pip install Pillow` and then
 `python web/icons/export_transparent.py` to regenerate from the checked-in,
-approved `source-original.png`. These exported PNG files are not checked in;
-the complete set is available separately in the updated downloadable icon ZIP.
+approved `source-original.png`. The two 192 px variants are checked in; the
+other sizes are generated locally. Run `python test/test_export_transparent.py`
+to verify all sizes in a temporary directory without changing checked-in images.
 Preserve the original opaque PWA and Apple icons because platforms may apply
 opaque-background and adaptive-icon rules.
