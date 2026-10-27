@@ -581,3 +581,4 @@ advisor.evidence.categories = Categories
 advisor.evidence.label_transaction = Transaction
 advisor.evidence.label_amount = Amount
 advisor.evidence.label_new_category = File under
+inbox.showing = Showing the first {$shown} of {$total}. The next ones appear as you clear these.
