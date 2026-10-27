@@ -1,6 +1,6 @@
 (* Importing a bank statement, as a pipeline of stages composed with Kleisli composition:
 
-     decode >=> fingerprint >=> classify >=> suggest >=> suggest_with_llm >=> check_balance
+     decode >=> fingerprint >=> classify >=> suggest >=> suggest_with_llm >=> promote >=> check_balance
 
    Each stage takes the previous one's result and either refines it or stops with an error, so a
    stage can be tested on its own, and a bank sync can reuse everything after [decode]. Running
@@ -261,6 +261,21 @@ let suggest_with_llm ?answered (d, rows) =
   in
   Ok (d, List.map (fun p -> match List.assoc_opt p.index suggestions with Some s when p.suggestion = None && p.status = New -> { p with suggestion = Some s } | _ -> p) rows)
 
+(* Stage 4c: the bank account may have opted in to applying confident history and LLM suggestions. Read
+   inside [confirm]'s transaction like the rest of the plan, so a setting changed meanwhile is honoured. *)
+let promote (d, rows) =
+  let bank = d.account.account in
+  let threshold = Import_store.auto_apply_threshold d.ctx.service.db bank.id in
+  (* History and the LLM look across all of an owner's categories, so a suggestion may belong to another owner or
+     currency than the bank account; the inbox refuses such a category, and so must a row filed without asking. *)
+  let fits (s : Suggest.suggestion) =
+    match Service.find_account d.ctx.service d.ctx.access s.category_id with
+    | Ok category -> Cashflow_core.Owner.equal category.account.owner bank.owner && String.equal (Currency.code category.account.currency) (Currency.code bank.currency)
+    | Error _ -> false
+  in
+  let promote (s : Suggest.suggestion) = Suggest.promote ~threshold:(if fits s then threshold else None) s in
+  Ok (d, List.map (fun p -> { p with suggestion = Option.map promote p.suggestion }) rows)
+
 (* The balance after the file's last row. Banks list rows newest or oldest first; the running
    balances say which (each one is the previous plus the row's amount, in time order), and when
    they can't, the dates do. *)
@@ -322,7 +337,7 @@ let check_balance (d, rows) =
   in
   Ok { decoded_file = d; rows; already_imported; balance; opening }
 
-let pipeline ?answered ctx = decode ctx >=> fingerprint >=> classify >=> suggest >=> suggest_with_llm ?answered >=> check_balance
+let pipeline ?answered ctx = decode ctx >=> fingerprint >=> classify >=> suggest >=> suggest_with_llm ?answered >=> promote >=> check_balance
 let preview ctx request = pipeline ctx request
 
 type summary = { batch : Import_store.batch; inbox_count : int; balance : balance_check option }

@@ -312,6 +312,16 @@ CREATE TABLE advisor_memories (
 );
 CREATE INDEX advisor_memories_owner ON advisor_memories(owner_id, created_at, id);
 |}
+    );
+    ( 9,
+      {|
+-- A bank account whose confident history and LLM category suggestions are applied on import without
+-- asking. A row exists only while the setting is on; no row means every suggestion waits in the inbox.
+CREATE TABLE account_auto_apply (
+ account_id TEXT PRIMARY KEY REFERENCES accounts(id),
+ min_confidence INTEGER NOT NULL CHECK(min_confidence BETWEEN 50 AND 100)
+);
+|}
     ) ]
 
 let latest_version = List.fold_left (fun latest (version, _) -> max latest version) 0 migrations

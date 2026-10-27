@@ -16,7 +16,8 @@ let sign_out = Effect.of_deferred_thunk Api.sign_out
 let page ~(ctx : Ctx.t) ~(advisor : Advisor.controller Bonsai.t) graph =
   let edits, set_edits = Bonsai.state None graph in
   let memory = Advisor_memory.component ~locale:ctx.locale graph in
-  let%arr advisor and memory and edits and set_edits and session = ctx.session and locale = ctx.locale and changed = ctx.changed and notify = ctx.notify and theme = ctx.theme
+  let auto_apply = Auto_apply.component ~ctx graph in
+  let%arr advisor and memory and auto_apply and edits and set_edits and session = ctx.session and locale = ctx.locale and changed = ctx.changed and notify = ctx.notify and theme = ctx.theme
   and set_theme = ctx.set_theme in
   let draft = Option.value edits ~default:(draft_of_session session) in
   let set f = set_edits (Some (f draft)) in
@@ -67,6 +68,7 @@ let page ~(ctx : Ctx.t) ~(advisor : Advisor.controller Bonsai.t) graph =
                ~options:[ ("previous_banking_day", Msg.label_cycle_previous locale); ("next_banking_day", Msg.label_cycle_next locale); ("none", Msg.label_cycle_none locale) ]
                ~on_change:(fun v -> set (fun d -> { d with adjustment = v })));
           Ui.div ~cls:"row table-foot" [ Ui.button ~kind:"primary" ~disabled:(Option.is_none edits) (Msg.action_save locale) save ] ];
+      auto_apply;
       (* Applies at once and stays on this device, so it needs no Save. *)
       section (Msg.settings_appearance locale)
         [ setting ~hint:(Msg.settings_theme_hint locale) (Msg.settings_theme locale)

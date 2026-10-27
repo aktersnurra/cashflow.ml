@@ -107,11 +107,21 @@ fs.writeFileSync(out + '/export.csv', csv);
     await page.locator('.row', { hasText: 'Answer in kronor' }).getByRole('button', { name: 'Forget' }).click();
     await page.getByText('No notes yet.').waitFor({ timeout: 10000 });
     await page.screenshot({ path: out + '/14-settings-memory.png', fullPage: true });
+    // Automatic categories: a bank account opts in per confidence level, and it persists.
+    await page.getByRole('heading', { name: 'Automatic categories', exact: true }).waitFor({ timeout: 10000 });
+    const autoRow = page.locator('.setting-row', { hasText: 'Lönekonto' });
+    assert.equal(await autoRow.locator('select').inputValue(), 'off', 'automatic categories start off');
+    await autoRow.locator('select').selectOption('90');
+    await page.waitForFunction(() => [...document.querySelectorAll('.setting-row')].some(r => r.textContent.includes('Lönekonto') && r.querySelector('select').value === '90'), null, { timeout: 10000 });
+    await page.reload();
+    await page.waitForFunction(() => [...document.querySelectorAll('.setting-row')].some(r => r.textContent.includes('Lönekonto') && r.querySelector('select').value === '90'), null, { timeout: 10000 });
+    await page.screenshot({ path: out + '/15-settings-auto-apply.png', fullPage: true });
     // Switch to Swedish in Settings; the whole UI follows.
     await page.selectOption('.setting-row select >> nth=0', 'sv');
     await page.click('.table-foot .button.primary');
     await page.waitForSelector('.sidebar >> text=Pengar', { timeout: 10000 });
     await page.getByRole('heading', { name: 'Minne', exact: true }).waitFor({ timeout: 10000 });
+    await page.getByRole('heading', { name: 'Automatiska kategorier', exact: true }).waitFor({ timeout: 10000 });
     await page.getByPlaceholder('Till exempel: svara i hela kronor').waitFor();
     await page.click('.sidebar >> text=Översikt');
     await page.waitForTimeout(800);

@@ -19,6 +19,14 @@ let none : t = fun _ -> None
 let ( <|> ) (a : t) (b : t) : t = fun input -> match a input with Some _ as found -> found | None -> b input
 let first suggesters = List.fold_right ( <|> ) suggesters none
 
+(* Rules carry their own [auto_apply]. History and LLM suggestions are applied without asking only when the
+   bank account opted in and the suggestion is at least as confident as it asked for. *)
+let promote ~threshold (s : suggestion) =
+  match s.source with
+  | History _ | Llm ->
+      { s with auto_apply = (match threshold with Some minimum -> (not s.shared) && s.confidence >= minimum | None -> false) }
+  | Rule _ -> s
+
 let source_to_string = function Rule _ -> "rule" | History _ -> "history" | Llm -> "llm"
 
 let merchant_key (row : Statement_format.row) =
