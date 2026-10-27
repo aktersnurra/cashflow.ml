@@ -171,6 +171,21 @@ let tries_next_address () =
   Alcotest.(check bool) "an error status is an answer, not a reason to retry" true (fetch answers "https://example.org/logo.png" = Error Unreachable_site);
   Alcotest.(check int) "one connection" 1 (List.length !tried)
 
+(* Real home pages are far bigger than the limit; only their <head> matters, so the start of the page is enough. *)
+let big_page_is_read_by_its_head () =
+  let head = "<html><head><link rel=\"apple-touch-icon\" href=\"/logo.png\"></head><body>" in
+  let page = head ^ String.make 700_000 'x' in
+  let net =
+    { with_request = (fun f -> f ()); resolve = (fun ~host:_ -> Ok [ "8.8.8.8" ]);
+      get = (fun ~uri ~address:_ ~max_bytes ->
+        (* What the real network layer hands back: at most one byte more than the limit. *)
+        if Uri.path uri = "/logo.png" then Ok { status = 200; headers = []; body = png }
+        else Ok { status = 200; headers = [ "content-type", "text/html" ]; body = String.sub page 0 (min (String.length page) (max_bytes + 1)) }) } in
+  Alcotest.(check bool) "the icon named in the head is found" true (Result.is_ok (fetch net "https://example.org/"));
+  let big_image =
+    { net with get = (fun ~uri:_ ~address:_ ~max_bytes -> Ok { status = 200; headers = [ "content-type", "image/png" ]; body = String.sub (png ^ String.make 700_000 '\000') 0 (max_bytes + 1) }) } in
+  Alcotest.(check bool) "an oversized image is still refused" true (fetch big_image "https://example.org/logo.png" = Error Oversized_body)
+
 let image_boundaries () =
   let run body =
     let calls = ref [] in
@@ -297,4 +312,5 @@ let () = Alcotest.run "logo fetch" [
              Alcotest.test_case "bounded distinct candidates" `Quick bounded_distinct_candidates;
              Alcotest.test_case "many timed-out candidates" `Quick many_timed_out_candidates;
              Alcotest.test_case "shared request budget" `Quick shared_request_budget;
-             Alcotest.test_case "tries the next address" `Quick tries_next_address ] ]
+             Alcotest.test_case "tries the next address" `Quick tries_next_address;
+             Alcotest.test_case "big page read by its head" `Quick big_page_is_read_by_its_head ] ]

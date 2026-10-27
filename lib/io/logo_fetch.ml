@@ -177,7 +177,9 @@ let fetch network link =
   let* initial = parse link in
   (* Share six bounded request scopes across the page, candidates and every redirect. *)
   let requests_remaining = ref 6 in
-  let rec request redirects max_bytes uri =
+  (* [prefix_ok]: a web page is only read for its <head>, so one bigger than [max_bytes] is cut off there instead of
+     refused; an image bigger than its limit is still refused. *)
+  let rec request ?(prefix_ok = false) redirects max_bytes uri =
     if !requests_remaining = 0 then Error Unreachable_site else
     let () = decr requests_remaining in
     let* uri, response = network.with_request (fun () ->
@@ -199,13 +201,14 @@ let fetch network link =
               match network.get ~uri ~address ~max_bytes with Error Unreachable_site -> connect rest | result -> result)
         in
         let* response = connect ordered in
-        if String.length response.body > max_bytes then Error Oversized_body
-        else Ok (uri, response)) in
+        if String.length response.body <= max_bytes then Ok (uri, response)
+        else if prefix_ok then Ok (uri, { response with body = String.sub response.body 0 max_bytes })
+        else Error Oversized_body) in
     if List.mem response.status [ 301; 302; 303; 307; 308 ] then
       if redirects = 3 then Error Redirect_limit
       else (match header "location" response.headers with
         | None -> Error Unreachable_site
-        | Some target -> request (redirects+1) max_bytes (Uri.resolve "https" uri (Uri.of_string target)))
+        | Some target -> request ~prefix_ok (redirects+1) max_bytes (Uri.resolve "https" uri (Uri.of_string target)))
     else if response.status < 200 || response.status >= 300 then Error Unreachable_site
     else Ok (uri, response)
   in
@@ -226,7 +229,7 @@ let fetch network link =
     [ ".png"; ".jpg"; ".jpeg"; ".webp"; ".ico"; ".svg" ] in
   if direct then image initial
   else
-    let* page_uri, page = request 0 524_288 initial in
+    let* page_uri, page = request ~prefix_ok:true 0 524_288 initial in
     match dimensions page.body with
     | Some _ -> verified_image page_uri page
     | None ->
