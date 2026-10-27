@@ -35,6 +35,12 @@ depends: [
   "cmdliner"
   "logs"
   "mtime"
+  "ppx_sexp_conv"
+  "sexplib"
+  "sexplib0"
+  "httpun"
+  "gluten"
+  "bigstringaf"
   "conf-python-3" {with-test}
   "alcotest" {with-test}
   "ohex" {with-test}

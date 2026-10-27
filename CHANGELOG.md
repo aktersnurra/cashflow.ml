@@ -35,3 +35,13 @@
   zero-data-retention provider route.
 - The model sees income and expense category names, never bank account names or numbers, and
   every period comes with its first and last day.
+
+### Deployment
+
+- `web/build-bundle.sh <out-dir>` builds the web UI and writes exactly its deployable files,
+  flat, into an empty directory, to be installed as `static_dir`. CI's web job uses it, so a
+  deploy builds the bundle the same way. The bundle now includes the PNG icons that
+  `index.html` and the manifest reference.
+- `cashflow.opam` lists every library the server uses directly (`ppx_sexp_conv`, `sexplib`,
+  `sexplib0`, `httpun`, `gluten`, `bigstringaf`), so `opam install . --deps-only` is enough
+  on a fresh FreeBSD build jail.

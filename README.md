@@ -65,7 +65,7 @@ opam install --switch=cashflow-web bonsai.v0.17.0 js_of_ocaml-compiler js_of_oca
 dune build --workspace dune-workspace.web --profile release @web/default
 ```
 
-The UI is static files (`_build/web/web/`), so it can be built anywhere and copied to the server. `web/e2e/run.sh` drives the real server and UI in Chromium (with Node and Playwright).
+The UI is static files, so it can be built anywhere and copied to the server. `web/build-bundle.sh <out-dir>` runs that build and copies exactly the deployable files into `<out-dir>`, ready to install as `static_dir`. CI uses it too. `web/e2e/run.sh` drives the real server and UI in Chromium (with Node and Playwright).
 
 `CASHFLOW_TEST_SWITCH=5.5.1 bash web/e2e/run_advisor.sh` builds and runs the synthetic Advisor native/browser matrix using the existing Playwright installation (`NODE_PATH` may override its location). It retains external evidence and cleans its temporary fixture data/processes. Both runners default to native switch `5.5.1`. See [Advisor deployment gates](design/advisor-deployment.md): real provider capability/privacy, deployed proxy streaming and FreeBSD/TLS checks remain release blockers; local synthetic passes do not enable production.
 
