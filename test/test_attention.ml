@@ -141,6 +141,27 @@ let test_goal_cards_in_each_currency () =
   Alcotest.(check (list (pair string string))) "visible off-track goals keep their currency"
     [ ("Household SEK", "SEK"); ("Household USD", "USD"); ("Personal SEK", "SEK"); ("Personal USD", "USD") ] goals
 
+(* A feed reads the ledger once and every calculation filters that in memory: it must give exactly what the
+   database would for any range, inside the loaded span, on its edges, or partly outside it. *)
+let test_shared_load_matches_the_database () =
+  let service = make_service () in
+  let alice = sign_in service "alice" in
+  let checking = open_checking service alice "Checking" in
+  let groceries = account_named service alice "Groceries" in
+  List.iteri
+    (fun n on -> ignore (ok (Service.add_entry service alice { (entry ("e" ^ string_of_int n) ~from_account:checking ~to_account:groceries (100 + n)) with value_date = date on })))
+    [ "2026-01-05"; "2026-03-01"; "2026-03-01"; "2026-06-15"; "2026-09-30"; "2026-10-01"; "2026-10-20" ];
+  let shared = Insights.new_shared () in
+  let ctx = ok (Insights.context service alice ~scope:Me ~shared ()) in
+  Insights.preload_range shared service alice ~first:(date "2026-02-01") ~last:(date "2026-10-01");
+  let ids range = List.map (fun (t : Cashflow_core.Transfer.t) -> Cashflow_core.Transfer_id.to_string t.id) range in
+  List.iter
+    (fun (first, last) ->
+      let direct = Cashflow_io.Transfer_query.between service.Service.db alice ~first:(date first) ~last:(date last) in
+      Alcotest.(check (list string)) (first ^ " to " ^ last) (ids direct) (ids (Insights.transfers ctx ~first:(date first) ~last:(date last))))
+    [ ("2026-02-01", "2026-10-01"); ("2026-03-01", "2026-03-01"); ("2026-03-02", "2026-09-29"); ("2026-09-30", "2026-10-01");
+      ("2026-01-01", "2026-12-31"); ("2026-10-02", "2026-10-31"); ("2026-04-01", "2026-04-30") ]
+
 let () =
   Alcotest.run "attention"
     [ ( "feed",
@@ -149,4 +170,5 @@ let () =
           Alcotest.test_case "snooze hides until the date" `Quick test_snooze_hides_until_the_date;
           Alcotest.test_case "unusual spending" `Quick test_unusual_spending;
           Alcotest.test_case "short before payday" `Quick test_shortfall_before_payday;
-          Alcotest.test_case "goal cards in each currency" `Quick test_goal_cards_in_each_currency ] ) ]
+          Alcotest.test_case "goal cards in each currency" `Quick test_goal_cards_in_each_currency;
+          Alcotest.test_case "shared load matches the database" `Quick test_shared_load_matches_the_database ] ) ]
