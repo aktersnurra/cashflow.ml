@@ -9,8 +9,12 @@ open Js_of_ocaml
 type picker = No_picker | Category of string | Share of string | Pair of J.t option
 
 (* [embedded] leaves out the page title, for the Needs review view of Transactions. *)
+let window_size = 20
+
 let page ?(embedded = false) ~(ctx : Ctx.t) graph =
-  let inbox = Remote.load ~name:"list_inbox" ~args:(Bonsai.return (`Assoc [ ("limit", `Int 200) ])) ~ctx graph in
+  (* The front of the queue: triage clears it from the top and the rows behind move into view, so there is no page to
+     lose your place on and no reason to show hundreds at once. *)
+  let inbox = Remote.load ~name:"list_inbox" ~args:(Bonsai.return (`Assoc [ ("limit", `Int window_size) ])) ~ctx graph in
   let accounts = Remote.load ~name:"list_accounts" ~ctx graph in
   let selected, set_selected = Bonsai.state 0 graph in
   let picker, set_picker = Bonsai.state No_picker graph in
@@ -156,9 +160,16 @@ let page ?(embedded = false) ~(ctx : Ctx.t) graph =
   Vdom.Node.div
     ~attrs:[ Vdom.Attr.Global_listeners.keydown on_key ]
     [ (let body =
-         [ Remote.view ~locale inbox ~f:(fun _ ->
+         [ Remote.view ~locale inbox ~f:(fun json ->
+               let total = J.int (J.field "count" json) in
                if count = 0 then Ui.empty (Msg.inbox_empty locale)
-               else Ui.div [ Ui.div ~cls:"hint kbd-only" [ Ui.text (Msg.inbox_keys locale) ]; Ui.div ~cls:"list" (List.mapi items ~f:row) ]) ]
+               else
+                 Ui.div
+                   ([ Ui.div ~cls:"hint kbd-only" [ Ui.text (Msg.inbox_keys locale) ]; Ui.div ~cls:"list" (List.mapi items ~f:row) ]
+                   @
+                   if total > count then
+                     [ Ui.div ~cls:"row table-foot" [ Ui.muted (Msg.inbox_showing ~shown:(Int.to_string count) ~total:(Int.to_string total) locale) ] ]
+                   else [])) ]
        in
        if embedded then Ui.div body else Ui.page ~title:(Msg.inbox_title locale) body);
       overlay ]

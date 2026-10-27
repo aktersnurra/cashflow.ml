@@ -38,4 +38,7 @@ SERVER=$!
 cd "$ROOT/web/e2e"
 for i in $(seq 1 30); do curl -s -o /dev/null "$BASE_URL/health" && break; sleep 0.2; done
 OUT=$WORK TOKEN=$TOKEN node merchant_logos.js
+# Last: it imports a long queue of rows, which other tests' row counts must not see. The logo test signs out, so it
+# gets its own session.
+OUT=$WORK TOKEN=$(cd "$ROOT" && $BIN create-session alice --admin 2>/dev/null) node inbox_window.js
 echo "screenshots in $WORK"

@@ -580,3 +580,4 @@ advisor.evidence.categories = Kategorier
 advisor.evidence.label_transaction = Transaktion
 advisor.evidence.label_amount = Belopp
 advisor.evidence.label_new_category = Lägg under
+inbox.showing = Visar de första {$shown} av {$total}. Nästa dyker upp när du klarar dessa.
