@@ -60,7 +60,7 @@ let read_file (file : File.file Js.t) =
 
 let read_effect = Effect.of_deferred_fun read_file
 
-(* A spreadsheet (a zip) goes as base64; a CSV as text, converted to UTF-8 if it was Latin-1. *)
+(* A spreadsheet or a zip goes as base64; a CSV as text, converted to UTF-8 if it was Latin-1. *)
 let content_args bytes =
   if String.is_prefix bytes ~prefix:"PK\003\004" then [ ("content_base64", `String (Js.to_string (Dom_html.window##btoa (Js.bytestring bytes)))) ]
   else [ ("content", `String (to_utf8 bytes)) ]
@@ -153,7 +153,7 @@ let component ~(ctx : Ctx.t) ~(account_id : string option Bonsai.t) graph =
         Ui.span ~cls:"dropzone-hint" [ Ui.text (Msg.import_drop locale) ];
         Vdom.Node.input
           ~attrs:
-            [ Vdom.Attr.type_ "file"; Vdom.Attr.create "accept" ".csv,.xlsx,text/csv,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+            [ Vdom.Attr.type_ "file"; Vdom.Attr.create "accept" ".csv,.xlsx,.zip,text/csv,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/zip";
               Vdom.Attr.on_file_input (fun _ files -> match first_file files with Some f -> start f | None -> Effect.Ignore) ]
           () ]
   in

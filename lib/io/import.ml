@@ -111,8 +111,14 @@ let max_file_bytes = 5 * 1024 * 1024
 
 let read_table content = if Xlsx.is_xlsx content then Result.map_error (fun e -> `Unreadable e) (Xlsx.table content) else Ok (Csv.parse content)
 
+(* The statement itself, out of the zip a bank may have put it in. *)
+let unwrap content =
+  if String.length content > max_file_bytes then Error (`Invalid "the file is larger than 5 MB")
+  else Result.map_error (fun e -> `Unreadable e) (Xlsx.unzip_statement ~max_bytes:max_file_bytes content)
+
 (* A format cashflow knows, or else the layout the assistant reads from the file, if there is one. *)
 let read_format ctx content =
+  let* content = unwrap content in
   if String.length content > max_file_bytes then Error (`Invalid "the file is larger than 5 MB")
   else
     let* table = read_table content in
@@ -157,7 +163,10 @@ let decode ctx (request : request) =
       match F.parse ~scale:(Currency.scale account.account.currency) table with
       | Error reason -> Error (`Unreadable reason)
       | Ok [] -> Error (`Unreadable "the file has no transactions")
-      | Ok rows -> Ok { ctx; request; account; format = F.name; identity; sha256 = Digestif.SHA256.(to_hex (digest_string request.content)); rows })
+      | Ok rows ->
+          (* Of the statement, not its zip, so the same statement downloaded twice is recognised. *)
+          let* statement = unwrap request.content in
+          Ok { ctx; request; account; format = F.name; identity; sha256 = Digestif.SHA256.(to_hex (digest_string statement)); rows })
 
 (* What a file says about its account, and which of the user's bank accounts and cards it could go
    into: [matches] are those whose last four digits are the file's. *)

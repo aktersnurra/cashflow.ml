@@ -556,6 +556,42 @@ let test_new_account_from_the_file () =
   Alcotest.(check (list string)) "the next file finds it" [ Account_id.to_string summary.account.account.id ]
     (List.map (fun (i : Account_info.t) -> Account_id.to_string i.account.id) again.matches)
 
+(* Handelsbanken hands its export out zipped: the zip is read as the statement inside it. *)
+let test_zipped_statement () =
+  let service = make_service () in
+  let alice = sign_in service "alice" in
+  let ctx = Import.context service alice in
+  let rows = [ ("2026-10-06", "ICA NARA", "-2400", "7600.00"); ("2026-09-30", "LÖN", "8000", "10000") ] in
+  let xlsx = handelsbanken_xlsx rows in
+  let zip members =
+    List.fold_left
+      (fun zip (path, content) ->
+        let file = Result.get_ok (Zipc.File.deflate_of_binary_string content) in
+        Zipc.add (Result.get_ok (Zipc.Member.make ~path (Zipc.Member.File file))) zip)
+      Zipc.empty members
+    |> Zipc.to_binary_string |> Result.get_ok
+  in
+  let zipped = zip [ ("Transaktioner.xlsx", xlsx); ("__MACOSX/._Transaktioner.xlsx", "junk") ] in
+  let identified = ok_import (Import.identify ctx zipped) in
+  Alcotest.(check string) "the spreadsheet inside" "handelsbanken" identified.format;
+  Alcotest.(check (option string)) "its account" (Some "6789") identified.identity.last4;
+  let request content : Import.request =
+    { target = Create { name = "Lönekonto"; kind = Asset; owner = Access.personal alice; institution = Some "Handelsbanken"; number_last4 = Some "6789" };
+      file_name = Some "Transaktioner.zip"; content; decisions = [] }
+  in
+  let summary = imported (Import.confirm ctx (request zipped)) in
+  Alcotest.(check int) "rows" 2 summary.batch.new_count;
+  (* The same statement unzipped, or zipped again, is the same file. *)
+  (match Import.preview ctx { (request xlsx) with target = Existing summary.account.account.id } with
+  | Ok p -> Alcotest.(check bool) "already imported" true (Option.is_some p.already_imported)
+  | Error e -> Alcotest.fail (Import.error_to_string e));
+  (match Import.identify ctx (zip [ ("a.csv", october); ("b.csv", october) ]) with
+  | Error (`Unreadable message) -> Alcotest.(check bool) "names them" true (Str_compat.contains ~sub:"a.csv" message)
+  | _ -> Alcotest.fail "guessed among several files");
+  match Import.identify ctx (zip [ ("readme.pdf", "%PDF") ]) with
+  | Error (`Unreadable _) -> ()
+  | _ -> Alcotest.fail "read a zip with no statement"
+
 (* An account opened by hand learns its number from the first file, so the next one finds it. *)
 let test_an_account_learns_its_number () =
   let service, alice, checking = setup () in
@@ -588,6 +624,7 @@ let () =
           Alcotest.test_case "handelsbanken xlsx" `Quick test_handelsbanken_xlsx;
           Alcotest.test_case "a new account from the file" `Quick test_new_account_from_the_file;
           Alcotest.test_case "an account learns its number" `Quick test_an_account_learns_its_number;
+          Alcotest.test_case "a zipped statement" `Quick test_zipped_statement;
           Alcotest.test_case "categorise, learn and undo" `Quick test_categorize_learn_and_undo;
           Alcotest.test_case "query folds triage" `Quick test_query_folds_triage;
           Alcotest.test_case "fold triage counts visible rows" `Quick test_fold_triage_limit;
