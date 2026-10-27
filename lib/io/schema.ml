@@ -302,6 +302,16 @@ CREATE TABLE advisor_account_aliases (
  PRIMARY KEY(conversation_id,account_id), UNIQUE(conversation_id,alias)
 );
 |}
+    );
+    ( 8,
+      {|
+-- Notes the user writes for the advisor. A row exists only while the user keeps it; forgetting deletes it.
+CREATE TABLE advisor_memories (
+ id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+ text TEXT NOT NULL CHECK(length(text) BETWEEN 1 AND 1120), created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE INDEX advisor_memories_owner ON advisor_memories(owner_id, created_at, id);
+|}
     ) ]
 
 let latest_version = List.fold_left (fun latest (version, _) -> max latest version) 0 migrations

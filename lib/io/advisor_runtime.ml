@@ -220,6 +220,12 @@ let load_context t r =
       ~conversation:snapshot.conversation_id
   in
   r.aliases <- Some aliases;
+  (* Personal notes belong to personal conversations; a household conversation never carries them. *)
+  let* notes =
+    match snapshot.scope with
+    | A.Personal -> Result.map (List.map (fun (m : S.memory) -> m.text)) (S.memories t.store ~owner:r.owner)
+    | A.Household _ -> Ok []
+  in
   let successful =
     List.fold_left
       (fun n (turn : A.turn) ->
@@ -230,7 +236,7 @@ let load_context t r =
   Ok
     E.
       {
-        system_instructions = temporal_context;
+        system_instructions = temporal_context ^ W.memory_instructions notes;
         history;
         selection = { selected_turns = List.length history; omitted_turns = successful - List.length history };
         user_text;
