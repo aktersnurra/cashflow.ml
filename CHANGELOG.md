@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Advisor memory
+
+- Settings has a Memory section: short notes (up to 280 characters, 20 per person) that the advisor reads
+  at the start of every personal conversation, such as "answer in whole kronor". Add, edit and forget; forgetting
+  deletes the note at once. Notes are labelled data below the advisor's rules and never change a figure. Household
+  conversations never see them. Line breaks and control characters can't be used to start a new prompt line.
+- The advisor suggesting notes itself is not built yet.
+
 ### Navigation
 
 - The sidebar shows Home, Advisor, Money, Plan and Household instead of every page. Money groups

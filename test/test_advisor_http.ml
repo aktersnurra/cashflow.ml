@@ -744,6 +744,37 @@ let history_titles () =
       Alcotest.(check bool) "end cursor" true (page |> member "next_offset" = `Null);
       Alcotest.(check int) "history titles do not call model" 0 !calls)
 
+let memory_endpoints () =
+  fixture (fun _ _ token _ req ->
+      let open Yojson.Safe.Util in
+      let notes () = body (req "/api/advisor/memories") |> Yojson.Safe.from_string |> member "memories" |> to_list in
+      let text m = member "text" m |> to_string in
+      Alcotest.(check int) "needs a session" 401 (status (req ~headers:[] "/api/advisor/memories"));
+      Alcotest.(check int) "empty at first" 0 (List.length (notes ()));
+      Alcotest.(check int) "needs the CSRF token" 403
+        (status (req ~meth:POST
+           ~headers:[ ("cookie", Web_auth.session_cookie ^ "=" ^ token); ("origin", "https://cashflow.example"); ("content-type", "application/json") ]
+           ~body:"{\"text\":\"x\"}" "/api/advisor/memories"));
+      let post path body = req ~meth:POST ~body path in
+      let added = post "/api/advisor/memories" "{\"text\":\"  Answer in whole kronor \"}" in
+      Alcotest.(check int) "add" 200 (status added);
+      let id = body added |> Yojson.Safe.from_string |> member "memory" |> member "id" |> to_string in
+      Alcotest.(check (list string)) "listed trimmed" [ "Answer in whole kronor" ] (List.map text (notes ()));
+      Alcotest.(check int) "empty text" 422 (status (post "/api/advisor/memories" "{\"text\":\"   \"}"));
+      Alcotest.(check int) "unknown field" 422 (status (post "/api/advisor/memories" "{\"text\":\"a\",\"owner\":\"b\"}"));
+      Alcotest.(check int) "text must be a string" 422 (status (post "/api/advisor/memories" "{\"text\":3}"));
+      Alcotest.(check int) "edit" 200 (status (post ("/api/advisor/memories/" ^ id) "{\"text\":\"Answer in kronor\"}"));
+      Alcotest.(check (list string)) "edited" [ "Answer in kronor" ] (List.map text (notes ()));
+      Alcotest.(check int) "unknown id" 404 (status (post "/api/advisor/memories/not-mine" "{\"text\":\"a\"}"));
+      Alcotest.(check int) "forget" 200 (status (post ("/api/advisor/memories/" ^ id ^ "/forget") "{}"));
+      Alcotest.(check int) "forgotten is gone" 0 (List.length (notes ()));
+      Alcotest.(check int) "forgetting twice" 404 (status (post ("/api/advisor/memories/" ^ id ^ "/forget") "{}"));
+      for i = 1 to Advisor_store.memory_limit do
+        Alcotest.(check int) "fill" 200 (status (post "/api/advisor/memories" (Printf.sprintf "{\"text\":\"note %d\"}" i)))
+      done;
+      Alcotest.(check int) "the cap is a conflict, not an outage" 409 (status (post "/api/advisor/memories" "{\"text\":\"one too many\"}"));
+      Alcotest.(check int) "wrong method" 405 (status (req ~meth:H.OTHER "/api/advisor/memories")))
+
 let () =
   Alcotest.run "advisor_http"
     [
@@ -764,5 +795,6 @@ let () =
           Alcotest.test_case "authenticated admission" `Quick admission;
           Alcotest.test_case "origin and unavailable" `Quick origin_and_fields;
           Alcotest.test_case "commands idempotency retry deletion" `Quick commands;
+          Alcotest.test_case "memory notes endpoints" `Quick memory_endpoints;
         ] );
     ]

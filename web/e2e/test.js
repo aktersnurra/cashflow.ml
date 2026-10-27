@@ -79,8 +79,8 @@ fs.writeFileSync(out + '/savings.csv', savings);
     // draws the what-if line, and removing it takes the line away.
     await page.click('.sidebar >> text=Plan');
     await page.click('.section-nav >> text=Forecast');
-    assert.equal(await page.locator('.section-nav a[aria-current=page]').innerText(), 'Forecast', 'the strip highlights the open page');
-    assert.equal(await page.locator('.sidebar .nav-link.active').innerText(), 'Plan', 'the sidebar highlights the section');
+    await page.locator('.section-nav a[aria-current=page]', { hasText: 'Forecast' }).waitFor({ timeout: 10000 });
+    await page.locator('.sidebar .nav-link.active', { hasText: 'Plan' }).waitFor({ timeout: 10000 });
     await page.waitForSelector('svg.projection >> visible=true', { timeout: 10000 });
     const kpis = await page.locator('.forecast-kpis .kpi').count();
     if (kpis !== 4) throw new Error(`forecast: ${kpis} key numbers`);
@@ -94,11 +94,32 @@ fs.writeFileSync(out + '/savings.csv', savings);
     await page.screenshot({ path: out + '/13-forecast.png', fullPage: true });
     await page.click('.what-if .chip >> text=Sofa');
     await page.waitForSelector('svg.projection .line.what-if', { state: 'detached', timeout: 10000 });
-    // Switch to Swedish in Settings; the whole UI follows.
+    // Advisor memory: notes the user writes are added, edited and forgotten from Settings.
     await page.click('.sidebar >> text=Settings');
+    const noteInput = page.getByPlaceholder('For example: answer in whole kronor');
+    await noteInput.waitFor({ timeout: 10000 });
+    await page.getByText('No notes yet.').waitFor();
+    assert.ok(await page.getByRole('button', { name: 'Add', exact: true }).isDisabled(), 'a blank note cannot be added');
+    await noteInput.fill('  Answer in whole kronor  ');
+    await page.getByRole('button', { name: 'Add', exact: true }).click();
+    await page.locator('.row-title', { hasText: /^Answer in whole kronor$/ }).waitFor({ timeout: 10000 });
+    assert.equal(await noteInput.inputValue(), '', 'the draft clears once the note is saved');
+    await page.locator('.row', { hasText: 'Answer in whole kronor' }).getByRole('button', { name: 'Edit' }).click();
+    await page.waitForFunction(() => document.querySelector('input[placeholder="For example: answer in whole kronor"]').value === 'Answer in whole kronor', null, { timeout: 10000 });
+    await noteInput.fill('Answer in kronor');
+    await page.getByRole('button', { name: 'Save', exact: true }).first().click();
+    await page.locator('.row-title', { hasText: /^Answer in kronor$/ }).waitFor({ timeout: 10000 });
+    await page.reload();
+    await page.locator('.row-title', { hasText: /^Answer in kronor$/ }).waitFor({ timeout: 10000 });
+    await page.locator('.row', { hasText: 'Answer in kronor' }).getByRole('button', { name: 'Forget' }).click();
+    await page.getByText('No notes yet.').waitFor({ timeout: 10000 });
+    await page.screenshot({ path: out + '/14-settings-memory.png', fullPage: true });
+    // Switch to Swedish in Settings; the whole UI follows.
     await page.selectOption('.setting-row select >> nth=0', 'sv');
     await page.click('.table-foot .button.primary');
     await page.waitForSelector('.sidebar >> text=Pengar', { timeout: 10000 });
+    await page.getByRole('heading', { name: 'Minne', exact: true }).waitFor({ timeout: 10000 });
+    await page.getByPlaceholder('Till exempel: svara i hela kronor').waitFor();
     await page.click('.sidebar >> text=Översikt');
     await page.waitForTimeout(800);
     await page.screenshot({ path: out + '/12-home-sv.png', fullPage: true });

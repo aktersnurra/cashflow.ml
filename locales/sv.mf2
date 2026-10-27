@@ -531,6 +531,14 @@ advisor.history_failed = Det gick inte att hämta samtalen.
 advisor.history_retry = Försök igen
 advisor.history_days = {$days} d
 advisor.history_unavailable_title = Samtalet är inte tillgängligt
+advisor.memory.title = Minne
+advisor.memory.hint = Korta anteckningar som rådgivaren läser i början av varje personlig konversation. De ändrar aldrig dess regler eller några siffror.
+advisor.memory.placeholder = Till exempel: svara i hela kronor
+advisor.memory.empty = Inga anteckningar än.
+advisor.memory.full = Du har nått 20 anteckningar. Glöm en för att lägga till en ny.
+advisor.memory.edit = Ändra
+advisor.memory.forget = Glöm
+advisor.memory.failed = Det gick inte. Försök igen.
 
 nav.import = Importera
 import.title = Importera ett kontoutdrag

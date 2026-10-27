@@ -18,7 +18,7 @@ const base='http://127.0.0.1:18197';const sleep=ms=>new Promise(r=>setTimeout(r,
  await history();await menuItem('New household conversation').click();await p.getByText('Household · Only you',{exact:true}).waitFor();
  await p.getByRole('textbox').fill('Household scale four');await button('Send').click();await p.getByRole('status').filter({hasText:'Answer completed.'}).waitFor();
  assert.deepEqual(bodies.at(-1).currency,{code:'EUR',scale:4});
- await nav('Settings').click();await p.locator('input:visible').first().fill('EUR');await button('Save').click();await p.getByText('Saved.',{exact:true}).waitFor();
+ await nav('Settings').click();await p.locator('.setting-row',{hasText:'Currency'}).locator('input').fill('EUR');await button('Save').click();await p.getByText('Saved.',{exact:true}).waitFor();
  const session=await(await p.request.get(base+'/api/session')).json();assert.deepEqual(session.currency_metadata,[{code:'EUR',scale:4}]);
  await p.goto(base+original);await p.getByRole('textbox').fill('Pinned original currency');await button('Send').click();await p.getByRole('status').filter({hasText:'Answer completed.'}).waitFor();
  assert.deepEqual(bodies.at(-1).currency,{code:'SEK',scale:0},'settings refresh never rewrites pinned conversation currency');
