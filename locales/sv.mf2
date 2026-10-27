@@ -550,3 +550,4 @@ import.new_account = Nytt konto
 import.name_prompt = Filen säger inte vilket konto det är. Välj ett, eller namnge det nya kontot.
 import.opens_with = Det nya kontot öppnas med bankens saldo, {$balance :currency} den {$date :date}.
 import.manual = Lägg till en transaktion för hand
+palette.ask = Fråga rådgivaren: {$question}

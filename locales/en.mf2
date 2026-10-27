@@ -551,3 +551,4 @@ import.new_account = New account
 import.name_prompt = The file doesn't say which account this is. Choose one, or name the new account.
 import.opens_with = The new account opens with the bank's balance, {$balance :currency} on {$date :date}.
 import.manual = Add a transaction by hand
+palette.ask = Ask the advisor: {$question}
