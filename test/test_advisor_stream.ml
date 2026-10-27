@@ -121,13 +121,20 @@ let tls_fixture_process () =
   let flow, _ = Eio.Net.accept ~sw listener in
   try
     let flow = Tls_eio.server_of_flow server flow in
-    let input = Eio.Buf_read.of_flow ~max_size:16384 flow in
+    let input = Eio.Buf_read.of_flow ~max_size:65536 flow in
     Alcotest.(check string) "POST request target" "POST /stream?probe=1 HTTP/1.1" (Eio.Buf_read.line input);
+    let length = ref 0 in
     let rec headers found =
       let line = Eio.Buf_read.line input in
       if String.length line = 0 then found
-      else headers (found || String.equal (String.lowercase_ascii line) (Printf.sprintf "host: localhost:%d" port)) in
+      else (
+        (match String.split_on_char ':' (String.lowercase_ascii line) with
+         | [ "content-length"; value ] -> length := int_of_string (String.trim value)
+         | _ -> ());
+        headers (found || String.equal (String.lowercase_ascii line) (Printf.sprintf "host: localhost:%d" port))) in
     Alcotest.(check bool) "authority with port" true (headers false);
+    (* Read the whole request before answering; an unread body makes the close look like a transport failure. *)
+    ignore (Eio.Buf_read.take !length input);
     let text = if provider_decode then "data: PRIVATE-invalid-json\n\n" else if large then payload else "first second" in
     let head = if fixed then Printf.sprintf "Content-Length: %d" (String.length text) else "Transfer-Encoding: chunked" in
     Eio.Flow.copy_string (Printf.sprintf "HTTP/1.1 %d Test\r\n%s\r\nConnection: close\r\nX-Private-Probe: HS6advisor-financial-unique\r\n\r\n" status head) flow;

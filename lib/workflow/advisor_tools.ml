@@ -20,6 +20,8 @@ type request =
   | Budget_status of common * int
   | Goals of common
   | Forecast of common * int * scenario
+  | Propose_budget of { category : account_reference; monthly_amount : string; rollover : bool }
+      (** A change for the user to confirm. Currency and scope are the conversation's. *)
 
 type account = { id : Account_id.t; kind : Account.kind; name : string option }
 (* [name] is the user's own label for an income or expense category. Bank and other balance-sheet
@@ -92,6 +94,15 @@ type forecast = {
   scenario_count : int;
 }
 
+type budget_proposal = {
+  category : account;
+  current : int64 option;  (** the monthly budget in force this cycle, if any *)
+  current_rollover : bool option;  (** whether that budget carries over *)
+  proposed : int64;
+  rollover : bool;
+  from_cycle : string;  (** the cycle label it would apply from *)
+}
+
 type result =
   | Cycle_summary_result of Analytics.cycle_summary list
   | Category_spending_result of category list
@@ -101,6 +112,7 @@ type result =
   | Budget_status_result of Cycle.t * budget list
   | Goals_result of goal list
   | Forecast_result of forecast
+  | Budget_proposal_result of budget_proposal
 
 type evidence = {
   id : Advisor.Evidence_id.t;
@@ -139,6 +151,7 @@ let common = function
   | Goals c
   | Forecast (c, _, _) ->
       c
+  | Propose_budget _ -> { currency = None }
 
 let name = function
   | Cycle_summary_result _ -> "cycle_summary"
@@ -149,6 +162,7 @@ let name = function
   | Budget_status_result _ -> "budget_status"
   | Goals_result _ -> "goals"
   | Forecast_result _ -> "forecast"
+  | Budget_proposal_result _ -> "propose_set_budget"
 
 let currency_code s =
   if String.length s = 3 && String.for_all (function 'A' .. 'Z' -> true | _ -> false) s then Some s else None

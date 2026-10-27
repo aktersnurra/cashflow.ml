@@ -152,6 +152,16 @@ let evidence_in (e : W.evidence) : A.evidence =
       (match e.import_status with Current -> Current | Stale -> Stale | Incomplete -> Incomplete | Unknown -> Unknown);
     reconciled = e.reconciled;
     assumptions = e.assumptions;
+    proposal =
+      Option.map
+        (function
+          | W.Awaiting -> A.Awaiting
+          | Applied -> Applied
+          | Declined -> Declined
+          | Out_of_date -> Out_of_date
+          | Not_applied -> Not_applied
+          | Lapsed -> Lapsed)
+        e.proposal;
   }
 
 let payload_in : W.event_payload -> A.event_payload = function
@@ -788,6 +798,33 @@ let transition t ~run change =
   let now = t.clock () in
   tx t (fun () -> transition_at t ~now ~run change)
 
+let proposal_state_to_db : A.proposal_state -> string = function
+  | Awaiting -> "awaiting"
+  | Applied -> "applied"
+  | Declined -> "declined"
+  | Out_of_date -> "out_of_date"
+  | Not_applied -> "not_applied"
+  | Lapsed -> "lapsed"
+
+let proposal_state_of_db = function
+  | "awaiting" -> A.Awaiting
+  | "applied" -> Applied
+  | "declined" -> Declined
+  | "out_of_date" -> Out_of_date
+  | "not_applied" -> Not_applied
+  | "lapsed" -> Lapsed
+  | _ -> raise (Sql.Sql_error "invalid proposal state")
+
+(* An undecided proposal past its expiry reads as lapsed; nothing needs to sweep them. *)
+let effective_state t state expires_at = if state = A.Awaiting && Ptime.is_earlier (t.clock ()) ~than:expires_at then A.Awaiting else if state = A.Awaiting then A.Lapsed else state
+
+let proposal_states t id =
+  Sql.(
+    run t.db
+      (stmt "SELECT id,state,expires_at FROM advisor_proposals WHERE conversation_id=?" (text @-> nil)
+         (many (row (text @-> text @-> text @-> nil) (fun id state expires -> (id, effective_state t (proposal_state_of_db state) (time expires)))))))
+    (cid id)
+
 let snapshot t ~owner id =
   read t (fun () ->
       let s, _ = conversation t owner id in
@@ -841,6 +878,33 @@ let snapshot t ~owner id =
               attempts;
             })
           turns
+      in
+      let states = proposal_states t id in
+      let turns =
+        if states = [] then turns
+        else
+          List.map
+            (fun (turn : A.turn) ->
+              {
+                turn with
+                attempts =
+                  List.map
+                    (fun (a : A.attempt) ->
+                      {
+                        a with
+                        segments =
+                          List.map
+                            (function
+                              | A.Evidence_segment ({ proposal = Some _; _ } as e) as segment -> (
+                                  match List.assoc_opt (A.Evidence_id.to_string e.id) states with
+                                  | Some state -> A.Evidence_segment { e with proposal = Some state }
+                                  | None -> segment)
+                              | segment -> segment)
+                            a.segments;
+                      })
+                    turn.attempts;
+              })
+            turns
       in
       { s with turns; active_run = active_id t id })
 
@@ -1128,3 +1192,67 @@ let forget_memory t ~owner ~id =
       |> function
       | None -> raise (Reject (error A.Not_found))
       | Some _ -> ())
+
+(* Proposals: changes the advisor suggested that only the user's click applies. *)
+
+type proposal = {
+  id : string;
+  conversation_id : A.Conversation_id.t;
+  kind : string;
+  arguments : Yojson.Safe.t;
+  precondition : Yojson.Safe.t;
+  state : A.proposal_state;
+}
+
+let proposal_row =
+  Sql.(
+    row (text @-> text @-> text @-> text @-> text @-> text @-> text @-> nil) (fun id conversation kind arguments precondition state expires ->
+        {
+          id;
+          conversation_id = require (A.Conversation_id.of_string conversation);
+          kind;
+          arguments = Yojson.Safe.from_string arguments;
+          precondition = Yojson.Safe.from_string precondition;
+          state = proposal_state_of_db state;
+        }
+        |> fun p -> (p, time expires)))
+
+let add_proposal t ~owner ~conversation_id ~id ~kind ~arguments ~precondition ~now ~expires =
+  tx t (fun () ->
+      let _ = conversation t owner conversation_id in
+      let open_now =
+        Sql.(run t.db
+               (stmt "SELECT count(*) FROM advisor_proposals WHERE conversation_id=? AND state='awaiting' AND expires_at>?"
+                  (text @-> text @-> nil) (one (row (int @-> nil) Fun.id))))
+          (cid conversation_id) (stamp now)
+      in
+      if open_now >= 10 then raise (Reject (error A.Capacity_exceeded));
+      Sql.(run t.db
+             (stmt
+                "INSERT INTO advisor_proposals(id,conversation_id,kind,arguments,precondition,state,created_at,expires_at) VALUES (?,?,?,?,?,'awaiting',?,?)"
+                (text @-> text @-> text @-> text @-> text @-> text @-> text @-> nil) exec))
+        id (cid conversation_id) kind (Yojson.Safe.to_string arguments) (Yojson.Safe.to_string precondition) (stamp now) (stamp expires))
+
+let proposal t ~owner id =
+  read t (fun () ->
+      match
+        Sql.(run t.db
+               (stmt
+                  "SELECT p.id,p.conversation_id,p.kind,p.arguments,p.precondition,p.state,p.expires_at FROM advisor_proposals p \
+                   JOIN advisor_conversations c ON c.id=p.conversation_id WHERE p.id=? AND c.owner_id=?"
+                  (text @-> text @-> nil) (opt proposal_row)))
+          id (uid owner)
+      with
+      | None -> reject A.Not_found
+      | Some (p, expires) -> { p with state = effective_state t p.state expires })
+
+let decide_proposal t ~owner ~id state =
+  tx t (fun () ->
+      let now = stamp (t.clock ()) in
+      Sql.(run t.db
+             (stmt
+                "UPDATE advisor_proposals SET state=?,decided_at=? WHERE id=? AND state='awaiting' AND conversation_id IN \
+                 (SELECT id FROM advisor_conversations WHERE owner_id=?) RETURNING id"
+                (text @-> text @-> text @-> text @-> nil) (opt (row (text @-> nil) Fun.id))))
+        (proposal_state_to_db state) now id (uid owner)
+      |> Option.is_some)

@@ -59,6 +59,7 @@ type finding = { kind : string; key : string; scope : scope; title : string; sum
 type display_value = Text of string | Money of money | Date of string
 type fact = { label : string; value : display_value }
 type import_status = Current | Stale | Incomplete | Unknown
+type proposal_state = Awaiting | Applied | Declined | Out_of_date | Not_applied | Lapsed
 
 type evidence = {
   id : string;
@@ -71,6 +72,7 @@ type evidence = {
   import_status : import_status;
   reconciled : bool;
   assumptions : string list;
+  proposal : proposal_state option;
 }
 
 type identities = {
@@ -148,5 +150,7 @@ val encode_accepted : accepted -> string
 val decode_accepted : string -> (accepted, decode_error) result
 val encode_event : event -> string
 val decode_event : string -> (event, decode_error) result
+val proposal_state_to_string : proposal_state -> string
+val proposal_state_of_string : string -> proposal_state option
 val encode_snapshot : snapshot -> string
 val decode_snapshot : string -> (snapshot, decode_error) result

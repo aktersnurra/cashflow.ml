@@ -38,8 +38,8 @@ Capability sources (public, checked during this change):
   data_collection:deny and require_parameters:true. No eligible route means safe
   failure, not fallback to a privacy-weaker route.
 
-Admission measures the immutable serialized request (including eight read-only tool
-schemas), estimates one token per UTF-8 byte plus a 4096-token framing allowance,
+Admission measures the immutable serialized request (including nine tool
+schemas: eight read-only and `propose_set_budget`), estimates one token per UTF-8 byte plus a 4096-token framing allowance,
 and reserves the configured max_tokens on every round. These are **estimates, not
 an externally proven tokenizer/all-framing bound**. Upstream context rejection and
 length termination are safe terminal outcomes, never relaxed retries. Local UTF-8

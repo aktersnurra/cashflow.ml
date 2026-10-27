@@ -41,7 +41,8 @@ let sampled_time locale sampled =
   in
   Js.to_string formatted
 
-let render_turns ~locale ~(snapshot : W.snapshot option) ~dispatch ~(markdown : Vdom.Node.t String.Map.t) =
+let render_turns ~locale ~(snapshot : W.snapshot option) ~dispatch ~(decided : string -> W.proposal_state option)
+    ~(decide : string -> string -> unit Effect.t) ~(markdown : Vdom.Node.t String.Map.t) =
   let text = Vdom.Node.text in
   let cls name = [ Vdom.Attr.class_ name ] in
   let segment = function
@@ -57,14 +58,38 @@ let render_turns ~locale ~(snapshot : W.snapshot option) ~dispatch ~(markdown : 
                   Vdom.Node.create "dd" [ text (Advisor_evidence_text.value locale f) ];
                 ])
         in
+        (* What the person is asked to approve is the server's card; a click shows the state the server recorded. *)
+        let proposal = match decided e.id with Some s -> Some s | None -> e.proposal in
+        let proposal_block =
+          match proposal with
+          | None -> []
+          | Some W.Awaiting ->
+              [ Vdom.Node.div ~attrs:(cls "advisor-proposal")
+                  [ Vdom.Node.p ~attrs:(cls "advisor-proposal-hint") [ text (Msg.advisor_proposal_hint locale) ];
+                    Vdom.Node.div ~attrs:(cls "actions")
+                      [ Ui.button ~kind:"primary" (Msg.advisor_proposal_apply locale) (decide e.id "apply");
+                        Ui.button (Msg.advisor_proposal_dismiss locale) (decide e.id "dismiss") ] ] ]
+          | Some state ->
+              [ Vdom.Node.div ~attrs:[ Vdom.Attr.class_ "advisor-proposal"; Vdom.Attr.create "role" "status" ]
+                  [ text
+                      (match state with
+                      | W.Applied -> Msg.advisor_proposal_applied locale
+                      | Declined -> Msg.advisor_proposal_declined locale
+                      | Out_of_date -> Msg.advisor_proposal_out_of_date locale
+                      | Not_applied -> Msg.advisor_proposal_not_applied locale
+                      | Lapsed -> Msg.advisor_proposal_lapsed locale
+                      | Awaiting -> "") ] ]
+        in
         Vdom.Node.details ~key:e.id
-          ~attrs:[ Vdom.Attr.class_ "advisor-evidence"; Vdom.Attr.id ("advisor-evidence-" ^ e.id) ]
+          ~attrs:([ Vdom.Attr.class_ "advisor-evidence"; Vdom.Attr.id ("advisor-evidence-" ^ e.id) ]
+                  @ if Option.is_some proposal then [ Vdom.Attr.create "open" "" ] else [])
           [
             Vdom.Node.summary
               ~attrs:[ Vdom.Attr.on_click (fun _ -> dispatch (C.Follow false)) ]
               ([ Vdom.Node.span [ text (Advisor_evidence_text.title locale e.title) ] ]
               @
-              if (not (Poly.equal e.import_status W.Current)) || (not e.reconciled) || not (List.is_empty e.assumptions)
+              if Option.is_none proposal
+                 && ((not (Poly.equal e.import_status W.Current)) || (not e.reconciled) || not (List.is_empty e.assumptions))
               then
                 [
                   Vdom.Node.span ~attrs:(cls "advisor-evidence-warning") [ text (Msg.advisor_evidence_caution locale) ];
@@ -76,19 +101,25 @@ let render_turns ~locale ~(snapshot : W.snapshot option) ~dispatch ~(markdown : 
                    ~attrs:[ Vdom.Attr.create "datetime" e.sampled_at ]
                    [ text (sampled_time locale e.sampled_at) ];
                  Vdom.Node.create "dl" ~attrs:(cls "advisor-facts") facts;
-                 Vdom.Node.div ~attrs:(cls "advisor-caveats")
-                   ([
-                      Vdom.Node.span
-                        [
-                          text
-                            (match e.import_status with
-                            | W.Current -> Msg.advisor_current locale
-                            | Stale -> Msg.advisor_stale locale
-                            | Incomplete -> Msg.advisor_incomplete locale
-                            | Unknown -> Msg.advisor_unknown locale);
-                        ];
-                    ]
-                   @ if e.reconciled then [] else [ Vdom.Node.span [ text (Msg.advisor_unreconciled locale) ] ]);
+               ]
+              @ proposal_block
+              @ [
+                 (* A proposal is not a reading of the data, so the data-quality caveats do not apply to it. *)
+                 (if Option.is_some proposal then Vdom.Node.none
+                  else
+                    Vdom.Node.div ~attrs:(cls "advisor-caveats")
+                      ([
+                         Vdom.Node.span
+                           [
+                             text
+                               (match e.import_status with
+                               | W.Current -> Msg.advisor_current locale
+                               | Stale -> Msg.advisor_stale locale
+                               | Incomplete -> Msg.advisor_incomplete locale
+                               | Unknown -> Msg.advisor_unknown locale);
+                           ];
+                       ]
+                      @ if e.reconciled then [] else [ Vdom.Node.span [ text (Msg.advisor_unreconciled locale) ] ]));
                ]
               @
               if List.is_empty e.assumptions then []
@@ -321,12 +352,12 @@ let render_body ~turns ~show_source ~locale ~(view : C.view) ~dispatch =
 
 let render ~locale ~(view : C.view) ~dispatch =
   render_body
-    ~turns:(render_turns ~locale ~snapshot:view.snapshot ~dispatch ~markdown:String.Map.empty)
+    ~turns:(render_turns ~locale ~snapshot:view.snapshot ~dispatch ~decided:(fun _ -> None) ~decide:(fun _ _ -> Effect.Ignore) ~markdown:String.Map.empty)
     ~show_source:true ~locale ~view ~dispatch
 
 let render_inline ~locale ~(view : C.view) ~dispatch =
   render_body
-    ~turns:(render_turns ~locale ~snapshot:view.snapshot ~dispatch ~markdown:String.Map.empty)
+    ~turns:(render_turns ~locale ~snapshot:view.snapshot ~dispatch ~decided:(fun _ -> None) ~decide:(fun _ _ -> Effect.Ignore) ~markdown:String.Map.empty)
     ~show_source:false ~locale ~view ~dispatch
 
 let consent ~locale ~(view : C.view) ~dispatch ~decline =

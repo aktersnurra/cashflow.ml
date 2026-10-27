@@ -186,6 +186,46 @@ let read ?(currency = sek_pin) service principal aliases scope name arguments =
 
 let json aliases e = Yojson.Safe.to_string (ok (P.model_json ~aliases e))
 
+(* A proposal is a card built from typed values, for a category the model has already been shown, in the
+   conversation's own currency. Building it changes nothing. *)
+let propose_budget_card () =
+  fixture @@ fun service access principal h _ _ ->
+  let _, category, _, _, _ = seed service access h in
+  let c = conversation service principal A.Personal "propose" in
+  let aliases = ok (P.create_aliases service ~principal ~scope:A.Personal ~conversation:c) in
+  let seen = read service principal aliases A.Personal "category_spending" "{}" in
+  let alias =
+    match seen.T.result with
+    | T.Category_spending_result xs ->
+        let a = (List.find (fun (x : T.category) -> Account_id.equal x.account.id category) xs).account in
+        ok (Advisor_store.account_alias (Advisor_store.create service.db) ~conversation:c a.id)
+    | _ -> Alcotest.fail "wrong result"
+  in
+  let propose arguments = read service principal aliases A.Personal "propose_set_budget" arguments in
+  let e = propose (Printf.sprintf "{\"category\":%S,\"monthly_amount\":\"3500.50\",\"rollover\":true}" alias) in
+  (match e.T.result with
+  | T.Budget_proposal_result p ->
+      Alcotest.(check int64) "exact minor units" 350050L p.proposed;
+      Alcotest.(check (option int64)) "the budget it would replace" (Some 100L) p.current;
+      check "carry over" p.rollover
+  | _ -> Alcotest.fail "not a proposal");
+  let card = P.display e in
+  check "the card can be acted on" (card.proposal = Some A.Awaiting);
+  check "the card shows the proposed amount"
+    (List.exists (fun (f : A.fact) -> f.label = "Proposed budget" && f.value = A.Money { minor_units = 350050L; currency = sek_pin }) card.facts);
+  let model = json aliases e in
+  check "the model is told it awaits confirmation" (contains model "awaiting_user_confirmation");
+  check "and never that it was done" (not (contains model "applied" || contains model "\"done\""));
+  let rejected arguments = check arguments (Result.is_error (P.read service ~principal ~scope:A.Personal ~aliases ~currency:sek_pin (ok (P.parse_call ~name:"propose_set_budget" ~arguments)))) in
+  rejected (Printf.sprintf "{\"category\":%S,\"monthly_amount\":\"-1\"}" alias);
+  rejected (Printf.sprintf "{\"category\":%S,\"monthly_amount\":\"1.005\"}" alias);
+  rejected (Printf.sprintf "{\"category\":%S,\"monthly_amount\":\"lots\"}" alias);
+  rejected "{\"category\":\"account_notissued_1\",\"monthly_amount\":\"10\"}";
+  check "the model cannot choose a currency" (Result.is_error (P.parse_call ~name:"propose_set_budget"
+    ~arguments:(Printf.sprintf "{\"category\":%S,\"monthly_amount\":\"10\",\"currency\":\"USD\"}" alias)));
+  check "or a scope or owner" (Result.is_error (P.parse_call ~name:"propose_set_budget"
+    ~arguments:(Printf.sprintf "{\"category\":%S,\"monthly_amount\":\"10\",\"scope\":\"family\"}" alias)))
+
 let redacted_eight_tools () =
   fixture @@ fun service access principal h _ calls ->
   let bank, category, shared, _, injection = seed service access h in
@@ -637,6 +677,7 @@ let () =
           Alcotest.test_case "dated forecast validation" `Quick dated_forecast_validation;
           Alcotest.test_case "strict arguments" `Quick strict_arguments;
           Alcotest.test_case "eight tools and redaction" `Quick redacted_eight_tools;
+          Alcotest.test_case "propose budget card" `Quick propose_budget_card;
           Alcotest.test_case "resource isolation and import freshness" `Quick isolation_and_freshness;
           Alcotest.test_case "household and empty results" `Quick household_and_empty;
           Alcotest.test_case "series attempt binding and stale references" `Quick series_aliases_and_staleness;

@@ -96,6 +96,7 @@ let evidence : W.evidence =
     import_status = Incomplete;
     reconciled = false;
     assumptions = [ "Synthetic estimate" ];
+    proposal = None;
   }
 
 let error : W.error = { code = Run_limit_reached; context = Limit Output_bytes }
@@ -232,6 +233,7 @@ let roundtrips () =
       import_status = Incomplete;
       reconciled = false;
       assumptions = evidence.assumptions;
+      proposal = None;
     }
   in
   List.iter

@@ -613,6 +613,9 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
 .advisor-fact dd { margin: 0; font-variant-numeric: tabular-nums; }
 .advisor-caveats { display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--chat-muted); margin-top: 12px; }
 .advisor-evidence-body ul { color: var(--chat-muted); padding-left: 18px; margin: 8px 0 0; }
+.advisor-proposal { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line-strong); }
+.advisor-proposal-hint { margin: 0 0 8px; color: var(--chat-muted); }
+.advisor-proposal .actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .advisor-composer-area { position: sticky; bottom: 14px; z-index: 2; padding-top: 12px; background: var(--chat-paper); }
 .advisor-composer { display: grid; grid-template-columns: 1fr auto; align-items: end; border: 1px solid var(--line-strong); border-radius: 18px; padding: 6px 8px 6px 6px; background: var(--chat-composer); }
 .advisor-composer:focus-within { border-color: var(--focus); }

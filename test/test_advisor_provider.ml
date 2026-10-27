@@ -39,7 +39,7 @@ let policy requests =
     Alcotest.(check (list string)) "allowlist unchanged" ["amazon-bedrock"] (member "only" p |> to_list |> List.map to_string);
     Alcotest.(check bool) "stream" true (member "stream" r = `Bool true);
     List.iter (fun key -> Alcotest.(check bool) ("no " ^ key) true (member key r = `Null)) ["plugins"; "reasoning"; "server_tools"];
-    Alcotest.(check int) "eight schemas" 8 (member "tools" r |> to_list |> List.length)) requests
+    Alcotest.(check int) "nine schemas" 9 (member "tools" r |> to_list |> List.length)) requests
 let fragmented_provider_rounds () =
   let wire = ": keepalive\r\n\r\n" ^ text "Hej €雪" ^ finish "stop" ^ usage ^ usage ^ done_ in
   for i = 0 to String.length wire do
@@ -189,8 +189,18 @@ let schemas () =
     ok (Cashflow_io.Advisor_projection.parse_call ~name ~arguments:args);
     let result, _, requests = run [tools [full_call 0 "id" name args] ^ finish "tool_calls" ^ done_] in ok result; policy requests) examples;
   let open Yojson.Safe.Util in
-  Alcotest.(check (list string)) "schema names" (List.map fst examples)
-    (List.map (fun schema -> member "function" schema |> member "name" |> to_string) P.tool_schemas);
+  let name_of schema = member "function" schema |> member "name" |> to_string in
+  let reads = List.filter (fun schema -> name_of schema <> "propose_set_budget") P.tool_schemas in
+  Alcotest.(check (list string)) "schema names" (List.map fst examples) (List.map name_of reads);
+  (* The one proposing tool takes no currency: it acts in the conversation's own. *)
+  let propose = List.find (fun schema -> name_of schema = "propose_set_budget") P.tool_schemas in
+  let propose_params = member "function" propose |> member "parameters" in
+  Alcotest.(check (list string)) "propose fields" ["category"; "monthly_amount"; "rollover"]
+    (member "properties" propose_params |> to_assoc |> List.map fst |> List.sort String.compare);
+  Alcotest.(check (list string)) "propose requires" ["category"; "monthly_amount"] (member "required" propose_params |> to_list |> List.map to_string);
+  ok (Cashflow_io.Advisor_projection.parse_call ~name:"propose_set_budget" ~arguments:"{\"category\":\"account_1\",\"monthly_amount\":\"3500.50\",\"rollover\":true}");
+  failed (Cashflow_io.Advisor_projection.parse_call ~name:"propose_set_budget" ~arguments:"{\"category\":\"account_1\",\"monthly_amount\":\"1\",\"currency\":\"SEK\"}");
+  failed (Cashflow_io.Advisor_projection.parse_call ~name:"propose_set_budget" ~arguments:"{\"category\":\"account_1\"}");
   let properties s = member "properties" s |> to_assoc |> List.map fst |> List.sort String.compare in
   let expected = ["cycle_summary", ["cycles"]; "category_spending", ["cycle_offset"];
     "category_trend", ["category"; "cycles"]; "relevant_transactions", ["cycle_offset"; "category"; "limit"];
@@ -200,7 +210,7 @@ let schemas () =
     Alcotest.(check (list string)) (name ^ " exact fields") (List.sort String.compare ("currency" :: keys)) (properties params);
     Alcotest.(check bool) "no unknown fields" true (member "additionalProperties" params = `Bool false);
     Alcotest.(check (list string)) "only mandatory field" (if name = "category_trend" then ["category"] else []) (member "required" params |> to_list |> List.map to_string);
-    failed (Cashflow_io.Advisor_projection.parse_call ~name ~arguments:"{\"unknown\":1}")) P.tool_schemas expected;
+    failed (Cashflow_io.Advisor_projection.parse_call ~name ~arguments:"{\"unknown\":1}")) reads expected;
   let parameters name = List.find (fun s -> member "function" s |> member "name" = `String name) P.tool_schemas |> member "function" |> member "parameters" |> member "properties" in
   let bounds name key lo hi =
     let s = parameters name |> member key in

@@ -66,6 +66,10 @@ type display_value = Text of string | Money of money | Date of Date.t
 type fact = { label : string; value : display_value }
 type import_status = Current | Stale | Incomplete | Unknown
 
+(* A card the user can act on. Only the server moves it: Awaiting to exactly one of the others, and no further.
+   Declined: dismissed. Out_of_date: what it was based on changed. Not_applied: rejected when applied. Lapsed: not decided in time. *)
+type proposal_state = Awaiting | Applied | Declined | Out_of_date | Not_applied | Lapsed
+
 type evidence = {
   id : Evidence_id.t;
   scope : scope;
@@ -77,6 +81,7 @@ type evidence = {
   import_status : import_status;
   reconciled : bool;
   assumptions : string list;
+  proposal : proposal_state option;  (** [None] for evidence the user cannot act on *)
 }
 
 type identities = {

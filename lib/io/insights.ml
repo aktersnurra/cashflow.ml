@@ -155,6 +155,13 @@ let budget_status ctx ~cycle_offset =
   in
   { report_cycle = cycle; lines }
 
+(* The budget in force this cycle for a category, if it has one. *)
+let current_budget ctx category =
+  let _, budget_for = Planning_store.budgets ctx.service.db (budget_owner ctx) in
+  budget_for (current_cycle ctx) category
+
+let current_cycle_label ctx = Cycle.label (current_cycle ctx)
+
 let set_budget ctx ~category_id ~monthly_amount ~rollover ~effective_from =
   let book = book ctx in
   match book.inside category_id with

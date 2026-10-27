@@ -20,6 +20,15 @@
   at most 80%. Only an admin can change this for a household bank account.
 - Not built yet: a "done, undo" list for individual automatically filed rows.
 
+### Advisor proposals
+
+- The advisor can now propose a monthly budget for a category it has shown you. It appears as a card with the
+  category, the current and proposed amounts and the pay cycle it starts from, with Apply and Dismiss. Nothing
+  changes until you click Apply, which sets the budget exactly as the Budgets page does. If the budget changed since
+  the proposal, or it is older than 24 hours, it is not applied and the card says so. Clicking twice writes once.
+- The advisor is told only that a proposal awaits your confirmation, never that it was done.
+- Not built yet: proposing goals, categories or entries, and undoing an applied proposal.
+
 ### Advisor memory
 
 - Settings has a Memory section: short notes (up to 280 characters, 20 per person) that the advisor reads

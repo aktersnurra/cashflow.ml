@@ -245,6 +245,12 @@ let route t req p path query parsed =
           write t p (fun user store ->
               let* () = Advisor_store.forget_memory store ~owner:user.id ~id in
               Ok (json 200 (`Assoc [ ("status", `String "forgotten") ]))))
+  | POST, [ "proposals"; id; (("apply" | "dismiss") as action) ] ->
+      result (fun () ->
+          let* () = unit_body (Option.get parsed) in
+          let decide = if action = "apply" then Advisor_proposals.apply else Advisor_proposals.dismiss in
+          let* state = decide t.service ~principal:p ~id in
+          Ok (json 200 (`Assoc [ ("state", `String (W.proposal_state_to_string (Advisor_codec.proposal_state_out state))) ])))
   | POST, [ "turns" ] ->
       result (fun () ->
           let* () =
@@ -339,6 +345,7 @@ let route t req p path query parsed =
       | [ "memories" ]
       | [ "memories"; _ ]
       | [ "memories"; _; "forget" ]
+      | [ "proposals"; _; ("apply" | "dismiss") ]
       | [ "turns" ]
       | [ "conversations" ]
       | [ "conversations"; _ ]

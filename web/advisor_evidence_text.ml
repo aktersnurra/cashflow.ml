@@ -11,6 +11,7 @@ let title locale = function
   | "budget_status" -> Msg.advisor_evidence_budget_status locale
   | "goals" -> Msg.advisor_evidence_goals locale
   | "forecast" -> Msg.advisor_evidence_forecast locale
+  | "propose_set_budget" -> Msg.advisor_evidence_propose_budget locale
   | other -> other
 
 let label locale = function
@@ -27,6 +28,11 @@ let label locale = function
   | "First returned goal: remaining" -> Msg.advisor_evidence_goal locale
   | "Forecast lowest cash" -> Msg.advisor_evidence_lowest locale
   | "Forecast lowest date" -> Msg.advisor_evidence_lowest_date locale
+  | "Category" -> Msg.advisor_evidence_label_category locale
+  | "Current budget" -> Msg.advisor_evidence_label_current_budget locale
+  | "Proposed budget" -> Msg.advisor_evidence_label_proposed_budget locale
+  | "From cycle" -> Msg.advisor_evidence_label_from_cycle locale
+  | "Carry over" -> Msg.advisor_evidence_label_carry_over locale
   | other -> other
 
 let value locale (f : Cashflow_advisor_protocol.Wire.fact) =
@@ -34,6 +40,9 @@ let value locale (f : Cashflow_advisor_protocol.Wire.fact) =
   match f.label, f.value with
   | "Truncated", W.Text "true" -> Msg.advisor_evidence_yes locale
   | "Truncated", W.Text "false" -> Msg.advisor_evidence_no locale
+  | "Carry over", W.Text "true" -> Msg.advisor_evidence_yes locale
+  | "Carry over", W.Text "false" -> Msg.advisor_evidence_no locale
+  | "Current budget", W.Text "none" -> Msg.advisor_evidence_none locale
   | _, (W.Text x | Date x) -> x
   | _, Money m -> m.decimal ^ " " ^ m.currency.code
 

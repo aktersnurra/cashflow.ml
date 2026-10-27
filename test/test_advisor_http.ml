@@ -775,6 +775,75 @@ let memory_endpoints () =
       Alcotest.(check int) "the cap is a conflict, not an outage" 409 (status (post "/api/advisor/memories" "{\"text\":\"one too many\"}"));
       Alcotest.(check int) "wrong method" 405 (status (req ~meth:H.OTHER "/api/advisor/memories")))
 
+(* A proposal does nothing until its owner applies it, and then only what it recorded, once, if still true. *)
+let proposal_endpoints () =
+  fixture (fun _ service token _ req ->
+      let open Yojson.Safe.Util in
+      ignore (req ~meth:POST ~body:"{\"enabled\":true}" "/api/advisor/consent");
+      let access = Test_service_support.sign_in service "http" in
+      let owner = (Access.user access).id in
+      let groceries =
+        (List.find (fun (i : Account_info.t) -> i.account.name = "Groceries" && Owner.equal i.account.owner (Access.personal access))
+           (Service.accounts service access)).account.id
+      in
+      let store = Advisor_store.create ~clock:service.now service.db in
+      let reference = Web_auth.session_ref token in
+      let accepted =
+        ok (Advisor_store.accept store ~owner ~session:reference ~now ~model:"synthetic" ~source_finding:None (submit "proposals"))
+      in
+      ignore (ok (Advisor_store.transition store ~run:accepted.ids.run_id (Advisor.Fail { code = Provider_unavailable; context = No_context })));
+      let conversation_id = accepted.ids.conversation_id in
+      let counter = ref 0 in
+      let propose ?(current = `Null) ?(cycle = Insights.current_cycle_label (Result.get_ok (Insights.context service access ~scope:Analytics.Me ~currency:"SEK" ()))) ?(expires = Ptime.Span.of_int_s 3600) amount =
+        incr counter;
+        let id = Printf.sprintf "00000000-0000-4000-8000-%012d" !counter in
+        ok (Advisor_store.add_proposal store ~owner ~conversation_id ~id ~kind:"set_budget"
+              ~arguments:(`Assoc [ ("category_id", `String (Account_id.to_string groceries)); ("monthly_amount", `String amount); ("rollover", `Bool false) ])
+              ~precondition:(`Assoc [ ("current_monthly", current); ("current_rollover", `Null); ("from_cycle", `String cycle) ]) ~now ~expires:(Option.get (Ptime.add_span now expires)));
+        id
+      in
+      let ctx () = ok (Result.map_error (fun _ -> ()) (Insights.context service access ~scope:Analytics.Me ~currency:"SEK" ())) in
+      let budget () = Option.map (fun (b : Analytics.budget) -> b.monthly_amount) (Insights.current_budget (ctx ()) groceries) in
+      let post id action = req ~meth:POST ~body:"{}" ("/api/advisor/proposals/" ^ id ^ "/" ^ action) in
+      let state response = body response |> Yojson.Safe.from_string |> member "state" |> to_string in
+      let apply = propose "350000" in
+      Alcotest.(check (option int64)) "proposing writes nothing" None (budget ());
+      Alcotest.(check int) "needs the CSRF token" 403
+        (status (req ~meth:POST ~headers:[ ("cookie", Web_auth.session_cookie ^ "=" ^ token); ("origin", "https://cashflow.example"); ("content-type", "application/json") ]
+                   ~body:"{}" ("/api/advisor/proposals/" ^ apply ^ "/apply")));
+      Alcotest.(check int) "unknown id" 404 (status (post "00000000-0000-4000-8000-ffffffffffff" "apply"));
+      let other = Test_service_support.sign_in service "proposals-other" |> Access.user in
+      let other_token = Web_auth.create_session service.db ~now other in
+      let other_csrf = (Option.get (Web_auth.inspect_session service ~now (Web_auth.session_ref other_token))).csrf_token in
+      Alcotest.(check int) "another user cannot apply it" 404
+        (status (req ~meth:POST ~body:"{}"
+                   ~headers:[ ("cookie", Web_auth.session_cookie ^ "=" ^ other_token); ("x-csrf-token", other_csrf); ("origin", "https://cashflow.example"); ("content-type", "application/json") ]
+                   ("/api/advisor/proposals/" ^ apply ^ "/apply")));
+      Alcotest.(check (option int64)) "nor does that write anything" None (budget ());
+      let applied = post apply "apply" in
+      Alcotest.(check int) "apply" 200 (status applied);
+      Alcotest.(check string) "applied" "applied" (state applied);
+      Alcotest.(check (option int64)) "the budget is what was proposed" (Some 350000L) (budget ());
+      Planning_store.set_budget service.db ~now (Access.personal access) ~category_id:groceries
+        ~effective_from:(Insights.current_cycle_label (ctx ())) ~monthly_amount:1L ~rollover:false;
+      Alcotest.(check string) "a second click reports the recorded outcome" "applied" (state (post apply "apply"));
+      Alcotest.(check (option int64)) "and writes nothing" (Some 1L) (budget ());
+      Alcotest.(check string) "a decided proposal cannot be dismissed" "applied" (state (post apply "dismiss"));
+      let stale = propose ~current:(`String "123") "999900" in
+      Alcotest.(check string) "a changed basis is out of date" "out_of_date" (state (post stale "apply"));
+      Alcotest.(check (option int64)) "and writes nothing" (Some 1L) (budget ());
+      let rolled = propose ~cycle:"1999-01" "888800" in
+      Alcotest.(check string) "a pay cycle that has rolled over is out of date" "out_of_date" (state (post rolled "apply"));
+      Alcotest.(check (option int64)) "and writes nothing" (Some 1L) (budget ());
+      let dismissed = propose "777700" in
+      Alcotest.(check string) "dismiss" "declined" (state (post dismissed "dismiss"));
+      Alcotest.(check string) "a declined proposal cannot then be applied" "declined" (state (post dismissed "apply"));
+      Alcotest.(check (option int64)) "still nothing written" (Some 1L) (budget ());
+      let lapsed = propose ~expires:(Ptime.Span.of_int_s (-1)) "555500" in
+      Alcotest.(check string) "an expired proposal lapses" "lapsed" (state (post lapsed "apply"));
+      Alcotest.(check (option int64)) "without writing" (Some 1L) (budget ());
+      Alcotest.(check int) "wrong method" 405 (status (req ~meth:H.OTHER ("/api/advisor/proposals/" ^ apply ^ "/apply"))))
+
 let () =
   Alcotest.run "advisor_http"
     [
@@ -796,5 +865,6 @@ let () =
           Alcotest.test_case "origin and unavailable" `Quick origin_and_fields;
           Alcotest.test_case "commands idempotency retry deletion" `Quick commands;
           Alcotest.test_case "memory notes endpoints" `Quick memory_endpoints;
+          Alcotest.test_case "proposal endpoints" `Quick proposal_endpoints;
         ] );
     ]
