@@ -6,14 +6,15 @@ import sys
 import tempfile
 import unittest
 
-from PIL import Image
+from PIL import IcoImagePlugin, Image
 
 
 class TransparentIconExports(unittest.TestCase):
     def test_exports_remove_exterior_without_erasing_artwork(self):
         icons = pathlib.Path(__file__).resolve().parents[1] / "web" / "icons"
         with tempfile.TemporaryDirectory(prefix="cashflow-icons-") as directory:
-            output = pathlib.Path(directory)
+            output = pathlib.Path(directory) / "web" / "icons"
+            output.mkdir(parents=True)
             for filename in ("export_transparent.py", "source-original.png"):
                 shutil.copyfile(icons / filename, output / filename)
             result = subprocess.run(
@@ -45,6 +46,20 @@ class TransparentIconExports(unittest.TestCase):
                             top = alpha.crop((0, 0, size, size // 10))
                             self.assertEqual(sum(top.histogram()[21:]), 0)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            for size in (16, 32, 48):
+                favicon = output.parent / f"favicon-{size}.png"
+                self.assertTrue(favicon.is_file(), f"missing transparent favicon: {size}px")
+                with Image.open(favicon) as image:
+                    self.assertEqual(image.mode, "RGBA")
+                    self.assertEqual(image.size, (size, size))
+                    self.assertEqual(image.getchannel("A").getpixel((0, 0)), 0)
+                    self.assertIsNotNone(image.getbbox(), "favicon must retain the logo")
+            with Image.open(output.parent / "favicon.ico") as favicon:
+                assert isinstance(favicon, IcoImagePlugin.IcoImageFile)
+                self.assertEqual(favicon.ico.sizes(), {(16, 16), (32, 32), (48, 48)})
+                for size in (16, 32, 48):
+                    image = favicon.ico.getimage((size, size))
+                    self.assertEqual(image.getchannel("A").getpixel((0, 0)), 0)
 
 
 if __name__ == "__main__":

@@ -28,6 +28,7 @@ cd "$ROOT/web/e2e"
 OUT=$WORK node signed_out.js
 OUT=$WORK TOKEN=$TOKEN node budget_rollover.js
 OUT=$WORK TOKEN=$TOKEN node test.js
+OUT=$WORK TOKEN=$TOKEN node theme_palette.js
 kill $SERVER
 wait $SERVER 2>/dev/null || true
 # Restart on the same database using only the test fixture's injected outbound network.

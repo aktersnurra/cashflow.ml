@@ -11,6 +11,7 @@ from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 ROOT = Path(__file__).resolve().parent
 SIZES = (64, 192, 256, 512, 1024)
+FAVICON_SIZES = (16, 32, 48)
 # The approved source's charcoal is RGB (12, 12, 12).
 CHARCOAL_CUTOFF = 14
 
@@ -41,6 +42,9 @@ def export():
     for size in SIZES:
         square.resize((size,size),Image.Resampling.LANCZOS).save(ROOT / f"icon-transparent-square-{size}.png")
         logo.resize((size,size),Image.Resampling.LANCZOS).save(ROOT / f"logo-transparent-{size}.png")
+    for size in FAVICON_SIZES:
+        logo.resize((size, size), Image.Resampling.LANCZOS).save(ROOT.parent / f"favicon-{size}.png")
+    logo.save(ROOT.parent / "favicon.ico", sizes=[(size, size) for size in FAVICON_SIZES])
     for filename in ("icon-transparent-square-1024.png", "logo-transparent-1024.png"):
         with Image.open(ROOT / filename) as file:
             assert file.mode == "RGBA" and file.getchannel("A").getpixel((0, 0)) == 0, \
