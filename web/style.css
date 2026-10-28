@@ -623,6 +623,17 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
 .advisor-proposal-hint { margin: 0 0 8px; color: var(--chat-muted); }
 .advisor-proposal .actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .advisor-composer-area { position: sticky; bottom: 14px; z-index: 2; padding-top: 12px; background: var(--chat-paper); }
+/* Phones, as in a native app: no zooming (no double-tap zoom here; pinching is refused in Keyboard), and form
+   fields at 16px, below which iOS zooms in on the field it focuses. While typing, the tab bar steps aside and
+   the composer sits on the keyboard (--keyboard: how much of the page iOS's keyboard covers; 0 where the page
+   itself shrinks above it). */
+html { touch-action: manipulation; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+@media (hover: none) and (pointer: coarse) {
+  input, select, textarea, .advisor-conversation .advisor-input { font-size: 16px; }
+  html.typing .tabbar { display: none; }
+  html.typing .page { padding-bottom: calc(16px + var(--keyboard, 0px)); }
+  html.typing .advisor-composer-area { bottom: calc(8px + var(--keyboard, 0px)); }
+}
 .advisor-composer { display: grid; grid-template-columns: 1fr auto; align-items: end; border: 1px solid var(--line-strong); border-radius: 18px; padding: 6px 8px 6px 6px; background: var(--chat-composer); }
 .advisor-composer:focus-within { border-color: var(--focus); }
 .advisor-conversation .advisor-input { display: block; width: 100%; min-height: 42px; max-height: 240px; resize: none; margin: 0;

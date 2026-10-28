@@ -430,5 +430,6 @@ let app graph =
 
 let () =
   Theme.apply (Theme.load ());
+  Keyboard.install ();
   Async_js.init ();
   Bonsai_web.Start.start app
