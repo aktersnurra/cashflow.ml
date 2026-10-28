@@ -328,5 +328,5 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
         Advisor conversation is not a second dashboard above the chat. *)
      Vdom.Node.div ~attrs:(if standalone then [Vdom.Attr.create "hidden" ""] else [])
        (let urgent = Map.exists visible_cards ~f:(fun card -> List.mem urgent_kinds (J.str (J.field "kind" card)) ~equal:String.equal) in
-        if urgent then [head; attention; body] else [head; body; attention]);
+        if urgent then [head; attention; body; weekly] else [head; body; weekly; attention]);
      (if standalone then outlet else Vdom.Node.none)]

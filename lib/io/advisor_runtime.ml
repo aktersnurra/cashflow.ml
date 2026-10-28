@@ -34,7 +34,7 @@ and registration = {
   owner : User_id.t;
   mutable started : bool;
   mutable sealed : bool;
-  mutable scope : Eio.Switch.t option;
+  mutable run_switch : Eio.Switch.t option;
   mutable pending : A.event_payload list;
   mutable pending_bytes : int;
   mutable pending_since : float;
@@ -48,19 +48,19 @@ and registration = {
 }
 
 and round = {
-  changed : Eio.Condition.t;
+  round_changed : Eio.Condition.t;
   mutable queue : (E.model_event * int) list;
   mutable bytes : int;
   mutable ended : bool;
   mutable failure : A.error option;
-  mutable scope : Eio.Switch.t option;
-  mutable closed : bool;
+  mutable round_switch : Eio.Switch.t option;
+  mutable round_closed : bool;
   mutable activity : float;
 }
 
 and subscription = {
   runtime : t;
-  principal : X.principal;
+  subscriber : X.principal;
   run : A.Run_id.t;
   mutable cursor : int64;
   mutable closed : bool;
@@ -144,17 +144,17 @@ let close_round r =
   | None -> ()
   | Some round ->
       r.round <- None;
-      round.closed <- true;
+      round.round_closed <- true;
       round.queue <- [];
       round.bytes <- 0;
-      Eio.Condition.broadcast round.changed;
-      Option.iter (fun sw -> Eio.Switch.fail sw Round_closed) round.scope
+      Eio.Condition.broadcast round.round_changed;
+      Option.iter (fun sw -> Eio.Switch.fail sw Round_closed) round.round_switch
 
 let stop t r reason =
   r.sealed <- true;
   (match reason with Some _ -> r.problem <- reason | None -> ());
   close_round r;
-  Option.iter (fun sw -> Eio.Switch.fail sw (Stopped reason)) r.scope;
+  Option.iter (fun sw -> Eio.Switch.fail sw (Stopped reason)) r.run_switch;
   notify t
 
 let cancel_transaction t r =
@@ -277,7 +277,7 @@ let authorized_subscribers t run =
   List.exists
     (fun (s : subscription) ->
       if s.closed || s.overflow || s.run <> run then false
-      else match X.authorize_run t.service ~subscriber:s.principal ~run with Ok _ -> true | Error _ -> false)
+      else match X.authorize_run t.service ~subscriber:s.subscriber ~run with Ok _ -> true | Error _ -> false)
     t.subscribers
 
 let abandoned t r =
@@ -299,13 +299,13 @@ let begin_round t r sw =
   | Some prepared ->
       let round =
         {
-          changed = Eio.Condition.create ();
+          round_changed = Eio.Condition.create ();
           queue = [];
           bytes = 0;
           ended = false;
           failure = None;
-          scope = None;
-          closed = false;
+          round_switch = None;
+          round_closed = false;
           activity = t.clock.monotonic_s ();
         }
       in
@@ -313,7 +313,7 @@ let begin_round t r sw =
       Eio.Fiber.fork ~sw (fun () ->
           (try
              Eio.Switch.run (fun scope ->
-                 round.scope <- Some scope;
+                 round.round_switch <- Some scope;
                  let result =
                    let* _ = checked t r (fun run -> Ok run) in
                    if abandoned t r then (
@@ -323,7 +323,7 @@ let begin_round t r sw =
                      ~on_activity:(fun () ->
                        let authorized = checked t r (fun _ -> Ok ()) in
                        (match authorized with Ok () -> () | Error e -> raise (Stopped (Some e)));
-                       if round.closed then raise Round_closed;
+                       if round.round_closed then raise Round_closed;
                        let now = t.clock.monotonic_s () in
                        if now -. round.activity >= 30. then raise (Stopped (Some (limit A.Upstream_inactivity)));
                        round.activity <- now)
@@ -331,19 +331,19 @@ let begin_round t r sw =
                        let event = model_event event in
                        let bytes = event_size event in
                        if bytes > A.limits.subscriber_bytes then raise (Stopped (Some (limit A.Frame_bytes)));
-                       Eio.Condition.loop_no_mutex round.changed (fun () ->
-                           if round.closed || r.sealed then raise Round_closed;
+                       Eio.Condition.loop_no_mutex round.round_changed (fun () ->
+                           if round.round_closed || r.sealed then raise Round_closed;
                            if round.bytes + bytes > A.limits.subscriber_bytes then None else Some ());
                        let admitted =
                          checked t r (fun _ ->
-                             if round.closed then Error (error A.Invalid_transition)
+                             if round.round_closed then Error (error A.Invalid_transition)
                              else (
                                round.queue <- round.queue @ [ (event, bytes) ];
                                round.bytes <- round.bytes + bytes;
                                Ok ()))
                        in
                        (match admitted with Ok () -> () | Error e -> raise (Stopped (Some e)));
-                       Eio.Condition.broadcast round.changed)
+                       Eio.Condition.broadcast round.round_changed)
                  in
                  match result with Ok _ -> () | Error e -> round.failure <- Some e)
            with
@@ -351,16 +351,16 @@ let begin_round t r sw =
           | Stopped reason -> round.failure <- reason
           | Eio.Cancel.Cancelled _ as ex -> raise ex
           | _ -> round.failure <- Some (error A.Provider_unavailable));
-          round.scope <- None;
+          round.round_switch <- None;
           round.ended <- true;
-          Eio.Condition.broadcast round.changed);
+          Eio.Condition.broadcast round.round_changed);
       Ok ()
 
 let read_round t r =
   match r.round with
   | None -> Error (error A.Invalid_transition)
   | Some round ->
-      Eio.Condition.loop_no_mutex round.changed (fun () ->
+      Eio.Condition.loop_no_mutex round.round_changed (fun () ->
           match checked t r (fun _ -> Ok ()) with
           | Error e -> Some (Error e)
           | Ok () -> (
@@ -368,14 +368,14 @@ let read_round t r =
               | (event, bytes) :: rest ->
                   round.queue <- rest;
                   round.bytes <- round.bytes - bytes;
-                  Eio.Condition.broadcast round.changed;
+                  Eio.Condition.broadcast round.round_changed;
                   Some (Ok (Some event))
               | [] when round.ended -> Some (match round.failure with Some e -> Error e | None -> Ok None)
               | [] -> None))
 
 let schedule_flush t r =
   if not r.flush_scheduled then
-    match r.scope with
+    match r.run_switch with
     | None -> ()
     | Some sw ->
         r.flush_scheduled <- true;
@@ -640,7 +640,7 @@ let start t (accepted : A.accepted) =
           let reason = ref None in
           (try
              Eio.Switch.run (fun sw ->
-                 r.scope <- Some sw;
+                 r.run_switch <- Some sw;
                  if abandoned t r then raise (Stopped None);
                  Eio.Fiber.fork_daemon ~sw (fun () ->
                      (try watchdog t r with Stopped reason -> stop t r reason);
@@ -657,7 +657,7 @@ let start t (accepted : A.accepted) =
               finish_stopped t r None;
               raise ex
           | _ -> reason := Some (error A.Provider_unavailable));
-          r.scope <- None;
+          r.run_switch <- None;
           finish_stopped t r !reason;
           Hashtbl.remove t.registrations r.accepted.ids.run_id;
           notify t)
@@ -684,7 +684,7 @@ let register t principal (accepted : A.accepted) =
               owner = user.id;
               started = false;
               sealed = false;
-              scope = None;
+              run_switch = None;
               pending = [];
               pending_bytes = 0;
               pending_since = 0.;
@@ -861,7 +861,7 @@ let subscribe t ~principal ~run ~after =
   let* current = X.authorize_run t.service ~subscriber:principal ~run in
   if after < 0L || after > current.counters.last_sequence then Error (error A.Invalid_request)
   else
-    let s = { runtime = t; principal; run; cursor = after; closed = false; busy = false; overflow = false } in
+    let s = { runtime = t; subscriber = principal; run; cursor = after; closed = false; busy = false; overflow = false } in
     t.subscribers <- s :: t.subscribers;
     Option.iter (fun r -> r.absent_since <- None) (Hashtbl.find_opt t.registrations run);
     Ok s
@@ -877,7 +877,7 @@ let next (s : subscription) =
         let poll () =
           if s.closed then Some (Ok End)
           else
-            match X.authorize_run t.service ~subscriber:s.principal ~run:s.run with
+            match X.authorize_run t.service ~subscriber:s.subscriber ~run:s.run with
             | Error e ->
                 close s;
                 Some (Error e)
@@ -900,7 +900,7 @@ let next (s : subscription) =
                           Some (Ok (Resync_required cursor))
                       | Ok (S.Events (event :: _)) -> (
                           (* Authority rechecked after catch-up, immediately before handing detached bytes to the client. *)
-                          match X.authorize_run t.service ~subscriber:s.principal ~run:s.run with
+                          match X.authorize_run t.service ~subscriber:s.subscriber ~run:s.run with
                           | Error e ->
                               close s;
                               Some (Error e)

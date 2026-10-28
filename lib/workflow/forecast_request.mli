@@ -9,7 +9,10 @@ type scenario_input = {
 }
 
 val no_scenario : scenario_input
-val make : context:Reporting_context.t -> horizon:int -> (t, Reporting_error.t) result  (** 1, 3 or 6 months *)
+
+(** [horizon] is 1, 3 or 6 months. *)
+val make : context:Reporting_context.t -> horizon:int -> (t, Reporting_error.t) result
+
 val context : t -> Reporting_context.t
 val horizon : t -> int
 val since : t -> Cashflow_core.Date.t  (** 800 days back: a year of backtests, each with its own history *)

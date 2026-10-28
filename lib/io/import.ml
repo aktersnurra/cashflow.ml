@@ -649,7 +649,7 @@ let undo ctx ~batch_id =
   match Import_store.find_batch db batch_id with
   | None -> Error (`Not_found "import")
   | Some batch when batch.undone -> Ok batch
-  | Some batch when Option.is_some (Import_store.dependent db batch_id) ->
+  | Some _ when Option.is_some (Import_store.dependent db batch_id) ->
       (* Undoing it would take rows out of the ledger that a later import still counts as there,
          and re-uploading that file would be refused as already imported. *)
       let later = Option.get (Import_store.dependent db batch_id) in

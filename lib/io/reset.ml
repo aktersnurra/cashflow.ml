@@ -10,7 +10,7 @@ open Sql
 
 type summary = { imports : int; transfers : int }
 
-let insert_batch = stmt "INSERT OR IGNORE INTO reset_batches (id) VALUES (?)" Codec.(text @-> nil) exec
+let insert_batch = stmt "INSERT OR IGNORE INTO reset_batches (id) VALUES (?)" (text @-> nil) exec
 
 (* What the imports made: their new rows, what triage posted about those, and the reversals of both. Only
    a transfer that is reversed, or is a reversal, is ever deleted, so what stays still balances. *)

@@ -37,7 +37,7 @@ let discover_result =
 let call service access ~scopes ~request_id name arguments =
   match List.find_opt (fun (c : Commands.command) -> c.name = name) (tools ()) with
   | None -> Ok (response ~id:request_id (tool_error ("unknown tool " ^ name)))
-  | Some c when not (Commands.allowed ~scopes access c) -> Error `Forbidden
+  | Some c when not (Commands.allowed ~scopes c) -> Error `Forbidden
   | Some c -> (
       match Commands.execute service access ~scopes c arguments with
       | Ok value -> Ok (response ~id:request_id (text_result value))

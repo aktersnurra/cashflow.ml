@@ -83,7 +83,7 @@ let check_chains_are_atomic events results =
   go events results []
 
 module%hegel_state_machine Ledger_machine = struct
-  type nonrec state = state
+  type nonrec state = state [@@warning "-34"]
 
   let submit tc state =
     let scope = if draw tc (booleans ~p:0.2 ()) then household else me in
@@ -119,6 +119,7 @@ module%hegel_state_machine Ledger_machine = struct
     let results = submit_ok state.store state.env ~scope events in
     assert (List.for_all (function Ok (Ledger_core.Exists _) -> true | _ -> false) results);
     assert (List.length (S.transfers state.store) = before)
+  [@@rule]
 
   let expire tc state =
     let today = draw_date tc in
@@ -127,6 +128,7 @@ module%hegel_state_machine Ledger_machine = struct
     assert (List.for_all (function _, Ok [ Ok (Ledger_core.Created _) ] -> true | _ -> false) voided);
     assert (List.length (S.transfers state.store) = before + List.length voided);
     assert (L.void_expired state.store state.env ~today = [])
+  [@@rule]
 
   let balances_match_transfers _tc state = assert (L.verify state.store = [])
   [@@invariant { always_check = true }]

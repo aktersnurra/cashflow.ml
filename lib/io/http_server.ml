@@ -179,7 +179,7 @@ let api_session deps (request : request) =
 let api_commands deps (request : request) =
   match session deps request with
   | None -> error_json 401 "not signed in"
-  | Some (access, _) ->
+  | Some _ ->
       let scopes = web_scopes in
       json 200
         (`Assoc
@@ -187,7 +187,7 @@ let api_commands deps (request : request) =
                `List
                  (List.filter_map
                     (fun (c : Commands.command) ->
-                      if Commands.allowed ~scopes access c then Some (`Assoc [ ("name", `String c.name); ("description", `String c.description); ("schema", Commands.schema c) ])
+                      if Commands.allowed ~scopes c then Some (`Assoc [ ("name", `String c.name); ("description", `String c.description); ("schema", Commands.schema c) ])
                       else None)
                     (Api.all ())) ) ])
 

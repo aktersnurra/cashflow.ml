@@ -3,8 +3,6 @@ module Household_id = Cashflow_core.Household_id
 module Transfer_id = Cashflow_core.Transfer_id
 module User_id = Cashflow_core.User_id
 
-open Base
-
 let now_ms () =
   let days, picoseconds = Ptime.Span.to_d_ps (Ptime.to_span (Ptime_clock.now ())) in
   let open Stdlib.Int64 in
