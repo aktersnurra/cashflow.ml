@@ -15,6 +15,8 @@
   band.
 - Page subtitles that only restated the page's name are gone (Transactions, Accounts, Cash flow, Budgets, Forecast,
   Insights, Settings). Import, Add and Household keep theirs, which say something the title doesn't.
+- Insights says "Not yet reconciled with the bank" once above its findings instead of on each, and no longer offers
+  "Uncategorized accounts for 100% of your spending" as a finding.
 
 ### The advisor can propose a manual entry
 

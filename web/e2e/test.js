@@ -76,6 +76,10 @@ fs.writeFileSync(out + '/savings.csv', savings);
     await page.keyboard.press('Enter');
     await page.waitForSelector('.insight, .page .empty', { timeout: 10000 });
     await page.screenshot({ path: out + '/07-insights.png', fullPage: true });
+    // Findings about this month share one note that it isn't reconciled yet, and Uncategorized is never "a finding".
+    await page.waitForTimeout(500);
+    assert.ok(await page.locator('.page:visible .provisional').count() <= 1, 'the provisional note is said once');
+    assert.doesNotMatch((await page.locator('.page:visible .insight').allInnerTexts()).join('\n'), /Uncategorized accounts for/);
     for (const [label, file] of [['Plan', '08-budgets'], ['Overview', '09-home'], ['Household', '11-household'], ['Settings', '10-settings']]) {
       await page.click(`.sidebar >> text=${label}`);
       await page.waitForTimeout(800);
