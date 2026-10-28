@@ -127,29 +127,38 @@ let category_trend book category ~cycles transfers =
       (cycle, Int64.mul sign total))
     cycles
 
-(* Assets minus liabilities after each date, from every posted transfer up to it. *)
-let net_worth_series book ~dates transfers =
+(* How much an account's balance moved on a day: debits minus credits. *)
+type balance_change = { account_id : Account_id.t; on : Date.t; change : int64 }
+
+let balance_changes transfers =
+  List.concat_map
+    (fun (t : Transfer.t) ->
+      if posted t then
+        [ { account_id = t.debit_account_id; on = t.value_date; change = amount t };
+          { account_id = t.credit_account_id; on = t.value_date; change = Int64.neg (amount t) } ]
+      else [])
+    transfers
+
+(* Assets minus liabilities after each date, from every balance change up to it. *)
+let net_worth_of_changes book ~dates changes =
   let dates = List.sort Date.compare dates in
-  let sorted = List.sort (fun (a : Transfer.t) (b : Transfer.t) -> Date.compare a.value_date b.value_date) (List.filter posted transfers) in
-  let change (t : Transfer.t) =
-    let side id sign =
-      match book.inside id with
-      (* Both kinds count debit minus credit: a liability's balance is negative worth, so a
-         debit (paying it down) raises net worth and a credit (borrowing) lowers it. *)
-      | Some info when info.account.kind = Asset || info.account.kind = Liability -> Int64.mul sign (amount t)
-      | _ -> 0L
-    in
-    side t.debit_account_id 1L +: side t.credit_account_id (-1L)
+  (* Both kinds count debit minus credit: a liability's balance is negative worth, so a
+     debit (paying it down) raises net worth and a credit (borrowing) lowers it. *)
+  let counted =
+    List.filter (fun c -> match book.inside c.account_id with Some info -> info.account.kind = Asset || info.account.kind = Liability | None -> false) changes
+    |> List.sort (fun a b -> Date.compare a.on b.on)
   in
-  let rec go dates transfers worth acc =
+  let rec go dates changes worth acc =
     match dates with
     | [] -> List.rev acc
     | date :: rest -> (
-        match transfers with
-        | (t : Transfer.t) :: more when Date.compare t.value_date date <= 0 -> go dates more (worth +: change t) acc
-        | _ -> go rest transfers worth ((date, worth) :: acc))
+        match changes with
+        | c :: more when Date.compare c.on date <= 0 -> go dates more (worth +: c.change) acc
+        | _ -> go rest changes worth ((date, worth) :: acc))
   in
-  go dates sorted 0L []
+  go dates counted 0L []
+
+let net_worth_series book ~dates transfers = net_worth_of_changes book ~dates (balance_changes transfers)
 
 (* Spending transfers, largest first: those debiting an inside expense account. *)
 let largest_expenses book ~first ~last ~limit transfers =

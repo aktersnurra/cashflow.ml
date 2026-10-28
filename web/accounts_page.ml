@@ -131,16 +131,17 @@ let detail ~(ctx : Ctx.t) ~(account_id : string Bonsai.t) graph =
   let accounts = Remote.load ~name:"list_accounts" ~ctx graph in
   (* A bank account's imported rows come folded, with the category each has now. A category's own
      rows are the transfers triage posted into it, which folding would leave out. *)
+  let shown, set_shown = Bonsai.state 50 graph in
   let args =
-    let%arr account_id and accounts and locale = ctx.locale in
+    let%arr account_id and accounts and shown and locale = ctx.locale in
     let fold = match accounts with Remote.Loaded json -> Option.exists (Accounts_data.find (Accounts_data.of_list ~locale json) account_id) ~f:Accounts_data.is_bank | _ -> false in
-    `Assoc [ ("account_id", `String account_id); ("limit", `Int 200); ("fold_triage", `Bool fold) ]
+    `Assoc [ ("account_id", `String account_id); ("limit", `Int shown); ("fold_triage", `Bool fold) ]
   in
   let transactions = Remote.load ~name:"query_transactions" ~args ~ctx graph in
   let imports = Remote.load ~name:"list_imports" ~args:(let%arr account_id in `Assoc [ ("account_id", `String account_id) ]) ~ctx graph in
   let import = Import_widget.component ~ctx ~account_id:(let%arr account_id in Some account_id) graph in
   let tool, set_tool = Bonsai.state No_tool graph in
-  let%arr accounts and transactions and imports and import and account_id and tool and set_tool and locale = ctx.locale and changed = ctx.changed
+  let%arr accounts and transactions and imports and import and account_id and tool and set_tool and shown and set_shown and locale = ctx.locale and changed = ctx.changed
   and notify = ctx.notify and navigate = ctx.navigate and session = ctx.session in
   let today = let d = Js_of_ocaml.(new%js Js.date_now) in Printf.sprintf "%04d-%02d-%02d" d##getFullYear (d##getMonth + 1) d##getDate in
   let account = match accounts with Loaded json -> Accounts_data.find (Accounts_data.of_list ~locale json) account_id | _ -> None in
@@ -263,7 +264,8 @@ let detail ~(ctx : Ctx.t) ~(account_id : string Bonsai.t) graph =
                           [ Ui.span [ Ui.text (Msg.transactions_col_date locale) ]; Ui.span [ Ui.text (Msg.transactions_col_description locale) ];
                             (if bank then Ui.span [ Ui.text (Msg.budgets_col_category locale) ] else Vdom.Node.none);
                             Ui.span ~cls:"num" [ Ui.text (Msg.cashflow_col_amount locale) ] ]
-                       :: List.map ts ~f:transaction_row)));
+                       :: List.map ts ~f:transaction_row
+                       @ if List.length ts >= shown then [ Ui.div ~cls:"actions" [ Ui.button (Msg.accounts_show_more locale) (set_shown (shown + 50)) ] ] else [])));
           (match imports with
           | Loaded json when not (List.is_empty (J.list (J.field "imports" json))) ->
               section (Msg.label_imports locale) (Ui.div ~cls:"table" (List.map (J.list (J.field "imports" json)) ~f:import_row))

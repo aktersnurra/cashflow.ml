@@ -40,7 +40,7 @@
  (name test_http)
  (enabled_if (= %{context_name} default))
  (modules test_http test_service_support)
- (libraries alcotest cashflow_io cashflow_core yojson uri)
+ (libraries alcotest cashflow_io cashflow_core yojson uri httpun zipc)
  (deps fixtures/logo_64x48.png))
 
 (test
