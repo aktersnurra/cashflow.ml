@@ -682,8 +682,11 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
   .advisor-composer-bottom { justify-content: flex-end; }
   .advisor-composer:has(.advisor-input:placeholder-shown) .advisor-send[data-advisor-send] { visibility: visible; }
   .advisor-conversation .advisor-input { padding: 8px 8px 2px; font-size: 16px; line-height: 24px; }
-  /* Docked on the tab bar (54px high) with nothing showing through between them. */
+  /* Docked on the tab bar (54px high) with nothing showing through between them. On the advisor page it is
+     fixed there, however short the conversation, and the conversation leaves room for it. */
   .advisor-composer-area { bottom: calc(54px + env(safe-area-inset-bottom)); padding: 8px 0 8px; background: linear-gradient(to bottom, transparent, var(--chat-paper) 16px); }
+  .advisor-page .advisor-composer-area { position: fixed; left: 16px; right: 16px; z-index: 5; }
+  .advisor-page .advisor-conversation { padding-bottom: 168px; }
   .advisor-status:empty, .advisor-status { margin-top: 4px; }
 }
 /* Phones, as in a native app: no zooming (no double-tap zoom here; pinching is refused in Keyboard), and form
@@ -696,3 +699,4 @@ html { touch-action: manipulation; -webkit-text-size-adjust: 100%; text-size-adj
   html.typing .tabbar { display: none; }
   html.typing .page { padding-bottom: calc(16px + var(--keyboard, 0px)); }
   html.typing .advisor-composer-area { bottom: var(--keyboard, 0px); }
+  html.typing .advisor-page .advisor-conversation { padding-bottom: calc(168px + var(--keyboard, 0px)); }
