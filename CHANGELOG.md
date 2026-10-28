@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### A faster Accounts page
+
+- The Accounts page no longer reads every transaction you have ever had to draw the net-worth figure: the database adds
+  up each account's movements per day and only those sums are loaded. The account's own page shows its latest 50
+  transactions, with a button for older ones, instead of 200 at once.
+- Answers from the server are sent gzipped to browsers that accept it.
+
 ### The advisor can propose a manual entry
 
 - Ask the advisor to add a purchase, some income, or a move between your own accounts. It appears as a card with the

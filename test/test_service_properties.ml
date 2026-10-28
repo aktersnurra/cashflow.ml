@@ -97,6 +97,13 @@ let test tc =
             0L (Insights.accounts ctx)
         in
         if saved <> held then fail "%s saved %Ld but its accounts changed by %Ld" label saved held;
+        let summed =
+          Transfer_query.balance_changes_before service.db access ~since:last ~before:last
+          |> List.map (fun (account_id, on, change) -> { Analytics.account_id; on; change })
+          |> Analytics.net_worth_of_changes book ~dates:[ last ]
+        in
+        if summed <> Analytics.net_worth_series book ~dates:[ last ] (Transfer_query.all_before service.db access last) then
+          fail "%s's net worth from sums differs from the one from transfers" label;
         match Analytics.net_worth_series book ~dates:[ last ] (Transfer_query.all_before service.db access last) with
         | [ (_, worth) ] when worth = held -> ()
         | [ (_, worth) ] -> fail "%s's net worth is %Ld, its accounts hold %Ld" label worth held

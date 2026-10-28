@@ -532,6 +532,7 @@ advisor.history_yesterday = Yesterday
 advisor.history_week = Previous 7 days
 advisor.history_older = Older
 advisor.history_load_more = Load older conversations
+accounts.show_more = Show older transactions
 advisor.history_loading = Loading conversations…
 advisor.history_empty = No conversations yet.
 advisor.history_complete = All conversations shown

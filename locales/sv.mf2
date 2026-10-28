@@ -531,6 +531,7 @@ advisor.history_yesterday = I går
 advisor.history_week = Senaste 7 dagarna
 advisor.history_older = Tidigare
 advisor.history_load_more = Visa äldre samtal
+accounts.show_more = Visa äldre transaktioner
 advisor.history_loading = Hämtar samtal…
 advisor.history_empty = Inga samtal ännu.
 advisor.history_complete = Alla samtal visas
