@@ -1,4 +1,5 @@
 module Logo_fetch = Cashflow_io.Logo_fetch
+module Svg_logo = Cashflow_io.Svg_logo
 open Logo_fetch
 
 let fixture ?(name = "logo_64x48") file =
@@ -92,6 +93,87 @@ let quoted_icon_attributes () =
     [ "multi-token rel", "<link rel=\"shortcut icon\" sizes=\"128x128\" href=\"/large.png\">";
       "largest square size", "<link rel='icon' sizes=\"32x32 128x128\" href='/large.png'>" ^
         "<link rel='icon' sizes='96x96' href='/smaller.png'>" ]
+
+(* Many sites declare their icon without [sizes] (IKEA, Circle K); the image itself is checked. *)
+let unsized_icons () =
+  let requested page =
+    let calls = ref [] in
+    match fetch (network ~page calls) "example.com" with
+    | Error _ -> Alcotest.fail ("no icon from " ^ page)
+    | Ok image -> source_url image, List.rev_map (fun (url, _, _) -> Uri.path (Uri.of_string url)) !calls |> List.tl in
+  Alcotest.(check string) "unsized icon before /favicon.ico" "https://example.com/brand/favicon.ico"
+    (fst (requested "<link rel=\"shortcut icon\" href=\"/brand/favicon.ico\">"));
+  Alcotest.(check string) "a declared size ranks first" "https://example.com/big.png"
+    (fst (requested "<link rel='icon' href='/plain.png'><link rel='icon' sizes='128x128' href='/big.png'>"));
+  Alcotest.(check string) "unsized icons in page order" "https://example.com/first.png"
+    (fst (requested "<link rel='icon' href='/first.png'><link rel='icon' href='/second.png'>"));
+  Alcotest.(check (list string)) "below 64 px by its declared size, never requested" [ "/fine.png" ]
+    (snd (requested "<link rel='icon' sizes='32x32' href='/small.png'><link rel='icon' sizes='64x64' href='/fine.png'>"))
+
+let svg_ns = "http://www.w3.org/2000/svg"
+let logo = "<svg xmlns='" ^ svg_ns ^ "' viewBox='0 0 24 24'><path d='M0 0h24v24H0z' fill='#e60a14'/></svg>"
+let contains sub s = Cashflow_core.Str_compat.contains ~sub s
+let cleaned svg = match Svg_logo.clean svg with Some (bytes, _, _) -> bytes | None -> Alcotest.fail ("refused: " ^ svg)
+
+let svg_keeps_drawing () =
+  match Svg_logo.clean logo with
+  | None -> Alcotest.fail "plain logo refused"
+  | Some (bytes, width, height) ->
+      Alcotest.(check (pair int int)) "size from viewBox" (24, 24) (width, height);
+      List.iter (fun part -> Alcotest.(check bool) part true (contains part bytes))
+        [ "<svg"; "xmlns=\"" ^ svg_ns ^ "\""; "viewBox=\"0 0 24 24\""; "<path"; "fill=\"#e60a14\"" ];
+      Alcotest.(check (option (pair int int))) "size from width and height" (Some (48, 32))
+        (Option.map (fun (_, w, h) -> w, h) (Svg_logo.clean ("<svg xmlns='" ^ svg_ns ^ "' width='48px' height='31.5'><rect width='4' height='4'/></svg>")));
+      let kept = cleaned ("<svg xmlns='" ^ svg_ns ^ "' xmlns:xlink='http://www.w3.org/1999/xlink' viewBox='0 0 8 8'>" ^
+        "<defs><linearGradient id='g'><stop offset='0' stop-color='red'/></linearGradient><path id='p' d='M0 0'/></defs>" ^
+        "<style>.a{fill:url(#g)}</style><use xlink:href='#p' class='a'/><title>Shop</title></svg>") in
+      List.iter (fun part -> Alcotest.(check bool) part true (contains part kept))
+        [ "<linearGradient id=\"g\">"; "<stop"; ".a{fill:url(#g)}"; "<use href=\"#p\""; "<title>Shop</title>" ]
+
+(* Opened directly, an SVG runs as a page of this app: nothing that can run or load anything survives. *)
+let svg_drops_what_can_run () =
+  let hostile = "<svg xmlns='" ^ svg_ns ^ "' xmlns:xlink='http://www.w3.org/1999/xlink' xmlns:inkscape='urn:inkscape' viewBox='0 0 8 8' onload='alert(1)' inkscape:version='1'>" ^
+    "<script>alert(2)</script><foreignObject><div xmlns='http://www.w3.org/1999/xhtml'>x</div></foreignObject>" ^
+    "<a href='javascript:alert(3)'><rect width='8' height='8' onclick='alert(4)'/></a>" ^
+    "<use xlink:href='https://evil.example/s.svg#x'/><image href='https://evil.example/t.png'/>" ^
+    "<rect width='8' height='8' fill='url(https://evil.example/f)' style='background:url( \"//evil.example/b\")'/>" ^
+    "<style>@import url(https://evil.example/c.css);</style>" ^
+    "<set attributeName='href' to='javascript:alert(5)'/><animate attributeName='fill' values='red'/>" ^
+    "<circle r='4' fill='red'/></svg>" in
+  let bytes = cleaned hostile in
+  List.iter (fun part -> Alcotest.(check bool) ("no " ^ part) false (contains part (String.lowercase_ascii bytes)))
+    [ "script"; "alert"; "onload"; "onclick"; "foreignobject"; "xhtml"; "javascript"; "evil"; "inkscape"; "<a"; "<image"; "<set"; "<animate"; "@import" ];
+  Alcotest.(check bool) "the drawing stays" true (contains "<circle" bytes)
+
+let svg_refusals () =
+  List.iter (fun (name, svg) -> Alcotest.(check bool) name true (Svg_logo.clean svg = None))
+    [ "HTML", "<html><body>hi</body></html>";
+      "malformed", "<svg xmlns='" ^ svg_ns ^ "' viewBox='0 0 8 8'><path></svg>";
+      "no size", "<svg xmlns='" ^ svg_ns ^ "'><path d='M0 0'/></svg>";
+      "zero size", "<svg xmlns='" ^ svg_ns ^ "' viewBox='0 0 0 8'><path d='M0 0'/></svg>";
+      "entity", "<!DOCTYPE svg [<!ENTITY a 'xxxxxxxx'>]><svg xmlns='" ^ svg_ns ^ "' viewBox='0 0 8 8'><text>&a;</text></svg>";
+      "not text", "\137PNG\r\n\026\n" ]
+
+let svg_cleaning_is_stable () =
+  List.iter (fun svg -> let once = cleaned svg in Alcotest.(check string) "clean twice" once (cleaned once))
+    [ logo; "<?xml version='1.0'?>\n<svg xmlns='" ^ svg_ns ^ "' width='64' height='64'>\n  <g fill='#000'>\n<text>a &amp; b &lt; c</text></g>\n</svg>\n" ]
+
+let svg_icons () =
+  let calls = ref [] in
+  let page = "<link rel='icon' type='image/svg+xml' href='/logo'><link rel='icon' href='/static/favicon.ico'>" in
+  let base = network ~page calls in
+  let net = { base with get = (fun ~uri ~address ~max_bytes ->
+    if Uri.path uri = "/logo" then Ok { status = 200; headers = []; body = "<svg xmlns='" ^ svg_ns ^ "' viewBox='0 0 24 24' onload='alert(1)'><path d='M0 0'/></svg>" }
+    else base.get ~uri ~address ~max_bytes) } in
+  match fetch net "example.com" with
+  | Error _ -> Alcotest.fail "SVG icon refused"
+  | Ok image ->
+      Alcotest.(check string) "SVG icon first, in page order" "https://example.com/logo" (source_url image);
+      Alcotest.(check string) "type" "image/svg+xml" (content_type image);
+      Alcotest.(check bool) "stored cleaned" false (contains "onload" (bytes image));
+      Alcotest.(check bool) "stored bytes pass the serving check" true
+        (Option.map (fun (kind, _, _) -> kind) (stored (bytes image)) = Some "image/svg+xml");
+      Alcotest.(check bool) "an uncleaned SVG fails it" true (stored "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' onload='x'/>" = None)
 
 let failed_icon_falls_back () = 
   let calls = ref [] in
@@ -192,7 +274,7 @@ let image_boundaries () =
     let net = network calls in
     fetch { net with get = (fun ~uri:_ ~address:_ ~max_bytes:_ ->
       Ok { status = 200; headers = [ "content-type", "image/png" ]; body }) } "https://example.org/logo.png" in
-  Alcotest.(check bool) "bytes beat claimed type" true (run "<svg width='64' height='64'></svg>" = Error Unsupported_image);
+  Alcotest.(check bool) "bytes beat claimed type" true (run "<html><body>not an image</body></html>" = Error Unsupported_image);
   Alcotest.(check bool) "truncated PNG" true (run (String.sub png 0 24) = Error Unsupported_image);
   Alcotest.(check bool) "body cap" true (run (png ^ String.make 262_145 'x') = Error Oversized_body);
   let small = Bytes.of_string png in
@@ -305,10 +387,16 @@ let () = Alcotest.run "logo fetch" [
               Alcotest.test_case "multi-size ICO" `Quick multi_size_ico;
               Alcotest.test_case "ICO directory bounds" `Quick ico_directory_bounds;
               Alcotest.test_case "extensionless and redirected image" `Quick extensionless_image_and_redirect ];
+  "svg", [ Alcotest.test_case "keeps the drawing" `Quick svg_keeps_drawing;
+           Alcotest.test_case "drops what can run" `Quick svg_drops_what_can_run;
+           Alcotest.test_case "refusals" `Quick svg_refusals;
+           Alcotest.test_case "stable" `Quick svg_cleaning_is_stable ];
   "icons", [ Alcotest.test_case "order" `Quick icon_order;
              Alcotest.test_case "quoted tokens" `Quick quoted_icon_attributes;
              Alcotest.test_case "bare image path" `Quick bare_image_path;
              Alcotest.test_case "failed candidate" `Quick failed_icon_falls_back;
+             Alcotest.test_case "unsized icons" `Quick unsized_icons;
+             Alcotest.test_case "SVG icons" `Quick svg_icons;
              Alcotest.test_case "bounded distinct candidates" `Quick bounded_distinct_candidates;
              Alcotest.test_case "many timed-out candidates" `Quick many_timed_out_candidates;
              Alcotest.test_case "shared request budget" `Quick shared_request_budget;

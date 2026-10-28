@@ -79,7 +79,7 @@
  (name test_logo_fetch)
  (enabled_if (= %{context_name} default))
  (modules test_logo_fetch)
- (libraries alcotest cashflow_io uri)
+ (libraries alcotest cashflow_io cashflow_core uri)
  (deps fixtures/logo_64x48.png fixtures/logo_64x48.webp fixtures/logo_64x48.jpg fixtures/logo_64x48.ico fixtures/logo_multi_size.ico))
 
 (test

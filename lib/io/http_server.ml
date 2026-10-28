@@ -285,10 +285,14 @@ let api_logo deps request id =
   let response = match blob with
   | None -> plain 404 "Not Found"
   | Some (blob : Merchant_logo_store.blob) ->
-      (match Logo_fetch.dimensions blob.bytes with
-       | Some (content_type, width, height) when content_type = blob.content_type && width >= 32 && height >= 32
+      (match Logo_fetch.stored blob.bytes with
+       | Some (content_type, width, height) when content_type = blob.content_type
+           && (content_type = "image/svg+xml" || (width >= 32 && height >= 32))
            && String.length blob.bytes <= 256 * 1024 ->
-           respond ~headers:["content-length", string_of_int (String.length blob.bytes)] 200 content_type
+           (* Opened at its own URL an SVG is a document of this origin: it may load and run nothing. *)
+           let sandbox = if content_type = "image/svg+xml"
+             then [ "content-security-policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox" ] else [] in
+           respond ~headers:(("content-length", string_of_int (String.length blob.bytes)) :: sandbox) 200 content_type
              (if request.meth = HEAD then "" else blob.bytes)
        | _ -> plain 404 "Not Found") in
   (* Every image request must check current session and ownership, including after logout. *)
