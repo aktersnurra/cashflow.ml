@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### The advisor no longer proposes a category you already have under another name
+
+- A proposed category counts as a duplicate if it matches an existing one in any language: asking for "Mat & hushåll"
+  when the starter Groceries is already there is refused, as "Groceries" is.
+
 ### OpenRouter
 
 - Requests to OpenRouter now carry the app's public URL as `HTTP-Referer` next to the `cashflow` title, so usage shows

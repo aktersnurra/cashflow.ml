@@ -367,6 +367,7 @@ let propose_simple_cards () =
   check "a category card says it is for you" (List.exists (fun (f : A.fact) -> f.label = "Owner" && f.value = A.Text "personal") created.facts);
   ignore (accepted "propose_new_category" "{\"name\":\"Side income\",\"kind\":\"income\"}");
   rejected "propose_new_category" "{\"name\":\"groceries\",\"kind\":\"expense\"}";
+  rejected "propose_new_category" "{\"name\":\"mat & hushåll\",\"kind\":\"expense\"}"; (* the starter in Swedish *)
   rejected "propose_new_category" "{\"name\":\"Bad\\u0007name\",\"kind\":\"expense\"}"
 
 (* A manual entry is a purchase, income or a move between the user's own accounts, between accounts this run was shown;

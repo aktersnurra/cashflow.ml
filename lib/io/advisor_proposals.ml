@@ -142,7 +142,7 @@ let plan_category service ~principal ~owner ~id (p : S.proposal) =
         List.exists
           (fun (i : Account_info.t) ->
             i.account.kind = kind && (not i.account.closed) && Owner.equal i.account.owner scope_owner
-            && String.equal (String.lowercase_ascii i.account.name) (String.lowercase_ascii name))
+            && List.exists (fun n -> String.equal (String.lowercase_ascii n) (String.lowercase_ascii name)) (Starter.names i))
           (Insights.accounts ctx)
       in
       if taken then Ok `Out_of_date
