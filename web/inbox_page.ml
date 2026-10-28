@@ -113,9 +113,11 @@ let page ?(embedded = false) ~(ctx : Ctx.t) graph =
   let category_picker ~title ~query ~set_query ~options ~choose =
     let all_options = options in
     let options = List.filter options ~f:(Accounts_data.matches query) in
-    Ui.div ~cls:"overlay"
+    (* A tap outside closes it: on a phone there is no Escape key. *)
+    Vdom.Node.div
+      ~attrs:[ Vdom.Attr.class_ "overlay"; Vdom.Attr.on_click (fun _ -> set_picker No_picker) ]
       [ Vdom.Node.div
-          ~attrs:[ Vdom.Attr.class_ "palette" ]
+          ~attrs:[ Vdom.Attr.class_ "palette"; Vdom.Attr.on_click (fun _ -> Effect.Stop_propagation) ]
           [ Vdom.Node.input
               ~attrs:
                 [ focus; Vdom.Attr.placeholder title; Vdom.Attr.value_prop query;
@@ -142,9 +144,10 @@ let page ?(embedded = false) ~(ctx : Ctx.t) graph =
     | Pair candidates, Some item ->
         let loaded = Option.is_some candidates in
         let candidates = Option.value_map candidates ~default:[] ~f:(fun json -> J.list (J.field "candidates" json)) in
-        Ui.div ~cls:"overlay"
+        Vdom.Node.div
+          ~attrs:[ Vdom.Attr.class_ "overlay"; Vdom.Attr.on_click (fun _ -> set_picker No_picker) ]
           [ Vdom.Node.div
-              ~attrs:[ Vdom.Attr.class_ "sheet" ]
+              ~attrs:[ Vdom.Attr.class_ "sheet"; Vdom.Attr.on_click (fun _ -> Effect.Stop_propagation) ]
               [ Vdom.Node.h2 [ Ui.text (Msg.inbox_pick_pair locale) ];
                 (if loaded && List.is_empty candidates then Ui.muted (Msg.inbox_no_pairs locale)
                  else
