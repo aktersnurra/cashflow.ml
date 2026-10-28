@@ -77,7 +77,7 @@ let access_fibers () =
         | Load_cashflow request ->
             incr loads;
             check "fiber request access" true (Reporting_context.access (Cashflow_request.context request) == accesses.(i));
-            Ok {Cashflow_facts.accounts=[]; transfers=[]; reconciled_through=None}
+            Ok {Cashflow_facts.accounts=[]; transfers=[]; reconciled_through=None; imported_through=[]}
         | Load_forecast _ -> failwith "no forecast here") } in
       let report = ok (Effects.run local (fun () ->
         Reporting.cashflow_summary ~access:accesses.(i) ~scope:Me ~cycles:1 ())) in

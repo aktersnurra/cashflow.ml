@@ -28,6 +28,18 @@ let test_feed_follows_the_data () =
   ignore (ok (Inbox.categorize service alice ~transfer_id:item.item.transfer_id ~category_id:(account_named service alice "Groceries") ()));
   Alcotest.(check (list string)) "and back to the overview" [ "overview" ] (kinds service alice)
 
+(* Early in a cycle the last one is reviewed, but only once the statements cover it to its end: half a cycle
+   (salary in, bills not imported yet) is not a month's result. *)
+let test_month_review_waits_for_the_statements () =
+  let service = Service.make ~now:(fun () -> Option.get (Ptime.of_date_time ((2026, 9, 28), ((10, 0, 0), 0)))) (Store_sqlite.open_memory ()) in
+  let alice = sign_in service "alice" in
+  let checking = open_checking service alice ~statement_backed:true "Checking" in
+  let import csv = ignore (ok_import (Import.confirm (Import.context service alice) { target = Import.Existing checking; file_name = None; content = csv; decisions = [] })) in
+  import "Datum;Text;Belopp\n2026-08-25;LÖN;30000,00\n2026-09-01;HYRA;-9000,00\n2026-09-10;ICA;-500,00\n";
+  Alcotest.(check bool) "covered only to 10 September: no review" false (List.mem "month_review" (kinds service alice));
+  import "Datum;Text;Belopp\n2026-09-20;ICA;-700,00\n2026-09-25;LÖN;30000,00\n";
+  Alcotest.(check bool) "covered past its end: reviewed" true (List.mem "month_review" (kinds service alice))
+
 let test_snooze_and_budget_acknowledgement () =
   (* Four days into the cycle that began on 25 September, so spending can run ahead of pace. *)
   let service = Service.make ~now:(fun () -> Option.get (Ptime.of_date_time ((2026, 9, 28), ((10, 0, 0), 0)))) (Store_sqlite.open_memory ()) in
@@ -175,6 +187,7 @@ let () =
   Alcotest.run "attention"
     [ ( "feed",
         [ Alcotest.test_case "follows the data" `Quick test_feed_follows_the_data;
+          Alcotest.test_case "the month review waits for the statements" `Quick test_month_review_waits_for_the_statements;
           Alcotest.test_case "snooze and budget acknowledgement" `Quick test_snooze_and_budget_acknowledgement;
           Alcotest.test_case "snooze hides until the date" `Quick test_snooze_hides_until_the_date;
           Alcotest.test_case "unusual spending" `Quick test_unusual_spending;

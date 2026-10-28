@@ -387,7 +387,7 @@ let test_cashflow_query_boundary () =
     let module W = Cashflow_workflow in
     let first, last = Insights.span (Insights.recent_cycles legacy 2) in
     let facts : W.Cashflow_facts.t = { accounts=Insights.accounts legacy;
-      transfers=Insights.transfers legacy ~first ~last; reconciled_through=Insights.reconciled_through legacy } in
+      transfers=Insights.transfers legacy ~first ~last; reconciled_through=Insights.reconciled_through legacy; imported_through=[] } in
     let scripted = W.Effects.run { W.Effects.handle = (fun (type a) (op : a W.Effect_ops.t) : a -> match op with
       | Now -> now
       | Resolve_currency code -> Result.map_error (fun _ -> W.Reporting_error.Unknown_currency code) (Service.currency service code)
@@ -435,6 +435,45 @@ let test_legacy_query_dispatch () =
   check Query.settle_up (Settle_up household) (fun ctx -> ok (Insights.settle_up ctx));
   check Query.goals (Goals common) Insights.goals
 
+(* Right after payday, with only the salary imported: the cycle so far isn't a result. It says how far the
+   statements reach, sits beside the same days of earlier cycles, and heads for about a usual cycle once the
+   rent still due and usual spending are counted. *)
+let test_period_outlook () =
+  let service = make_service () in
+  let alice = sign_in service "alice" in
+  let checking = open_checking service alice ~statement_backed:true "Checking" in
+  let ctx = Result.get_ok (Insights.context service alice ~scope:Analytics.Me ()) in
+  let module Cycle = Cashflow_core.Cycle in
+  let current = Cycle.cycle_of ctx.setting ctx.today in
+  let rec back c n = if n = 0 then c else back (Cycle.previous ctx.setting c) (n - 1) in
+  let row d text amount = Printf.sprintf "%s;%s;%s" (Cashflow_core.Date.to_string d) text amount in
+  let day (c : Cycle.t) n = Cashflow_core.Date.add_days c.first n in
+  (* Four cycles back to the last one: salary on payday, rent a week in, groceries twice. *)
+  let past =
+    List.concat_map
+      (fun k ->
+        let c = back current k in
+        [ row c.first "LÖN" "30000,00"; row (day c 7) "HYRA" "-9000,00"; row (day c 10) "ICA" "-2000,00"; row (day c 20) "ICA" "-2000,00" ])
+      [ 4; 3; 2; 1 ]
+  in
+  (* This cycle: only payday is imported. *)
+  let csv = String.concat "\n" (("Datum;Text;Belopp" :: past) @ [ row current.first "LÖN" "30000,00" ]) ^ "\n" in
+  ignore (ok_import (Cashflow_io.Import.confirm (Cashflow_io.Import.context service alice) { target = Cashflow_io.Import.Existing checking; file_name = None; content = csv; decisions = [] }));
+  let summary = query service alice "cashflow_summary" [ ("cycles", `Int 2) ] in
+  let cycles = field [ "cycles" ] summary |> (function `List l -> l | _ -> []) in
+  let last = List.nth cycles (List.length cycles - 1) and before = List.hd cycles in
+  Alcotest.(check bool) "the cycle in progress is not complete" true (field [ "complete" ] last = `Bool false);
+  Alcotest.(check bool) "it is covered through payday" true (field [ "covered_through" ] last = `String (Cashflow_core.Date.to_string current.first));
+  Alcotest.(check bool) "the one before is complete" true (field [ "complete" ] before = `Bool true);
+  let o = query service alice "period_outlook" [] in
+  let money path = match field path o with `String s -> Option.get (Float.of_string_opt s) | _ -> Alcotest.fail ("no " ^ String.concat "." path) in
+  Alcotest.(check (float 0.001)) "so far: the salary, nothing out yet" 30000. (money [ "so_far"; "savings" ]);
+  Alcotest.(check (float 0.001)) "the same day of earlier cycles looked the same" 30000. (money [ "usual_by_now"; "savings" ]);
+  let due = field [ "still_due" ] o |> (function `List l -> l | _ -> []) in
+  Alcotest.(check bool) "the rent is still due" true (List.exists (fun i -> field [ "amount" ] i = `String "-9000.00") due);
+  let expected = money [ "expected" ] in
+  Alcotest.(check bool) (Printf.sprintf "heading for about a usual cycle (17000), not 30000: %.0f" expected) true (Float.abs (expected -. 17000.) <= 1500.)
+
 let () =
   Alcotest.run "analytics"
     [ ( "insights",
@@ -444,6 +483,7 @@ let () =
           Alcotest.test_case "categories, recurring and budgets" `Quick test_categories_recurring_and_budgets;
           Alcotest.test_case "irregular spending is not recurring" `Quick test_irregular_spending_is_not_recurring;
           Alcotest.test_case "forecast" `Quick test_forecast_query;
+          Alcotest.test_case "period outlook" `Quick test_period_outlook;
           Alcotest.test_case "contribution plan" `Quick test_contribution_plan;
           Alcotest.test_case "net worth with a loan" `Quick test_net_worth_with_a_loan;
           Alcotest.test_case "goal report currency" `Quick test_goal_report_currency;

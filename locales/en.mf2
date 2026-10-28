@@ -662,3 +662,13 @@ advisor.evidence.label_description = Description
 advisor.evidence.label_status = Status
 advisor.evidence.status_pending = Waits for the bank statement to confirm it
 advisor.evidence.status_posted = Posted at once
+
+overview.expected = Expected by {$date :date}
+overview.likely = Likely {$low} to {$high}
+overview.so_far = So far, through {$date :date}: {$amount}
+overview.nothing_yet = Nothing imported for this period yet
+overview.usual_by_now = Spent {$spent} so far; usually {$usual} by this day
+overview.still_due = Still to come: {$items}
+overview.covered_through = Statements cover this period through {$date :date}
+label.income_so_far = Income so far
+label.spending_so_far = Spending so far

@@ -31,6 +31,7 @@ type _ t =
   | Settle_up : common -> Insights.owed list t
   | Goals : common -> Insights.goal_progress list t
   | Forecast : common * int * W.Forecast_request.scenario_input -> Forecast.t t
+  | Period_outlook : common -> Cashflow_core.Outlook.t t
 
 let amount_arg (ctx : Insights.ctx) name text =
   Option.to_result ~none:(`Invalid (Printf.sprintf "%s must be a decimal amount like 1240.50" name))
@@ -70,6 +71,10 @@ let run : type a. Service.t -> Access.t -> a t -> (a * Insights.ctx, [> Service.
         W.Reporting.forecast ~access ~scope:common.scope ?currency:common.currency ~horizon ~scenario ()) in
       let* (report : W.Reporting.forecast_report) = Result.map_error reporting_error result in
       Ok (report.forecast, ctx_of_context report.context)
+  | Period_outlook common ->
+      let result = Reporting_live.run ~service ~access (fun () -> W.Reporting.period_outlook ~access ~scope:common.scope ?currency:common.currency ()) in
+      let* (report : W.Reporting.outlook_report) = Result.map_error reporting_error result in
+      Ok (report.outlook, ctx_of_context report.context)
   | Spending_by_category (common, period, compare_previous) ->
       with_legacy_ctx common (fun ctx -> Ok (Insights.spending_by_category ctx ~period ~compare_previous))
   | Category_trend (common, category, cycles) ->
@@ -229,7 +234,10 @@ let cashflow_summary =
   { name = "cashflow_summary";
     description =
       "Income, spending, money moved to or from other books (contributions, settlements), savings and savings rate per pay \
-       cycle. reconciled is false for cycles not yet confirmed against a bank statement, so treat those figures as provisional.";
+       cycle. reconciled is false for cycles not yet confirmed against a bank statement, so treat those figures as provisional. \
+       complete is false for a cycle the imported statements don't cover to its end: its figures run only through \
+       covered_through (statements arrive irregularly; anything later is not imported yet, not zero), so never compare them \
+       with whole cycles or call them a month's result. Use period_outlook for where such a cycle is heading.";
     properties = common_props @ [ cycles_prop ];
     parse = (fun f -> let* c = Args.common f in let* n = Args.int "cycles" ~default:6 ~min:1 ~max:36 f in Ok (Cashflow_summary (c, n)));
     encode =
@@ -240,7 +248,8 @@ let cashflow_summary =
                 (List.map
                    (fun (r : Analytics.cycle_summary) ->
                      `Assoc (Json.(match cycle r.cycle with `Assoc f -> f | _ -> []) @ flows ctx r.flows
-                             @ [ ("savings", money ctx r.savings); ("savings_rate", rate r.savings_rate_bp); ("reconciled", `Bool r.reconciled) ]))
+                             @ [ ("savings", money ctx r.savings); ("savings_rate", rate r.savings_rate_bp); ("reconciled", `Bool r.reconciled);
+                                 ("complete", `Bool r.complete); ("covered_through", Json.option Json.date r.covered_through) ]))
                    rows) ) ]) }
 
 let spending_by_category =
@@ -530,8 +539,41 @@ let forecast =
                    f.items) );
             ("assumptions", `List (List.map (fun a -> `Assoc (assumption a)) f.assumptions)) ]) }
 
+let period_outlook =
+  { name = "period_outlook";
+    description =
+      "The current pay cycle as far as the imported statements reach (covered_through; statements arrive irregularly, so \
+       later days are not imported yet, not zero), beside the same days of earlier cycles (usual_by_now: their average \
+       income, spending and savings by the same day), and where it is heading: still_due lists the income, bills and \
+       household contributions expected before the cycle ends, usual_rest is usual day-to-day spending for the days left, \
+       and expected is the cycle's savings if the rest goes as usual, with expected_range where 8 in 10 past forecasts \
+       landed. Compare a cycle in progress through this, never its so-far totals against whole cycles.";
+    properties = common_props;
+    parse = (fun f -> let* c = Args.common f in Ok (Period_outlook c));
+    encode =
+      (fun ctx (o : Cashflow_core.Outlook.t) ->
+        let m = money ctx in
+        let flows (f : Analytics.flows) = `Assoc [ ("income", m f.income); ("spending", m f.spending); ("savings", m (Analytics.savings f)) ] in
+        envelope ctx
+          [ ("cycle", Json.cycle o.cycle); ("complete", `Bool (o.days_covered >= o.days_total));
+            ("covered_through", Json.option Json.date o.covered_through); ("days_covered", `Int o.days_covered); ("days_total", `Int o.days_total);
+            ("so_far", flows o.so_far);
+            ( "usual_by_now",
+              Json.option
+                (fun (u : Cashflow_core.Outlook.usual) ->
+                  `Assoc [ ("income", m u.income); ("spending", m u.spending); ("savings", m u.savings); ("cycles", `Int u.cycles) ])
+                o.usual_by_now );
+            ( "still_due",
+              `List
+                (List.map
+                   (fun (i : Forecast.item) ->
+                     `Assoc [ ("date", Json.date i.date); ("kind", `String (Forecast.kind_to_string i.kind)); ("name", `String i.name); ("amount", m i.amount) ])
+                   o.still_due) );
+            ("usual_rest", m o.usual_rest); ("expected", m o.expected);
+            ("expected_range", Json.option (fun (low, high) -> `Assoc [ ("low", m low); ("high", m high) ]) o.expected_range) ]) }
+
 let all =
-  [ Any cashflow_summary; Any spending_by_category; Any category_trend; Any net_worth; Any largest_expenses; Any runway;
+  [ Any cashflow_summary; Any period_outlook; Any spending_by_category; Any category_trend; Any net_worth; Any largest_expenses; Any runway;
     Any recurring; Any budget_status; Any contribution_plan; Any settle_up; Any goals; Any forecast ]
 
 let find name = List.find_opt (fun (Any d) -> d.name = name) all

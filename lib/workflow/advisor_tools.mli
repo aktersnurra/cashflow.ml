@@ -36,6 +36,7 @@ type request =
   | Budget_status of common * int
   | Goals of common
   | Forecast of common * int * scenario
+  | Period_outlook of common  (** the cycle in progress so far, and where it is heading *)
   | Inbox_rows of common
   | Categories of common
   | Bank_accounts of common
@@ -195,6 +196,7 @@ type result =
   | Categorize_proposal_result of categorize_row list
   | Proposal_card_result of proposal_card
   | Bank_accounts_result of bank_account list
+  | Period_outlook_result of Outlook.t
   | Filed_inbox_result of { filed : inbox_row list; unsure : inbox_row list; kept_on : bool }
       (** [suggestion] is where a filed row went, or the best guess for one left for the user. *)
 

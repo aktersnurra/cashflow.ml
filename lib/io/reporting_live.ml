@@ -30,7 +30,10 @@ let load_cashflow db access request =
       let transfers = Transfer_query.between db access ~first:(Cashflow_request.first request) ~last:(Cashflow_request.last request) in
       let book = Analytics.make_book ~accounts ~owners:(Reporting_context.owners context) ~currency:(Reporting_context.currency context) in
       let reconciled_through = Reconciliation.reconciled_through db ~accounts ~book in
-      Ok { Cashflow_facts.accounts; transfers; reconciled_through }))
+      let imported_through =
+        List.filter_map (fun (info : Account_info.t) -> Option.map (fun d -> (info.account.id, d)) (Import_store.imported_through db info.account.id)) accounts
+      in
+      Ok { Cashflow_facts.accounts; transfers; reconciled_through; imported_through }))
 
 (* Imported rows as the money actually moved. A row stays where the bank put it, against a
    suspense account, while triage moves it on with separate transfers that never touch the bank

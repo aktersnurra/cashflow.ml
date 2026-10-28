@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### A month in progress, honestly
+
+- Statements arrive when you upload them, so a pay cycle's figures run only as far as the imports reach. Each
+  cycle now says how far that is (`covered_through`, the earliest last-imported day of your bank accounts and
+  cards) and whether it is `complete`.
+- The Overview no longer calls the cycle so far a result. Right after payday it leads with where the cycle is
+  heading, "Expected by 24 Nov", from what you have so far, the income, bills and household contributions still
+  due (listed under it) and your usual day-to-day spending for the days left, with the forecast's backtested range
+  once there is a year of history. Below it: so far, through which day, and spending so far beside the same day of
+  earlier cycles. Savings rate and "vs. 6-month average" wait until the cycle is complete.
+- A `period_outlook` query (API and MCP) and advisor tool give the same. The advisor is told never to compare a
+  cycle in progress with whole cycles.
+- The month review waits until the statements cover the cycle to its end, and the weekly brief covers the last
+  week the statements cover in full.
+
 ### Categorising by itself
 
 - Filed once by you, a merchant is filed by itself after that: the other rows waiting from it at once, and later

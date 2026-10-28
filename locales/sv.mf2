@@ -661,3 +661,13 @@ advisor.evidence.label_description = Beskrivning
 advisor.evidence.label_status = Status
 advisor.evidence.status_pending = Väntar på att kontoutdraget bekräftar den
 advisor.evidence.status_posted = Bokförs direkt
+
+overview.expected = Väntat till {$date :date}
+overview.likely = Troligen {$low} till {$high}
+overview.so_far = Hittills, till och med {$date :date}: {$amount}
+overview.nothing_yet = Inget importerat för perioden än
+overview.usual_by_now = Spenderat {$spent} hittills; brukar vara {$usual} vid den här dagen
+overview.still_due = Kommer: {$items}
+overview.covered_through = Kontoutdragen täcker perioden till och med {$date :date}
+label.income_so_far = Inkomster hittills
+label.spending_so_far = Utgifter hittills

@@ -232,7 +232,10 @@ let feed ?(narrative = true) (service : Service.t) access =
   | Ok ctx ->
       let current = Insights.current_cycle ctx in
       let previous = Cycle.previous ctx.setting current in
-      if Date.days_between ~first:current.first ~last:today < 10 then (
+      (* Reviewed once the statements cover the cycle to its end: a review of half a cycle (salary in, bills
+         not imported yet) is wrong, and its text is kept. *)
+      let covered = match Insights.covered_through ctx with Some d -> Date.compare previous.last d <= 0 | None -> true in
+      if covered && Date.days_between ~first:current.first ~last:today < 10 then (
         let summary = match Analytics.cashflow_summary (Insights.book ctx) ~cycles:[ previous ] ~reconciled_through:(Insights.reconciled_through ctx) (Insights.transfers ctx ~first:previous.first ~last:previous.last) with [ s ] -> Some s | _ -> None in
         let text =
           if not narrative then None else Option.bind summary (fun summary ->

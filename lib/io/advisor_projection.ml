@@ -46,7 +46,7 @@ let parse_call ~name ~arguments =
     | "recurring" | "goals" -> Some []
     | "forecast" -> Some [ "cycles"; "scenario" ]
     | "propose_set_budget" -> Some [ "category"; "monthly_amount"; "rollover" ]
-    | "inbox_rows" | "categories" -> Some []
+    | "inbox_rows" | "categories" | "period_outlook" -> Some []
     | "propose_categorize" -> Some [ "rows" ]
     | "propose_add_rule" -> Some [ "pattern"; "category"; "direction" ]
     | "bank_accounts" -> Some []
@@ -80,6 +80,7 @@ let parse_call ~name ~arguments =
           | "budget_status" -> T.Budget_status (c, integer f "cycle_offset" 0 (-5) 0)
           | "goals" -> T.Goals c
           | "inbox_rows" -> T.Inbox_rows c
+          | "period_outlook" -> T.Period_outlook c
           | "file_inbox" -> T.File_inbox { keep_on = boolean f "keep_on" }
           | "categories" -> T.Categories c
           | "bank_accounts" -> T.Bank_accounts c
@@ -295,7 +296,7 @@ let refs = function
   | T.Bank_accounts_result xs -> List.map (fun (b : T.bank_account) -> b.account) xs
   | T.Filed_inbox_result { filed; unsure; _ } ->
       List.filter_map (fun (r : T.inbox_row) -> Option.map (fun (a, _, _) -> a) r.suggestion) (filed @ unsure)
-  | T.Cycle_summary_result _ | T.Goals_result _ -> []
+  | T.Cycle_summary_result _ | T.Goals_result _ | T.Period_outlook_result _ -> []
 
 let assumptions (f : Forecast.t) =
   List.map
@@ -347,7 +348,7 @@ let read ?filed (service : Service.t) ~principal ~scope ~aliases ~currency:pinne
                 && s.input.leave_out = []
                 && List.length s.leave_out <= 20
                 && List.length s.input.one_off <= 10
-            | Recurring _ | Goals _ | Propose_budget _ | Inbox_rows _ | Categories _ | Propose_rule _ | Propose_goal _ | Propose_update_goal _ | Propose_category _ | Bank_accounts _ | Propose_entry _ | File_inbox _ -> true
+            | Recurring _ | Goals _ | Propose_budget _ | Inbox_rows _ | Categories _ | Propose_rule _ | Propose_goal _ | Propose_update_goal _ | Propose_category _ | Bank_accounts _ | Propose_entry _ | File_inbox _ | Period_outlook _ -> true
             | Propose_categorize { rows } ->
                 let n = List.length rows in
                 n >= 1 && n <= 20 && List.length (List.sort_uniq String.compare (List.map (fun (r, _) -> T.row_reference_text r) rows)) = n
@@ -359,6 +360,13 @@ let read ?filed (service : Service.t) ~principal ~scope ~aliases ~currency:pinne
               | T.Cycle_summary (_, n) ->
                   let* xs = run (Query.Cashflow_summary (qc, n)) in
                   Ok (T.Cycle_summary_result xs, List.length xs, List.length xs, [])
+              | Period_outlook _ ->
+                  let* o = run (Query.Period_outlook qc) in
+                  Ok
+                    ( T.Period_outlook_result o,
+                      1,
+                      1,
+                      [ "expected is a projection from the recurring payments still due and usual spending, not observed; so_far runs only through covered_through" ] )
               | Category_spending (_, p) ->
                   let* xs = run (Query.Spending_by_category (qc, period p, true)) in
                   let ys =
@@ -1001,6 +1009,9 @@ let display (e : T.evidence) : A.evidence =
           money "Forecast lowest cash" (snd f.lowest);
           { A.label = "Forecast lowest date"; value = A.Date (fst f.lowest) };
         ]
+    | Period_outlook_result o ->
+        [ money "Expected savings this cycle" o.expected; money "Savings so far" (Analytics.savings o.so_far) ]
+        @ (match o.covered_through with Some d -> [ { A.label = "Covered through"; value = A.Date d } ] | None -> [])
     | Filed_inbox_result { filed; unsure; kept_on } ->
         let line (r : T.inbox_row) =
           Date.to_string r.date ^ " · " ^ shorten r.description 60
@@ -1096,6 +1107,8 @@ let model_json ~aliases (e : T.evidence) =
                       ("savings", num x.savings);
                       ("savings_rate_bp", opt (fun n -> `Int n) x.savings_rate_bp);
                       ("reconciled", `Bool x.reconciled);
+                      ("complete", `Bool x.complete);
+                      ("covered_through", opt date x.covered_through);
                     ])
                 xs
           | Category_spending_result xs ->
@@ -1202,6 +1215,32 @@ let model_json ~aliases (e : T.evidence) =
                           r.suggestion );
                     ])
                 rows
+          | Period_outlook_result o ->
+              let flows (f : Analytics.flows) = obj [ ("income", num f.income); ("spending", num f.spending); ("savings", num (Analytics.savings f)) ] in
+              obj
+                [
+                  ("cycle", str (Cycle.label o.cycle));
+                  ("first_day", date o.cycle.first);
+                  ("last_day", date o.cycle.last);
+                  ("complete", `Bool (o.days_covered >= o.days_total));
+                  ("covered_through", opt date o.covered_through);
+                  ("days_covered", `Int o.days_covered);
+                  ("days_total", `Int o.days_total);
+                  ("so_far", flows o.so_far);
+                  ( "usual_by_now",
+                    opt
+                      (fun (u : Outlook.usual) ->
+                        obj [ ("income", num u.income); ("spending", num u.spending); ("savings", num u.savings); ("cycles", `Int u.cycles) ])
+                      o.usual_by_now );
+                  ( "still_due",
+                    arr
+                      (fun (i : Forecast.item) ->
+                        obj [ ("date", date i.date); ("kind", str (Forecast.kind_to_string i.kind)); ("name", str (shorten i.name 80)); ("amount", num i.amount) ])
+                      (take 20 o.still_due) );
+                  ("usual_rest", num o.usual_rest);
+                  ("expected", num o.expected);
+                  ("expected_range", opt (fun (low, high) -> obj [ ("low", num low); ("high", num high) ]) o.expected_range);
+                ]
           | Filed_inbox_result { filed; unsure; kept_on } ->
               let row (r : T.inbox_row) =
                 obj

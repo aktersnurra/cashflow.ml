@@ -63,14 +63,41 @@ let savings flows = flows.income -: flows.spending +: flows.transfers_in -: flow
 let savings_rate_bp flows =
   if Int64.compare flows.income 0L <= 0 then None else Some (Int64.to_int (Int64.div (Int64.mul (savings flows) 10_000L) flows.income))
 
-type cycle_summary = { cycle : Cycle.t; flows : flows; savings : int64; savings_rate_bp : int option; reconciled : bool }
+(* [complete]: the statements cover the whole cycle. A cycle that isn't complete has figures only
+   through [covered_through], and comparing them with whole cycles says nothing: right after
+   payday the salary is in and the bills aren't. *)
+type cycle_summary = {
+  cycle : Cycle.t;
+  flows : flows;
+  savings : int64;
+  savings_rate_bp : int option;
+  reconciled : bool;
+  covered_through : Date.t option;
+  complete : bool;
+}
 
-let cashflow_summary book ~cycles ~reconciled_through transfers =
+(* How far the books are known: the earliest latest-imported day among the scope's bank accounts and
+   cards that statements feed (and have fed), never after today. Anything later is not imported
+   yet, not zero. [None] when no statement has been imported: then only today bounds it. *)
+let covered_through ~(accounts : Account_info.t list) ~owners ~(imported_through : (Account_id.t * Date.t) list) ~today =
+  let fed =
+    List.filter_map
+      (fun (info : Account_info.t) ->
+        if info.details.statement_backed && (not info.account.closed) && List.exists (Owner.equal info.account.owner) owners
+           && (info.account.kind = Asset || info.account.kind = Liability)
+        then List.find_map (fun (id, d) -> if Account_id.equal id info.account.id then Some d else None) imported_through
+        else None)
+      accounts
+  in
+  match fed with [] -> None | d :: rest -> Some (Date.min today (List.fold_left Date.min d rest))
+
+let cashflow_summary ?(covered_through : Date.t option) book ~cycles ~reconciled_through transfers =
   List.map
     (fun (cycle : Cycle.t) ->
       let flows = flows_between book ~first:cycle.first ~last:cycle.last transfers in
       let reconciled = match reconciled_through with Some date -> Date.compare cycle.last date <= 0 | None -> false in
-      { cycle; flows; savings = savings flows; savings_rate_bp = savings_rate_bp flows; reconciled })
+      let complete = match covered_through with Some date -> Date.compare cycle.last date <= 0 | None -> true in
+      { cycle; flows; savings = savings flows; savings_rate_bp = savings_rate_bp flows; reconciled; covered_through; complete })
     cycles
 
 (* Net amount per inside account of one kind over a range, largest first. *)

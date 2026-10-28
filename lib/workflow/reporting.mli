@@ -10,3 +10,10 @@ val forecast :
     the facts once and projects. One-off amounts are decimals in the report's currency, not zero,
     dated from today to the horizon's end, at most 10. Unknown [leave_out] ids are ignored: a
     reload can make one stale. *)
+
+type outlook_report = { context : Reporting_context.t; outlook : Cashflow_core.Outlook.t }
+
+val period_outlook :
+  access:Cashflow_core.Access.t -> scope:Cashflow_core.Analytics.scope -> ?currency:string -> unit -> (outlook_report, Reporting_error.t) result
+(** The current pay cycle as far as the statements reach, set beside the same days of earlier cycles,
+    and where it is heading (Cashflow_core.Outlook). *)

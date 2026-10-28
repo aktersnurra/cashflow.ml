@@ -169,6 +169,8 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
   let offset, set_offset = Bonsai.state 0 graph in
   let scope, set_scope = Bonsai.state "me" graph in
   let summary = Remote.load ~active:visible ~name:"cashflow_summary" ~args:(let%arr scope in `Assoc [ ("scope", `String scope); ("cycles", `Int 13) ]) ~ctx graph in
+  (* The cycle in progress: how far the statements reach and where it is heading. *)
+  let outlook = Remote.load ~active:visible ~name:"period_outlook" ~args:(let%arr scope in `Assoc [ ("scope", `String scope) ]) ~ctx graph in
   let categories =
     Remote.load ~active:visible ~name:"spending_by_category" ~args:(let%arr scope and offset in `Assoc [ ("scope", `String scope); ("cycle_offset", `Int offset) ]) ~ctx graph
   in
@@ -218,7 +220,7 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
       ([body] @ (if eligible then [Ui.div ~cls:"finding-reply" [Ui.button (Msg.advisor_ask locale)
         (Effect.Many [set_captured (Some (finding_key, cards)); on_ask ~finding_key ~scope])]] else [])
        @ if selected then [outlet] else [])) graph in
-  let%arr summary and categories and brief and views and offset and set_offset and scope and set_scope and locale = ctx.locale and session = ctx.session
+  let%arr summary and outlook and categories and brief and views and offset and set_offset and scope and set_scope and locale = ctx.locale and session = ctx.session
   and navigate = ctx.navigate and outlet and selected_finding and visible_cards and advisor_route in
   let cycles = match summary with Loaded json -> J.list (J.field "cycles" json) | Loading | Failed _ -> [] in
   let code = match summary with Loaded json -> J.str ~default:"SEK" (J.field "currency" json) | Loading | Failed _ -> "SEK" in
@@ -244,12 +246,15 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
   in
   let figures (c : J.t) =
     let savings = Fmt.to_float (J.field "savings" c) in
+    (* A cycle the statements don't reach the end of has figures only so far: right after payday the
+       salary is in and the bills aren't. It is never compared with whole cycles. *)
+    let complete = match J.field "complete" c with `Bool b -> b | _ -> true in
     (* Compared only with earlier cycles that had income, and only when there are at least three:
        a comparison with empty months says nothing. *)
     let before = List.filteri cycles ~f:(fun i c -> i < index && i >= index - 6 && Float.(Fmt.to_float (J.field "income" c) > 0.)) in
     let average = if List.is_empty before then 0. else List.sum (module Float) before ~f:(fun c -> Fmt.to_float (J.field "savings" c)) /. Float.of_int (List.length before) in
     let trend =
-      if List.length before < 3 || Float.(abs average < 1.) then Vdom.Node.none
+      if (not complete) || List.length before < 3 || Float.(abs average < 1.) then Vdom.Node.none
       else
         let change = (savings -. average) /. Float.abs average *. 100. in
         Ui.div ~cls:("trend " ^ if Float.(change >= 0.) then "positive" else "negative")
@@ -257,19 +262,51 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
             Ui.span [ Ui.text (Msg.overview_vs_average ~change:(Fmt.percent ~signed:true locale change) locale) ] ]
     in
     let line label value = Ui.div ~cls:"figure-line" [ Ui.span ~cls:"figure-label" [ Ui.text label ]; Ui.span ~cls:"figure-value" [ Ui.text value ] ] in
-    Ui.div ~cls:"panel figures"
-      [ Ui.div ~cls:"figures-main"
+    let note text = Ui.div ~cls:"figure-note" [ Ui.text text ] in
+    let outlook =
+      match outlook with
+      | Loaded o when (not complete) && String.equal (J.str (J.path [ "cycle"; "cycle" ] o)) (J.str (J.field "cycle" c)) -> Some o
+      | _ -> None
+    in
+    let main =
+      match outlook with
+      | Some o ->
+          let still_due =
+            List.take (J.list (J.field "still_due" o)) 3
+            |> List.map ~f:(fun i -> J.str (J.field "name" i) ^ " " ^ Fmt.signed_whole locale ~code (J.field "amount" i))
+          in
+          [ Ui.div ~cls:"figure-label" [ Ui.text (Msg.overview_expected ~date:(Fmt.date_json (J.path [ "cycle"; "last" ] o)) locale) ];
+            Ui.div ~cls:("hero " ^ Fmt.sign_tone (J.field "expected" o)) [ Ui.text (Fmt.signed_whole locale ~code (J.field "expected" o)) ];
+            (match J.field "expected_range" o with
+             | `Null -> Vdom.Node.none
+             | r -> note (Msg.overview_likely ~low:(Fmt.signed_whole locale ~code (J.field "low" r)) ~high:(Fmt.signed_whole locale ~code (J.field "high" r)) locale));
+            (match J.field "covered_through" o with
+             | `Null -> note (Msg.overview_nothing_yet locale)
+             | d -> note (Msg.overview_so_far ~date:(Fmt.date_json d) ~amount:(Fmt.signed_whole locale ~code (J.path [ "so_far"; "savings" ] o)) locale));
+            (* Only once there is spending to set beside: on payday both are nothing. *)
+            (match J.field "usual_by_now" o with
+             | `Null -> Vdom.Node.none
+             | u when Float.(Fmt.to_float (J.field "spending" u) = 0. && Fmt.to_float (J.path [ "so_far"; "spending" ] o) = 0.) -> Vdom.Node.none
+             | u -> note (Msg.overview_usual_by_now ~spent:(whole (J.path [ "so_far"; "spending" ] o)) ~usual:(whole (J.field "spending" u)) locale));
+            (if List.is_empty still_due then Vdom.Node.none else note (Msg.overview_still_due ~items:(String.concat ~sep:" · " still_due) locale)) ]
+      | None ->
           [ Ui.div ~cls:"figure-label" [ Ui.text (Msg.overview_net_savings locale) ];
             Ui.div ~cls:("hero " ^ Fmt.sign_tone (J.field "savings" c)) [ Ui.text (Fmt.signed_whole locale ~code (J.field "savings" c)) ];
             trend;
-            (if J.bool (J.field "reconciled" c) then Vdom.Node.none else Ui.div ~cls:"provisional" [ Ui.text (Msg.label_provisional locale) ]) ];
+            (match complete, J.field "covered_through" c with
+             | false, (`String _ as d) -> note (Msg.overview_covered_through ~date:(Fmt.date_json d) locale)
+             | _ -> Vdom.Node.none) ]
+    in
+    Ui.div ~cls:"panel figures"
+      [ Ui.div ~cls:"figures-main"
+          (main @ [ (if J.bool (J.field "reconciled" c) then Vdom.Node.none else Ui.div ~cls:"provisional" [ Ui.text (Msg.label_provisional locale) ]) ]);
         Ui.div ~cls:"figures-side"
-          [ line (Msg.label_income locale) (whole (J.field "income" c));
-            line (Msg.overview_expenses locale) (whole (J.field "spending" c));
+          [ line (if complete then Msg.label_income locale else Msg.label_income_so_far locale) (whole (J.field "income" c));
+            line (if complete then Msg.overview_expenses locale else Msg.label_spending_so_far locale) (whole (J.field "spending" c));
             line (Msg.label_savings_rate locale)
               (match J.str_opt (J.field "savings_rate" c) with
-              | Some rate -> Fmt.percent locale (Option.value (Float.of_string_opt (String.chop_suffix_if_exists rate ~suffix:"%")) ~default:0.)
-              | None -> "–") ] ]
+              | Some rate when complete -> Fmt.percent locale (Option.value (Float.of_string_opt (String.chop_suffix_if_exists rate ~suffix:"%")) ~default:0.)
+              | _ -> "–") ] ]
   in
   let flow (c : J.t) categories_json =
     let left, right = Flow.nodes ~locale ~code c categories_json in

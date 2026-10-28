@@ -98,7 +98,7 @@ let test_month_review_in_the_readers_language () =
   let alice = speak_swedish service (sign_in service "alice") in
   let ctx = ok (Insights.context service alice ~scope:Me ()) in
   let cycle = Insights.current_cycle ctx in
-  let summary : Analytics.cycle_summary = { cycle; flows = Analytics.zero_flows; savings = 0L; savings_rate_bp = None; reconciled = false } in
+  let summary : Analytics.cycle_summary = { cycle; flows = Analytics.zero_flows; savings = 0L; savings_rate_bp = None; reconciled = false; covered_through = None; complete = true } in
   let groceries = List.find (fun (i : Account_info.t) -> i.account.name = "Groceries") (Service.accounts service alice) in
   ignore (Llm_features.month_summary service alice ~cycle ~currency:ctx.currency ~summary ~previous:None ~top:[ { category = groceries; total = 1_000_00L; previous = None } ]);
   let prompt = List.hd !asked in

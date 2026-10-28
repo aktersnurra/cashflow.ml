@@ -21,7 +21,11 @@ let safety_instructions =
    updates rather than combining inconsistent totals. Samples/truncation are not complete explanations. Only supplied \
    evidence is verified; unmatched evidence references are plain text, not authorized links. History selection \
    metadata states which whole turns were omitted; never invent or silently summarize missing finances. A cycle label only names a pay \
-   cycle and may differ from the calendar month: describe periods by their first_day and last_day. A tool error \
+   cycle and may differ from the calendar month: describe periods by their first_day and last_day. Statements arrive \
+   irregularly: a cycle with complete false has figures only through covered_through (later days are not imported yet, \
+   not zero), and right after payday they show the salary but not the bills. Never compare such a cycle's totals or \
+   savings rate with whole cycles, or call them the month's result; for how it is going, use period_outlook (the same \
+   days of earlier cycles, what is still due, and the expected result, which is a projection). A tool error \
    is not evidence: correct its arguments within the remaining limits or explain the limitation; never claim it succeeded."
 
 (* Voice only. It never outranks the rules above or changes a figure. *)

@@ -21,7 +21,7 @@ let foreign_bank = account 15 (Owner.User uid) Asset eur
 let foreign_expense = account 16 (Owner.User uid) Expense eur
 let transfer n (debit : Account_info.t) (credit : Account_info.t) amount code : Transfer.t =
  { id=Option.get (Transfer_id.of_string (id n)); scope=debit.account.owner; key=ok (Idempotency_key.of_string (id n)); debit_account_id=debit.account.id; credit_account_id=credit.account.id; amount=Option.get (Amount.of_int64 amount); kind=Single; code; memo=Transfer.empty_memo; value_date=date "2026-10-01"; reverses=None; recorded_at=now }
-let facts : Cashflow_facts.t = { accounts=[checking;salary;groceries;shared;housing;foreign_bank;foreign_expense]; transfers=[transfer 20 checking salary 3000000L Income; transfer 21 groceries checking 411900L Purchase; transfer 22 shared checking 1000000L Contribution; transfer 23 housing shared 900000L Purchase; transfer 24 foreign_expense foreign_bank 999999L Purchase]; reconciled_through=None }
+let facts : Cashflow_facts.t = { accounts=[checking;salary;groceries;shared;housing;foreign_bank;foreign_expense]; transfers=[transfer 20 checking salary 3000000L Income; transfer 21 groceries checking 411900L Purchase; transfer 22 shared checking 1000000L Contribution; transfer 23 housing shared 900000L Purchase; transfer 24 foreign_expense foreign_bank 999999L Purchase]; reconciled_through=None; imported_through=[] }
 let run ?(access=access) ?(scope=Analytics.Me) ?currency ?(cycles=1) ?(facts=facts) ?(clock=now) () =
  let events = ref [] in
  let handler = { Effects.handle = (fun (type a) (op : a Effect_ops.t) : a -> match op with
