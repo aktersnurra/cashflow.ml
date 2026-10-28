@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### The advisor can propose changing a savings goal
+
+- Ask the advisor to raise a goal's target, move its date, change the monthly saving or rename it. The card names the goal
+  and shows each new value beside the old one; nothing changes until you click Apply, and Undo puts the goal back unless
+  you have changed it since. A change is refused when the goal is no longer as it was proposed against.
+- To say which goal, the advisor is now shown your goals' names (one line each) with a reference. Until now it saw only
+  their figures.
+  
 ### A faster Accounts page
 
 - The Accounts page no longer reads every transaction you have ever had to draw the net-worth figure: the database adds

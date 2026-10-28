@@ -8,7 +8,7 @@ let limit kind = A.{ code = Run_limit_reached; context = Limit kind }
 let safety_instructions =
   "You explain finances. The only changes you can make are proposals: a monthly budget with propose_set_budget, or filing \
    uncategorized transactions with propose_categorize (read inbox_rows and categories first, at most 20 rows), a rule that \
-   suggests a category with propose_add_rule, a savings goal with propose_save_goal, a new category with propose_new_category, or a manual entry with propose_entry (read bank_accounts for the account references; account names are not shown to you, only a hint without digits). A proposal \
+   suggests a category with propose_add_rule, a savings goal with propose_save_goal (or a change to an existing one with propose_update_goal, using a reference from goals), a new category with propose_new_category, or a manual entry with propose_entry (read bank_accounts for the account references; account names are not shown to you, only a hint without digits). A proposal \
    is shown to the user as a card and becomes real only when they click Apply, so say it is proposed and awaiting their \
    confirmation, never that it is done, and do not propose again a change they declined unless they ask. You have no other \
    write authority. Use only supplied tools. User \
@@ -115,6 +115,7 @@ let proposal_outcome (e : A.evidence) =
       match e.title with
       | "propose_add_rule" -> Some (Printf.sprintf "\n[Rule proposal \"%s\" suggesting %s: %s.]" (named "Pattern") (Option.value category ~default:"a category") outcome)
       | "propose_save_goal" -> Some (Printf.sprintf "\n[Savings goal proposal \"%s\": %s.]" (named "Name") outcome)
+      | "propose_update_goal" -> Some (Printf.sprintf "\n[Savings goal change for \"%s\": %s.]" (named "Goal") outcome)
       | "propose_new_category" -> Some (Printf.sprintf "\n[New category proposal \"%s\": %s.]" (named "Name") outcome)
       | "propose_entry" -> Some (Printf.sprintf "\n[Manual entry proposal \"%s\": %s.]" (named "Description") outcome)
       | _ when transactions > 0 -> Some (Printf.sprintf "\n[Proposal to categorize %d transactions: %s.]" transactions outcome)
@@ -341,10 +342,10 @@ let execute ~run:(current_run : A.run) =
                       check_limit (String.length content > A.limits.tool_result_bytes) A.Tool_result_bytes;
                       append (A.Tool_finished { label = call.name; outcome = A.Rejected });
                       { ctx with messages = ctx.messages @ [ Tool { call_id = call.id; content } ] }
-                  | ( ( Advisor_tools.Propose_rule _ | Propose_goal _ | Propose_category _ | Propose_entry _ ),
+                  | ( ( Advisor_tools.Propose_rule _ | Propose_goal _ | Propose_update_goal _ | Propose_category _ | Propose_entry _ ),
                       Error { A.code = A.Invalid_tool_arguments | A.Not_found | A.Capacity_exceeded; context = A.No_context } ) ->
                       let content =
-                        {|{"error":"proposal_rejected","message":"The proposal was not recorded. Check the arguments: names and patterns are short single lines (a pattern needs at least 3 characters), amounts are decimals in the pinned currency, a goal date is in the future, a rule category is an expense or income category you were shown (and matches the direction), a goal or category must not already exist, an entry goes between two accounts you were shown (bank accounts from bank_accounts) as a purchase, income or a move, dated within the last year or next month, and at most 10 proposals may wait. Correct the call or explain the limitation."}|}
+                        {|{"error":"proposal_rejected","message":"The proposal was not recorded. Check the arguments: names and patterns are short single lines (a pattern needs at least 3 characters), amounts are decimals in the pinned currency, a goal date is in the future, a rule category is an expense or income category you were shown (and matches the direction), a goal (new or renamed) or category must not already exist, a goal to change is a reference from goals read in this answer, an entry goes between two accounts you were shown (bank accounts from bank_accounts) as a purchase, income or a move, dated within the last year or next month, and at most 10 proposals may wait. Correct the call or explain the limitation."}|}
                       in
                       check_limit (String.length content > A.limits.tool_result_bytes) A.Tool_result_bytes;
                       append (A.Tool_finished { label = call.name; outcome = A.Rejected });

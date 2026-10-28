@@ -69,6 +69,11 @@ let tool_schemas =
       "target_amount", `Assoc ["type", str "string"; "maxLength", `Int 30; "description", str "Positive decimal in the pinned currency (not minor units), no symbols or separators."];
       "target_date", `Assoc ["type", str "string"; "format", str "date"; "maxLength", `Int 30; "description", str "ISO YYYY-MM-DD, in the future. Optional."];
       "monthly_amount", `Assoc ["type", str "string"; "maxLength", `Int 30; "description", str "Planned monthly saving, non-negative decimal in the pinned currency. Optional."]] in
+  let propose_update_goal = propose "propose_update_goal" "Propose changing an existing savings goal. Use a goal reference from goals, and give only the fields that change; fields left out stay as they are (a date or monthly saving cannot be removed this way)."
+    ["goal"] ["goal", reference "goal_"; "name", string 60;
+      "target_amount", `Assoc ["type", str "string"; "maxLength", `Int 30; "description", str "New target, positive decimal in the pinned currency (not minor units), no symbols or separators."];
+      "target_date", `Assoc ["type", str "string"; "format", str "date"; "maxLength", `Int 30; "description", str "New ISO YYYY-MM-DD target date, in the future."];
+      "monthly_amount", `Assoc ["type", str "string"; "maxLength", `Int 30; "description", str "New planned monthly saving, non-negative decimal in the pinned currency."]] in
   let propose_entry = propose "propose_entry" "Propose a manual entry: a purchase (bank account to expense category), income (income category to bank account) or a move between two of the user's own accounts. Use account references from bank_accounts and categories."
     ["from_account"; "to_account"; "amount"; "description"] ["from_account", reference "account_"; "to_account", reference "account_";
       "amount", `Assoc ["type", str "string"; "maxLength", `Int 30; "description", str "Positive decimal in the pinned currency (not minor units), no symbols or separators."];
@@ -92,7 +97,7 @@ let tool_schemas =
      "recurring", [], []; "budget_status", [], [offset]; "goals", [], [];
      "inbox_rows", [], []; "categories", [], []; "bank_accounts", [], [];
      "forecast", [], ["cycles", `Assoc ["type", str "integer"; "enum", `List [`Int 1; `Int 3; `Int 6];
-       "description", str "Forecast horizon in months from the current local date: 1, 3 or 6 (default 3). All one-off dates must fit this horizon."]; "scenario", scenario]] @ [propose_budget; propose_categorize; propose_rule; propose_goal; propose_category; propose_entry]
+       "description", str "Forecast horizon in months from the current local date: 1, 3 or 6 (default 3). All one-off dates must fit this horizon."]; "scenario", scenario]] @ [propose_budget; propose_categorize; propose_rule; propose_goal; propose_update_goal; propose_category; propose_entry]
 
 let call_json (c : raw_call) = `Assoc ["id", str c.id; "type", str "function";
   "function", `Assoc ["name", str c.name; "arguments", str c.arguments]]
