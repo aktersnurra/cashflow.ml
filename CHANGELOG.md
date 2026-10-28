@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Closing the inbox's category picker
+
+- A tap or click outside the inbox's category, sharing and pairing pickers closes them without choosing anything. On a
+  phone, which has no Escape key, there was no way out except picking a category.
+
 ### Logos from more websites
 
 - A website link now finds the logo on more sites: icons a page declares without a size (IKEA, Circle K) are tried, and

@@ -193,6 +193,17 @@ fs.writeFileSync(out + '/savings.csv', savings);
     const strip = await page.locator('.section-nav').boundingBox();
     assert.ok(strip.x >= 0 && strip.width <= 390, 'the section strip fits the phone width');
     assert.ok((await page.locator('.section-nav a').first().boundingBox()).x >= 16, 'the strip keeps the page gutter');
+    // A phone has no Escape key: a tap above the category sheet closes it, leaving the row to review.
+    await page.goto(base + '/inbox');
+    const rows = page.locator('.page:visible .list .row');
+    await rows.first().waitFor({ timeout: 10000 });
+    const pending = await rows.count();
+    await page.locator('.page:visible .row.selected .button', { hasText: 'Välj kategori' }).tap();
+    await page.waitForSelector('.overlay .palette', { timeout: 10000 });
+    assert.ok((await page.locator('.overlay .palette').boundingBox()).y > 40, 'the sheet leaves room above it to tap');
+    await page.touchscreen.tap(195, 20);
+    await page.waitForSelector('.overlay', { state: 'detached', timeout: 5000 });
+    assert.equal(await rows.count(), pending, 'closing the sheet categorizes nothing');
   }, { hasTouch: true, isMobile: true });
   await browser.close();
   console.log(errors.length ? 'ERRORS:\n' + errors.join('\n') : 'no browser errors');
