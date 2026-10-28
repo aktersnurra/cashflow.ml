@@ -173,6 +173,13 @@ let count_open_for =
      AND ((a.owner_kind = 'user' AND a.owner_id = ?1) OR (a.owner_kind = 'household' AND a.owner_id = ?2))"
     (text @-> text @-> nil) (one (row (int @-> nil) Fun.id))
 
+let count_suggested_for =
+  stmt
+    "SELECT count(*) FROM inbox_items i JOIN accounts a ON a.id = i.bank_account_id WHERE i.status = 'open' \
+     AND i.suggested_account_id IS NOT NULL \
+     AND ((a.owner_kind = 'user' AND a.owner_id = ?1) OR (a.owner_kind = 'household' AND a.owner_id = ?2))"
+    (text @-> text @-> nil) (one (row (int @-> nil) Fun.id))
+
 let update_item =
   stmt "UPDATE inbox_items SET current_account_id = ?, revision = ?, status = ?, updated_at = ? WHERE transfer_id = ?"
     Codec.(account_id @-> int @-> text @-> time @-> transfer_id @-> nil)
@@ -192,6 +199,7 @@ let add_item db ~now (i : item) =
 let find_item db id = run db item_by_transfer id
 let open_items db access ~limit = let u, h = Transfer_query.scope_params access in run db open_items_for u h limit
 let open_count db access = let u, h = Transfer_query.scope_params access in run db count_open_for u h
+let suggested_count db access = let u, h = Transfer_query.scope_params access in run db count_suggested_for u h
 let save_item db ~now (i : item) = run db update_item i.current_account_id i.revision i.status now i.transfer_id
 let history db owner merchant = run db history_for merchant (Codec.owner_kind owner) (Codec.owner_id owner)
 

@@ -79,7 +79,13 @@ fs.writeFileSync(out + '/savings.csv', savings);
     for (const [label, file] of [['Plan', '08-budgets'], ['Overview', '09-home'], ['Household', '11-household'], ['Settings', '10-settings']]) {
       await page.click(`.sidebar >> text=${label}`);
       await page.waitForTimeout(800);
-      if (label === 'Overview') assert.ok(feedCalls > feedBefore, 'Home reloads when it is shown again');
+      if (label === 'Overview') {
+        assert.ok(feedCalls > feedBefore, 'Home reloads when it is shown again');
+        // None of these rows has a merchant seen before, so the inbox card promises no suggestions.
+        const inboxCard = page.locator('.page:visible .card', { hasText: /transactions? to categorize/ });
+        await inboxCard.waitFor({ timeout: 10000 });
+        assert.equal(await inboxCard.locator('.muted').count(), 0, 'no suggestions, no line about them');
+      }
       await page.screenshot({ path: `${out}/${file}.png`, fullPage: true });
     }
     // Forecast: one imported month has no recurring payments yet, so Upcoming says so; a one-off

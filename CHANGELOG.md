@@ -12,6 +12,9 @@
 - The selected inbox row's actions run under it at full width, so on a phone they fit on one line instead of
   wrapping beside the amount.
 - English uses US spelling throughout: "categorize" and "Uncategorized" (some messages said "categorise").
+- Overview's inbox card says how many rows have a suggested category, and says nothing about suggestions when none
+  has one (it always said "Suggestions are ready"). A changed or new recurring payment's button reads "Got it", for
+  what it does, instead of "Keep".
 
 ### Logos from more websites
 

@@ -29,11 +29,14 @@ type month_review = { reviewed : Cycle.t; review_summary : Analytics.cycle_summa
 
 type unusual = { unusual : Analytics.unusual; unusual_currency : Currency.t; scope : Analytics.scope; explanation : string option }
 
+(* Rows waiting in the inbox, and how many of them have a suggested category. *)
+type inbox = { waiting : int; suggested : int }
+
 type _ kind =
   | Invitation : Household.t kind
   | Reconciliation_mismatch : mismatch kind
   | Import_due : import_due kind
-  | Inbox : int kind
+  | Inbox : inbox kind
   | Month_review : month_review kind
   | Budget_alert : (Analytics.budget_line * Currency.t) kind
   | Shortfall : (Analytics.shortfall * Currency.t) kind
@@ -225,7 +228,9 @@ let feed ?(narrative = true) (service : Service.t) access =
   List.iter (fun (h : Household.t) -> add ~resolvable:false Invitation ("invitation:" ^ Household_id.to_string h.id) h) (Service.invitations service access);
   List.iter (fun (m : mismatch) -> add Reconciliation_mismatch ("mismatch:" ^ m.checkpoint.checkpoint_id) m) (mismatches service access);
   List.iter (fun (d : import_due) -> add Import_due ("import:" ^ Account_id.to_string d.account.account.id ^ ":" ^ Date.to_string today) d) (import_due service access ~today);
-  (match Inbox.count service access with 0 -> () | n -> add ~resolvable:false Inbox "inbox" n);
+  (match Inbox.count service access with
+  | 0 -> ()
+  | waiting -> add ~resolvable:false Inbox "inbox" { waiting; suggested = Inbox.suggested_count service access });
   List.iter (fun (v : Service.transfer_view) -> add Unmatched_entry ("unmatched:" ^ Transfer_id.to_string v.transfer.id) v) (unmatched service access);
   (match Insights.context service access ~scope:Me ~shared () with
   | Error _ -> ()
@@ -353,7 +358,7 @@ let payload_json : type a. a kind -> a -> Yojson.Safe.t =
         [ ("account", Json.account m.account); ("date", Json.date m.checkpoint.on_date); ("statement_balance", Json.money c m.checkpoint.statement_balance);
           ("ledger_balance", Json.money c m.checkpoint.ledger_balance); ("difference", Json.money c (Int64.sub m.checkpoint.statement_balance m.checkpoint.ledger_balance)) ]
   | Import_due, d -> `Assoc [ ("account", Json.account d.account); ("last_import_at", Json.option Json.time d.last_import); ("days", Json.option (fun d -> `Int d) d.days) ]
-  | Inbox, n -> `Assoc [ ("count", `Int n) ]
+  | Inbox, i -> `Assoc [ ("count", `Int i.waiting); ("suggested", `Int i.suggested) ]
   | Month_review, r ->
       `Assoc
         [ ("cycle", Json.cycle r.reviewed);

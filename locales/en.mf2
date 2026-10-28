@@ -97,7 +97,7 @@ action.invite = Invite
 action.create_household = Create household
 action.reverse = Reverse
 action.void = Cancel entry
-action.keep = Keep
+action.acknowledge = Got it
 action.count = Count
 
 command.placeholder = Type a command or search…
@@ -154,7 +154,11 @@ card.inbox.title =
   .match $count
   one {{1 transaction to categorize}}
   * {{{$count} transactions to categorize}}
-card.inbox.body = Suggestions are ready; most take one keystroke.
+card.inbox.body =
+  .input {$suggested :integer}
+  .match $suggested
+  one {{1 has a suggested category.}}
+  * {{{$suggested} have a suggested category.}}
 card.unmatched.title = Not on the statement: {$description}
 card.unmatched.body = You entered {$amount :currency} on {$date :date}, but the bank's statement doesn't show it.
 card.review.title = How {$month} went

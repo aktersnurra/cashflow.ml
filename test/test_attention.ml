@@ -171,6 +171,23 @@ let test_shared_load_matches_the_database () =
     [ ("2026-02-01", "2026-10-01"); ("2026-03-01", "2026-03-01"); ("2026-03-02", "2026-09-29"); ("2026-09-30", "2026-10-01");
       ("2026-01-01", "2026-12-31"); ("2026-10-02", "2026-10-31"); ("2026-04-01", "2026-04-30") ]
 
+(* The inbox card counts the rows that have a suggestion, so it promises one-keystroke triage only for those. *)
+let test_inbox_card_counts_suggestions () =
+  let service = make_service () in
+  let alice = sign_in service "alice" in
+  let checking = open_checking service alice "Checking" in
+  let import content = ignore (ok_import (Import.confirm (Import.context service alice) { target = Import.Existing checking; file_name = None; content; decisions = [] })) in
+  let counts () =
+    let data = field [ "data" ] (Option.get (card service alice "inbox")) in
+    (Yojson.Safe.Util.to_int (field [ "count" ] data), Yojson.Safe.Util.to_int (field [ "suggested" ] data))
+  in
+  import "Datum;Text;Belopp;Saldo\n2026-10-20;ICA;-250,00;-250,00\n";
+  Alcotest.(check (pair int int)) "nothing to suggest from yet" (1, 0) (counts ());
+  let item = List.hd (Inbox.list service alice ~limit:10) in
+  ignore (ok (Inbox.categorize service alice ~transfer_id:item.item.transfer_id ~category_id:(account_named service alice "Groceries") ()));
+  import "Datum;Text;Belopp;Saldo\n2026-10-22;ICA;-120,00;-370,00\n2026-10-23;SPOTIFY;-119,00;-489,00\n";
+  Alcotest.(check (pair int int)) "ICA again has a suggestion, Spotify none" (2, 1) (counts ())
+
 let () =
   Alcotest.run "attention"
     [ ( "feed",
@@ -180,4 +197,5 @@ let () =
           Alcotest.test_case "unusual spending" `Quick test_unusual_spending;
           Alcotest.test_case "short before payday" `Quick test_shortfall_before_payday;
           Alcotest.test_case "goal cards in each currency" `Quick test_goal_cards_in_each_currency;
-          Alcotest.test_case "shared load matches the database" `Quick test_shared_load_matches_the_database ] ) ]
+          Alcotest.test_case "shared load matches the database" `Quick test_shared_load_matches_the_database;
+          Alcotest.test_case "inbox card counts suggestions" `Quick test_inbox_card_counts_suggestions ] ) ]

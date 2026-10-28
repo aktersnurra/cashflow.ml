@@ -96,7 +96,7 @@ action.invite = Bjud in
 action.create_household = Skapa hushåll
 action.reverse = Återför
 action.void = Stryk posten
-action.keep = Behåll
+action.acknowledge = Uppfattat
 action.count = Räkna
 
 command.placeholder = Skriv ett kommando eller sök…
@@ -153,7 +153,11 @@ card.inbox.title =
   .match $count
   one {{1 transaktion att kategorisera}}
   * {{{$count} transaktioner att kategorisera}}
-card.inbox.body = Förslagen är klara; de flesta tar en knapptryckning.
+card.inbox.body =
+  .input {$suggested :integer}
+  .match $suggested
+  one {{1 har ett förslag på kategori.}}
+  * {{{$suggested} har ett förslag på kategori.}}
 card.unmatched.title = Inte på kontoutdraget: {$description}
 card.unmatched.body = Du lade in {$amount :currency} den {$date :date}, men bankens kontoutdrag visar den inte.
 card.review.title = Så gick {$month}

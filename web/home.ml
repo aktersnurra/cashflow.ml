@@ -50,7 +50,7 @@ let card_view ~(ctx : Ctx.t) (key : string Bonsai.t) (card : J.t Bonsai.t) graph
         ~actions:[ later ] ()
   | "inbox" ->
       Ui.card ~tone:"accent" ~title:(Msg.card_inbox_title ~count:(J.int (J.field "count" data)) locale)
-        ~body:[ Ui.muted (Msg.card_inbox_body locale) ]
+        ~body:(match J.int (J.field "suggested" data) with 0 -> [] | suggested -> [ Ui.muted (Msg.card_inbox_body ~suggested locale) ])
         ~actions:[ Ui.button ~kind:"primary" (Msg.action_review locale) (navigate Route.Inbox) ] ()
   | "unmatched_entry" ->
       let t = J.field "transaction" data in
@@ -130,7 +130,7 @@ let card_view ~(ctx : Ctx.t) (key : string Bonsai.t) (card : J.t Bonsai.t) graph
           (if J.bool (J.field "price_changed" data) then
              Msg.card_recurring_changed ~merchant ~previous:(money (J.field "previous_amount" data)) ~last:(money (J.field "last_amount" data)) locale
            else Msg.card_recurring_new ~cadence:(J.str (J.field "cadence" data)) ~merchant locale)
-        ~actions:[ Ui.button (Msg.action_keep locale) (after (act ~key:card_key ~action:"resolve")); later ] ()
+        ~actions:[ Ui.button (Msg.action_acknowledge locale) (after (act ~key:card_key ~action:"resolve")); later ] ()
   | "overview" ->
       let summary = J.field "summary" data in
       let code = J.str ~default:currency (J.field "currency" data) in

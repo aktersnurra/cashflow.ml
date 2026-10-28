@@ -35,6 +35,7 @@ let list (service : Service.t) access ~limit =
   List.filter_map (fun item -> Result.to_option (view_item service access item)) (Import_store.open_items service.db access ~limit)
 
 let count (service : Service.t) access = Import_store.open_count service.db access
+let suggested_count (service : Service.t) access = Import_store.suggested_count service.db access
 
 let find_open (service : Service.t) access ?(paired = false) transfer_id =
   match Import_store.find_item service.db transfer_id with
