@@ -163,6 +163,95 @@ let test_weekly_brief_edges () =
   let without = Option.get (Cashflow_io.Weekly_brief.compute plain bob ~write:true) in
   Alcotest.(check bool) "without a model the figures stand alone" true (without.text = None && not without.can_write && without.spending = 250_00L)
 
+(* A household's brief is about the household's own accounts: a member's personal spending is not in it, a stranger gets none,
+   and the model sees figures only, never account names. *)
+let test_weekly_brief_scopes () =
+  let asked = ref [] in
+  let writer : Llm.t = { fake with complete = (fun ?schema:_ ~system:_ ~user () -> asked := user :: !asked; Ok "A week.") } in
+  let service = Service.make ~now:(fun () -> now) ~assistant:writer (Store_sqlite.open_memory ()) in
+  let alice = sign_in service ~admin:true "alice" in
+  let household = ok (Service.create_household service alice ~name:"Home" ~default_currency:"SEK") in
+  let alice = Service.access_for service (Access.user alice) in
+  let bob = sign_in service "bob" in
+  ignore (ok (Service.invite_member service alice ~email:"bob@example.com"));
+  let bob = ok (Service.respond_to_invitation service bob ~household_id:household.id ~accept:true) in
+  let carol = sign_in service "carol" in
+  let shared = open_checking service alice ~owner:(Household household.id) "Shared pot" in
+  let mine = open_checking service alice "Alice private checking" in
+  let spend name from_account category minor =
+    let e = entry name ~from_account ~to_account:category minor in
+    ignore (ok (Service.add_entry service alice { e with value_date = date "2026-10-15" }))
+  in
+  let household_groceries =
+    (List.find (fun (i : Account_info.t) -> i.account.name = "Groceries" && Owner.equal i.account.owner (Household household.id)) (Service.accounts service alice)).account.id
+  in
+  spend "mine" mine (account_named service alice "Groceries") 250_00;
+  spend "ours" shared household_groceries 400_00;
+  let spending ?(scope = Analytics.Me) access = Option.map (fun (b : Cashflow_io.Weekly_brief.t) -> b.spending) (Cashflow_io.Weekly_brief.compute ~scope service access ~write:true) in
+  Alcotest.(check (option int64)) "alice, personal" (Some 250_00L) (spending alice);
+  Alcotest.(check (option int64)) "alice, household" (Some 400_00L) (spending ~scope:Household alice);
+  Alcotest.(check (option int64)) "alice, family" (Some 650_00L) (spending ~scope:Family alice);
+  Alcotest.(check (option int64)) "bob sees the household's, not alice's" (Some 400_00L) (spending ~scope:Household bob);
+  let worded = List.length !asked in
+  Alcotest.(check (option int64)) "bob's family brief leaves out alice's personal spending" (Some 400_00L) (spending ~scope:Family bob);
+  Alcotest.(check int) "and the same figures in another scope are worded on their own" (worded + 1) (List.length !asked);
+  Alcotest.(check (option int64)) "bob has nothing of his own" None (spending bob);
+  Alcotest.(check (option int64)) "a stranger has no household brief" None (spending ~scope:Household carol);
+  Alcotest.(check bool) "each scope was worded on its own figures" true (List.length !asked >= 3);
+  List.iter
+    (fun prompt ->
+      Alcotest.(check bool) "no account names reach the model" false
+        (Str_compat.contains ~sub:"Alice private" prompt || Str_compat.contains ~sub:"Shared pot" prompt))
+    !asked
+
+(* The week is the reader's own: on Monday at UTC+13 it is still Sunday in UTC. *)
+let test_weekly_brief_follows_the_readers_timezone () =
+  let at = Option.get (Ptime.of_date_time ((2026, 10, 18), ((23, 0, 0), 0))) in
+  let service = Service.make ~now:(fun () -> at) (Store_sqlite.open_memory ()) in
+  let in_zone name timezone =
+    let access = sign_in service name in
+    let u = Access.user access in
+    ok (Service.update_settings service access { User.locale = u.locale; timezone; default_currency = u.default_currency; pay_cycle = u.pay_cycle })
+  in
+  let utc = in_zone "utc" "+00:00" and nz = in_zone "nz" "+13:00" in
+  let spend access day =
+    let e = entry ("lunch " ^ day) ~from_account:(open_checking service access "Checking") ~to_account:(account_named service access "Groceries") 100_00 in
+    ignore (ok (Service.add_entry service access { e with value_date = date day }))
+  in
+  spend utc "2026-10-08";
+  spend nz "2026-10-15";
+  let week access = Option.map (fun (b : Cashflow_io.Weekly_brief.t) -> Cashflow_core.Date.to_string b.first) (Cashflow_io.Weekly_brief.compute service access ~write:false) in
+  Alcotest.(check (option string)) "in UTC it is still Sunday, so last week began on the 5th" (Some "2026-10-05") (week utc);
+  Alcotest.(check (option string)) "at +13:00 it is Monday, so last week began on the 12th" (Some "2026-10-12") (week nz)
+
+(* What is coming: recurring payments expected within the next seven days are counted, and only those. *)
+let test_weekly_brief_upcoming () =
+  let service = make_service () in
+  let alice = sign_in service "alice" in
+  let checking = open_checking service alice "Checking" in
+  let pay day description minor =
+    let e = entry (description ^ day) ~from_account:checking ~to_account:(account_named service alice "Subscriptions") minor in
+    ignore (ok (Service.add_entry service alice { e with value_date = date day; memo = { e.memo with description } }))
+  in
+  List.iter (fun day -> pay day "NETFLIX" 129_00) [ "2026-07-23"; "2026-08-23"; "2026-09-23" ];
+  List.iter (fun day -> pay day "GYM" 400_00) [ "2026-06-01"; "2026-07-01"; "2026-08-01"; "2026-09-01" ];
+  pay "2026-10-15" "LUNCH" 50_00;
+  let upcoming () = (Option.get (Cashflow_io.Weekly_brief.compute service alice ~write:false)).upcoming in
+  Alcotest.(check (pair int int64)) "one payment is due this week" (1, 129_00L) (upcoming ());
+  (* The window is today (the 21st) through the 27th, with five days of grace for a bank that is slow to show a payment. *)
+  List.iter (fun (day, count) ->
+      let service = make_service () in
+      let alice = sign_in service "alice" in
+      let checking = open_checking service alice "Checking" in
+      let months = [ "2026-07-"; "2026-08-"; "2026-09-" ] in
+      List.iter (fun m ->
+          let e = entry (m ^ day) ~from_account:checking ~to_account:(account_named service alice "Subscriptions") 100_00 in
+          ignore (ok (Service.add_entry service alice { e with value_date = date (m ^ day); memo = { e.memo with description = "BOUNDARY" } }))) months;
+      let e = entry "other" ~from_account:checking ~to_account:(account_named service alice "Groceries") 10_00 in
+      ignore (ok (Service.add_entry service alice { e with value_date = date "2026-10-15" }));
+      Alcotest.(check int) ("expected on the " ^ day ^ "th of October") count (fst (Option.get (Cashflow_io.Weekly_brief.compute service alice ~write:false)).upcoming))
+    [ ("16", 1); ("15", 0); ("21", 1); ("27", 1); ("28", 0) ]
+
 (* Confirming an import asks the model before it takes the database, never inside the transaction,
    and still applies the suggestion. *)
 let test_no_network_inside_the_import_transaction () =
@@ -331,6 +420,9 @@ let () =
           Alcotest.test_case "month review in the reader's language" `Quick test_month_review_in_the_readers_language;
           Alcotest.test_case "weekly brief" `Quick test_weekly_brief;
           Alcotest.test_case "weekly brief edges" `Quick test_weekly_brief_edges;
+          Alcotest.test_case "weekly brief upcoming" `Quick test_weekly_brief_upcoming;
+          Alcotest.test_case "weekly brief scopes" `Quick test_weekly_brief_scopes;
+          Alcotest.test_case "weekly brief follows the reader's timezone" `Quick test_weekly_brief_follows_the_readers_timezone;
           Alcotest.test_case "no network inside the import transaction" `Quick test_no_network_inside_the_import_transaction;
           Alcotest.test_case "an unknown format read by the assistant" `Quick test_unknown_format_read_by_the_assistant;
           Alcotest.test_case "layout cells outside the file" `Quick test_layout_cells_outside_the_file ] );

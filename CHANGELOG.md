@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### The weekly brief covers households and what is coming
+
+- Home's weekly brief follows the personal, household and family switch: the household's brief is about the household's
+  own accounts, and a member's personal spending is not in it. It also says what recurring payments are expected in the
+  next seven days. The sentences are written a few seconds after the figures stop changing, once per set of figures.
+
 ### The advisor can propose changing a savings goal
 
 - Ask the advisor to raise a goal's target, move its date, change the monthly saving or rename it. The card names the goal

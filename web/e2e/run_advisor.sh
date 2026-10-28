@@ -114,6 +114,7 @@ product command-bar advisor_command_bar.js
 product proposal advisor_proposal.js --privacy-mode propose
 product categorize advisor_categorize.js --privacy-mode propose-categorize
 product goal advisor_goal.js --privacy-mode propose-goal
+product weekly-brief weekly_brief.js --weekly-brief
 product goal-change advisor_goal_change.js --privacy-mode propose-update-goal
 product entry advisor_entry.js --privacy-mode propose-entry
 product presentation advisor_presentation.js

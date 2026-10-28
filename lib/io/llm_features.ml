@@ -323,7 +323,7 @@ let week_summary (service : Service.t) access ~write ~(last : Date.t) ~figures =
           let system =
             Printf.sprintf
               "Write two or three short, plain sentences in %s summarising a household's last week from the figures given: how \
-               spending compares with the week before and which categories explain it. Use only the figures given. No advice, no \
+               spending compares with the week before, which categories explain it. Use only the figures given. No advice, no \
                greetings, no markdown." language
           in
           let result = llm.complete ~system ~user:(Yojson.Safe.to_string figures) () in
