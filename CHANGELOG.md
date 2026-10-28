@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Danger zone: start over with your imports
+
+- Settings has a Danger zone. "Reset my imported data" undoes every statement imported into your accounts, newest first,
+  then deletes what they made: the transactions, their reversals (so also what earlier undos left behind), the inbox,
+  the import list and the stored balances they changed, so statements can be uploaded again from scratch. You type
+  `reset` to confirm. Your accounts, categories, rules, budgets, goals, opening balances and anything you entered by
+  hand stay. A half of a move that lives in the household goes back to its inbox.
+- The household's owner has the same for the household's accounts. A member cannot. It is not offered over MCP.
+- Not built yet: removing a member, handing the household to someone else, and deleting an account.
+
 ### A move filed as spending is still a move
 
 - A move between your own accounts only paired while both rows waited in the inbox. A row filed in a category first

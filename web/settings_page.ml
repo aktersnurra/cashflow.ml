@@ -17,7 +17,9 @@ let page ~(ctx : Ctx.t) ~(advisor : Advisor.controller Bonsai.t) graph =
   let edits, set_edits = Bonsai.state None graph in
   let memory = Advisor_memory.component ~locale:ctx.locale graph in
   let auto_apply = Auto_apply.component ~ctx graph in
-  let%arr advisor and memory and auto_apply and edits and set_edits and session = ctx.session and locale = ctx.locale and changed = ctx.changed and notify = ctx.notify and theme = ctx.theme
+  let word_personal, set_word_personal = Bonsai.state "" graph in
+  let word_household, set_word_household = Bonsai.state "" graph in
+  let%arr advisor and memory and auto_apply and word_personal and set_word_personal and word_household and set_word_household and edits and set_edits and session = ctx.session and locale = ctx.locale and changed = ctx.changed and notify = ctx.notify and theme = ctx.theme
   and set_theme = ctx.set_theme in
   let draft = Option.value edits ~default:(draft_of_session session) in
   let set f = set_edits (Some (f draft)) in
@@ -42,6 +44,18 @@ let page ~(ctx : Ctx.t) ~(advisor : Advisor.controller Bonsai.t) graph =
   in
   let section title rows = Ui.div [ Ui.div ~cls:"section-head" [ Vdom.Node.h2 [ Ui.text title ] ]; Ui.div ~cls:"table" rows ] in
   let name = J.str (J.path [ "user"; "display_name" ] session) in
+  (* Wiping imported data asks for a typed word, and the household's only of its owner. *)
+  let reset ~owner ~word ~set_word label hint =
+    let run =
+      match%bind.Effect Api.run "reset_imports" (`Assoc [ ("owner", `String owner); ("confirm", `String word) ]) with
+      | Ok _ -> Effect.Many [ set_word ""; changed; notify (Msg.settings_danger_done locale) ]
+      | Error message -> notify message
+    in
+    setting ~hint label
+      (Ui.div ~cls:"inline-form"
+         [ Ui.input ~placeholder:(Msg.settings_danger_type locale) ~value:word ~on_input:set_word ();
+           Ui.button ~kind:"danger" ~disabled:(not (String.equal word "reset")) (Msg.settings_danger_button locale) run ])
+  in
   Vdom.Node.main ~attrs:[ Vdom.Attr.class_ "page" ]
     [ Ui.div ~cls:"page-head" [ Vdom.Node.h1 [ Ui.text (Msg.settings_title locale) ] ];
       section (Msg.settings_account locale)
@@ -69,6 +83,9 @@ let page ~(ctx : Ctx.t) ~(advisor : Advisor.controller Bonsai.t) graph =
                ~on_change:(fun v -> set (fun d -> { d with adjustment = v })));
           Ui.div ~cls:"row table-foot" [ Ui.button ~kind:"primary" ~disabled:(Option.is_none edits) (Msg.action_save locale) save ] ];
       auto_apply;
+      section (Msg.settings_danger_title locale)
+        (reset ~owner:"personal" ~word:word_personal ~set_word:set_word_personal (Msg.settings_danger_personal locale) (Msg.settings_danger_personal_hint locale)
+         :: if Ctx.is_owner session then [ reset ~owner:"household" ~word:word_household ~set_word:set_word_household (Msg.settings_danger_household locale) (Msg.settings_danger_household_hint locale) ] else []);
       (* Applies at once and stays on this device, so it needs no Save. *)
       section (Msg.settings_appearance locale)
         [ setting ~hint:(Msg.settings_theme_hint locale) (Msg.settings_theme locale)

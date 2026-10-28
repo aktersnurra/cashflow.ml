@@ -33,7 +33,7 @@
  (name test_import)
  (enabled_if (= %{context_name} default))
  (modules test_import test_service_support)
- (libraries alcotest cashflow_io cashflow_core yojson zipc)
+ (libraries alcotest cashflow_io cashflow_core yojson zipc unix)
  (deps fixtures/logo_64x48.png))
 
 (test

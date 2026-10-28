@@ -21,6 +21,9 @@ module User_id = Cashflow_core.User_id
 
 open Test_service_support
 
+module Ledger = Cashflow_io.Ledger
+module Ledger_sqlite = Ledger.Make (Store_sqlite)
+
 let field path json = List.fold_left (fun json name -> match json with `Assoc fields -> Option.value (List.assoc_opt name fields) ~default:`Null | _ -> `Null) json path
 
 let october =
@@ -463,6 +466,67 @@ let test_reports_after_undo_and_reupload () =
       ("largest_transactions", []); ("runway", []); ("recurring_payments", []); ("forecast", []) ];
   Alcotest.(check (list string)) "reports that differ" [] (List.rev !differing)
 
+(* The danger zone: wiping imported data leaves accounts, categories and settings, takes everything the imports
+   made (also what earlier undos left behind), and puts a partner row from the other scope back in its inbox. *)
+let count_transfers service =
+  Sql.(run service.Service.db (stmt "SELECT count(*) FROM transfers" nil (one (row (int @-> nil) Fun.id))))
+
+let reset service access ?(owner = "personal") ?(confirm = "reset") () =
+  Commands.execute service access ~scopes:[ "ledger:write" ] Commands.reset_imports (`Assoc [ ("owner", `String owner); ("confirm", `String confirm) ])
+
+let test_reset_imports () =
+  let service, alice, _, checking, shared = household_setup () in
+  let ctx = Import.context service alice in
+  let csv = "Datum;Text;Belopp\n2026-10-02;ICA;-300,00\n2026-10-03;TILL HUSHÅLL;-5000,00\n" in
+  (* One import undone and imported again, as when somebody tries until it looks right. *)
+  let first = imported (Import.confirm ctx (request checking csv)) in
+  ignore (ok_import (Import.undo ctx ~batch_id:first.batch.batch_id));
+  ignore (imported (Import.confirm ctx (request checking csv)));
+  ignore (imported (Import.confirm ctx (request shared "Datum;Text;Belopp\n2026-10-03;FRÅN ALICE;5000,00\n")));
+  Alcotest.(check int) "the move paired itself, ICA waits" 1 (Inbox.count service alice);
+  Alcotest.(check bool) "a wrong word does nothing" true (Result.is_error (reset service alice ~confirm:"yes" ()));
+  Alcotest.(check bool) "nothing was touched" true (count_transfers service > 0);
+  let result = ok_import (reset service alice ()) in
+  Alcotest.(check bool) "two imports reset, the undone one too" true (field [ "imports" ] result = `Int 2);
+  Alcotest.(check (list string)) "stored balances are the transfers'" [] (List.map (fun _ -> "differs") (Ledger_sqlite.verify service.db));
+  Alcotest.(check int64) "checking is back to nothing" 0L (balance service alice checking);
+  Alcotest.(check (list string)) "no import is listed" [] (List.map (fun (b : Import_store.batch) -> b.file_name |> Option.value ~default:"") (Import_store.batches service.db ~account_id:checking ~limit:50));
+  (* The household's half of the move is its own import, and waits again for a partner. *)
+  Alcotest.(check int) "the household's row is open again" 1 (Inbox.count service alice);
+  (* And it works again from scratch. *)
+  ignore (imported (Import.confirm ctx (request checking csv)));
+  Alcotest.(check int) "re-uploaded, the move pairs and only ICA waits" 1 (Inbox.count service alice);
+  Alcotest.(check (list string)) "still consistent" [] (List.map (fun _ -> "differs") (Ledger_sqlite.verify service.db))
+
+let test_reset_the_household () =
+  let service, alice, household, _, shared = household_setup () in
+  let bob = sign_in service "bob" in
+  ignore (ok (Service.invite_member service alice ~email:"bob@example.com"));
+  let bob = ok (Service.respond_to_invitation service bob ~household_id:household.id ~accept:true) in
+  let ctx = Import.context service alice in
+  ignore (imported (Import.confirm ctx (request shared "Datum;Text;Belopp\n2026-10-03;COOP;-200,00\n")));
+  Alcotest.(check bool) "a member can't wipe the household's data" true (Result.is_error (reset service bob ~owner:"household" ()));
+  Alcotest.(check int64) "so it is still there" (-200_00L) (balance service alice shared);
+  ignore (ok_import (reset service alice ~owner:"household" ()));
+  Alcotest.(check int64) "the owner wipes it" 0L (balance service alice shared);
+  Alcotest.(check int) "and its inbox" 0 (Inbox.count service alice)
+
+(* Two years of paired moves between two accounts, wiped in one go. *)
+let test_reset_a_long_history () =
+  let service, alice, _, checking, shared = household_setup () in
+  let ctx = Import.context service alice in
+  let rows sign text = String.concat "" (List.init 700 (fun i -> Printf.sprintf "%s;%s;%s%d,00\n" (Date.to_string (Date.add_days (date "2024-01-01") i)) text sign (1000 + i))) in
+  ignore (imported (Import.confirm ctx (request checking ("Datum;Text;Belopp\n" ^ rows "-" "TILL HUSHÅLL"))));
+  ignore (imported (Import.confirm ctx (request shared ("Datum;Text;Belopp\n" ^ rows "" "FRÅN ALICE"))));
+  Alcotest.(check int) "all paired" 0 (Inbox.count service alice);
+  let started = Unix.gettimeofday () in
+  ignore (ok_import (reset service alice ()));
+  Alcotest.(check bool) "in a couple of seconds" true (Unix.gettimeofday () -. started < 5.);
+  Alcotest.(check (list string)) "consistent" [] (List.map (fun _ -> "differs") (Ledger_sqlite.verify service.db));
+  Alcotest.(check int) "the household's 700 rows wait for their partners" 700 (Inbox.count service alice);
+  ignore (ok_import (reset service alice ~owner:"household" ()));
+  Alcotest.(check int) "nothing is left" 0 (count_transfers service)
+
 let sum_of service alice owner =
   List.fold_left (fun acc (i : Account_info.t) -> if Owner.equal i.account.owner owner then acc @ [ (i.account.name, Account.posted_balance i.account) ] else acc) [] (Service.accounts service alice)
   |> List.filter (fun (_, b) -> not (Int64.equal b 0L))
@@ -847,7 +911,7 @@ let shared_csv = statement (fun m -> [ m ^ "-07;FRÅN ALICE;8000,00\n"; m ^ "-12
 
 let moves_setup ?assistant () =
   let service = Service.make ?assistant ~now:(fun () -> now) (Store_sqlite.open_memory ()) in
-  let alice = sign_in service ~admin:true "alice" in
+  let alice = sign_in service "alice" in
   let household = ok (Service.create_household service alice ~name:"Home" ~default_currency:"SEK") in
   let alice = Service.access_for service (Access.user alice) in
   let checking = open_checking service alice ~statement_backed:true "Checking" in
@@ -1005,7 +1069,7 @@ let () =
           Alcotest.test_case "auto-apply threshold" `Quick test_auto_apply_threshold;
           Alcotest.test_case "auto-apply respects owner and currency" `Quick test_auto_apply_respects_owner_and_currency ] );
       ( "inbox",
-        [ Alcotest.test_case "reports after undo and reupload" `Quick test_reports_after_undo_and_reupload; Alcotest.test_case "list after undo and reupload" `Quick test_list_after_undo_and_reupload; Alcotest.test_case "pair and share" `Quick test_pair_and_share; Alcotest.test_case "undo after share" `Quick test_undo_after_share;
+        [ Alcotest.test_case "reports after undo and reupload" `Quick test_reports_after_undo_and_reupload; Alcotest.test_case "list after undo and reupload" `Quick test_list_after_undo_and_reupload; Alcotest.test_case "reset imports" `Quick test_reset_imports; Alcotest.test_case "reset the household" `Quick test_reset_the_household; Alcotest.test_case "reset a long history" `Quick test_reset_a_long_history; Alcotest.test_case "pair and share" `Quick test_pair_and_share; Alcotest.test_case "undo after share" `Quick test_undo_after_share;
           Alcotest.test_case "pairing a contribution" `Quick test_pairing_a_contribution;
           Alcotest.test_case "llm pairs unsure moves" `Quick test_llm_pairs_unsure_moves;
           Alcotest.test_case "pair all moves retroactively" `Quick test_pair_all_moves_retroactively;

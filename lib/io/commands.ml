@@ -665,6 +665,25 @@ let undo_import =
       let* batch = Import.undo (Import.context service access) ~batch_id:id in
       Ok (batch_json batch))
 
+(* Not offered over MCP: wiping data is something a person does on purpose, on the page. *)
+let reset_imports =
+  command ~mcp:false "reset_imports" Write
+    "Danger zone: undo every import into your accounts (or the household's) and delete what they made, so statements can be uploaded again from scratch. Accounts, categories, rules and anything entered by hand stay."
+    ~required:[ "confirm" ]
+    [ string_prop "owner" "personal (default) or household. Only the household's owner may reset the household.";
+      string_prop "confirm" "Must be the word reset." ]
+    (fun service access fields ->
+      let* owner = owner_arg access fields in
+      let* confirm = required_string "confirm" fields in
+      if not (String.equal confirm "reset") then invalid "type the word reset to confirm"
+      else
+        let* () = match owner with Owner.Household _ -> lift (Service.require_owner access) | Owner.User _ -> Ok () in
+        let accounts =
+          List.filter_map (fun (i : Account_info.t) -> if Owner.equal i.account.owner owner then Some i.account.id else None) (Service.accounts service access)
+        in
+        let* summary = Reset.imports (Import.context service access) ~accounts in
+        Ok (`Assoc [ ("imports", `Int summary.imports); ("transfers", `Int summary.transfers) ]))
+
 let list_imports =
   command "list_imports" Read "An account's recent statement imports." ~required:[ "account_id" ] [ string_prop "account_id" "The account." ]
     (fun service access fields ->
@@ -944,7 +963,7 @@ let queries =
 let base =
   [ get_session; list_accounts; open_account; update_account; close_account; set_opening_balance; set_market_value; query_transactions;
     set_merchant_logo; clear_merchant_logo; get_transaction; add_transaction; reverse_transaction; correct_transaction; post_pending; void_pending; list_inbox; categorize; share;
-    pair; pair_all_moves; pair_candidates; accept_candidate; dismiss; identify_statement; import_statement; undo_import; list_imports; reconcile; set_budget; save_goal; earmark;
+    pair; pair_all_moves; pair_candidates; accept_candidate; dismiss; identify_statement; import_statement; undo_import; reset_imports; list_imports; reconcile; set_budget; save_goal; earmark;
     list_rules; add_rule; remove_rule; auto_apply_settings; set_auto_apply; update_settings; respond_to_invitation; leave_household; create_household; invite_member;
     update_household ]
   @ queries
