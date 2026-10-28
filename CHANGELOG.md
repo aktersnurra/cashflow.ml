@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-### The inbox's category picker on a phone
+### Clearer on a phone, and only what's true
 
 - A tap or click outside the inbox's category, sharing and pairing pickers closes them without choosing anything. On a
   phone, which has no Escape key, there was no way out except picking a category.
@@ -20,6 +20,9 @@
 - Amounts in sentences drop a trailing ".00" ("went from SEK 369 to SEK 268") and keep real cents; the income,
   spending and savings figures on Overview's cards are whole, like the figures above them. Lists and forms still show
   every decimal.
+- Typing to the advisor on a phone: the message box sits on top of the keyboard, and the tab bar steps aside while
+  the keyboard is up. Text fields are 16px on phones, so iOS no longer zooms the page in when one takes focus; pinch
+  zoom still works.
 
 ### Logos from more websites
 

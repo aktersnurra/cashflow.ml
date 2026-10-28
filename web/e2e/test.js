@@ -199,6 +199,10 @@ fs.writeFileSync(out + '/savings.csv', savings);
     await page.click('.tabbar >> text=Importera');
     await page.click('.import-manual a');
     await page.waitForSelector('.add-form', { timeout: 10000 });
+    // Below 16px, iOS zooms the page in when a field takes focus.
+    const smallFields = () => page.evaluate(() => [...document.querySelectorAll('input, select, textarea')]
+      .filter(f => f.offsetParent && parseFloat(getComputedStyle(f).fontSize) < 16).map(f => f.outerHTML.slice(0, 80)));
+    assert.deepEqual(await smallFields(), [], 'no field under 16px on the add form');
     await page.click('.tabbar >> text=Pengar');
     await page.waitForSelector('.section-nav');
     const strip = await page.locator('.section-nav').boundingBox();
@@ -222,6 +226,7 @@ fs.writeFileSync(out + '/savings.csv', savings);
     await page.locator('.page:visible .row.selected .button', { hasText: 'Välj kategori' }).tap();
     await page.waitForSelector('.overlay .palette', { timeout: 10000 });
     assert.equal(await page.evaluate(() => document.activeElement.matches('.palette input')), false, 'no keyboard on open');
+    assert.deepEqual(await smallFields(), [], 'no field under 16px in the picker');
     // Without typing, every category must be reachable: the last one scrolls into reach.
     assert.ok(await page.locator('.palette .row').count() > 12, 'the list is not cut short at twelve');
     const last = page.locator('.palette .row').last();

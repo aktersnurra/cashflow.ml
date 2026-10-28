@@ -116,6 +116,19 @@ const markdown = '# A plan for February\n\nSet aside **6,250.00 SEK** each month
   assert.equal((await chat.evaluate(el=>el.scrollHeight>el.clientHeight+1)),false);
   await page.screenshot({path:output+'/claude-chat-mobile.png',fullPage:true});
   await page.screenshot({path:output+'/claude-chat-mobile-viewport.png'});
+  // Typing on a phone: no iOS focus zoom, the keyboard takes the tab bar's place and the composer sits on top of it.
+  // A visual viewport cut to 500px stands in for an iOS keyboard, which only shrinks that viewport.
+  await composer.focus();
+  assert.ok(parseFloat(await composer.evaluate(el=>getComputedStyle(el).fontSize))>=16,'the composer is at least 16px');
+  assert.equal(await page.locator('.tabbar').isVisible(),false,'no tab bar while typing');
+  await page.evaluate(()=>{Object.defineProperty(visualViewport,'height',{configurable:true,get:()=>500});visualViewport.dispatchEvent(new Event('resize'));window.scrollTo(0,0);});
+  await page.waitForTimeout(50);
+  const onKeyboard=await page.locator('.advisor-composer-area').boundingBox();
+  assert.ok(Math.abs(onKeyboard.y+onKeyboard.height-492)<=2,'the composer sits on the keyboard: '+JSON.stringify(onKeyboard));
+  await page.screenshot({path:output+'/claude-chat-mobile-keyboard.png'});
+  await page.evaluate(()=>{delete visualViewport.height;visualViewport.dispatchEvent(new Event('resize'));});
+  await composer.blur();
+  assert.equal(await page.locator('.tabbar').isVisible(),true,'the tab bar is back after typing');
   // Real browser form behavior, not a direct reducer invocation.
   await composer.fill('');
   await page.waitForFunction(()=>document.querySelector('button[aria-label="Send"]')?.disabled===true);
