@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Logos from more websites
+
+- A website link now finds the logo on more sites: icons a page declares without a size (IKEA, Circle K) are tried, and
+  SVG logos are accepted (Lidl, Willys). An SVG is cleaned before it is stored, keeping only the drawing (no scripts,
+  event handlers or links to anything outside the file), and served so that it can load and run nothing.
+
 ### Starter categories in each reader's language
 
 - The starter categories (Groceries, Housing, Uncategorized...) are shown in each person's own language, and changing

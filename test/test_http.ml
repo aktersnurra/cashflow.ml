@@ -365,12 +365,37 @@ let test_private_logos () =
   ignore (Service.leave_household deps.service member);
   Alcotest.(check int) "left household" 404 (member_fetch ()).status
 
+(* An SVG opened at its own URL is a document of this origin: it is served only in its cleaned form, sandboxed. *)
+let test_svg_logos () =
+  let deps = deps () in
+  let alice = sign_in deps.service "alice" in
+  let owner = Access.personal alice in
+  let save key (image : Logo_fetch.image) = Sql.transaction deps.service.db (fun () ->
+    let id = Merchant_logo_store.save_blob deps.service.db now image in
+    Merchant_logo_store.put deps.service.db owner key {source=User; status=Resolved; website=None; logo_id=Some id; confidence=None; resolved_at=now}; id) in
+  let fetch id = Http_server.handle deps (request ~headers:["authorization", "Bearer alice-token"] ("/api/logos/" ^ string_of_int id)) in
+  let svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle r='8' onclick='alert(1)'/></svg>" in
+  let image = Logo_fetch.fetch Logo_fetch.{with_request=(fun f -> f ()); resolve=(fun ~host:_ -> Ok ["8.8.8.8"]);
+    get=(fun ~uri:_ ~address:_ ~max_bytes:_ -> Ok {status=200; headers=[]; body=svg})} "shop.com/logo.svg" |> Result.get_ok in
+  let served = fetch (save "shop" image) in
+  Alcotest.(check int) "a 16 px SVG is served" 200 served.status;
+  Alcotest.(check (option string)) "type" (Some "image/svg+xml") (header served "content-type");
+  Alcotest.(check string) "cleaned bytes" (Logo_fetch.bytes image) served.body;
+  Alcotest.(check bool) "sandboxed, loads nothing" true
+    (List.exists (fun csp -> Str_compat.contains ~sub:"default-src 'none'" csp && Str_compat.contains ~sub:"sandbox" csp)
+       (headers_named served "content-security-policy"));
+  let id = save "raw" image in
+  Sql.exec_script deps.service.db
+    (Printf.sprintf "UPDATE logos SET bytes = CAST('%s' AS BLOB) WHERE id = %d" (Str_compat.replace_all ~sub:"'" ~by:"''" svg) id);
+  Alcotest.(check int) "an SVG stored without cleaning is not served" 404 (fetch id).status
+
 let () =
   Alcotest.run "http"
     [ ( "routes",
         [ Alcotest.test_case "reporting envelopes" `Quick test_reporting_envelopes;
           Alcotest.test_case "unversioned assets revalidate" `Quick test_unversioned_assets_revalidate;
           Alcotest.test_case "private logos" `Quick test_private_logos;
+          Alcotest.test_case "SVG logos" `Quick test_svg_logos;
           Alcotest.test_case "health and metadata" `Quick test_health_and_metadata;
           Alcotest.test_case "mcp requires a token" `Quick test_mcp_requires_a_token; Alcotest.test_case "mcp tools" `Quick test_mcp_tools;
           Alcotest.test_case "mcp scopes" `Quick test_mcp_scopes; Alcotest.test_case "web login and csrf" `Quick test_web_login_and_csrf;

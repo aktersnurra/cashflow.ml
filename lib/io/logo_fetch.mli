@@ -15,5 +15,6 @@ val width : image -> int
 val height : image -> int
 val source_url : image -> string
 val dimensions : string -> (string * int * int) option
+val stored : string -> (string * int * int) option
 val hostname : string -> bool
 val fetch : network -> string -> (image, error) result

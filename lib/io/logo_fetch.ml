@@ -118,6 +118,23 @@ let dimensions s =
     in jpeg 2
   else None
 
+let svg = "image/svg+xml"
+
+(* A raster image as it is, or an SVG in its cleaned form. *)
+let identify body =
+  match dimensions body with
+  | Some (kind, width, height) -> Some (body, kind, width, height)
+  | None -> Option.map (fun (bytes, width, height) -> (bytes, svg, width, height)) (Svg_logo.clean body)
+
+(* What stored bytes are, if they are still fit to serve: a raster image, or an SVG already in its cleaned form. *)
+let stored bytes =
+  match dimensions bytes with
+  | Some _ as raster -> raster
+  | None -> (
+      match Svg_logo.clean bytes with
+      | Some (clean, width, height) when String.equal clean bytes -> Some (svg, width, height)
+      | _ -> None)
+
 let attribute name tag =
   let pattern = Str.regexp_case_fold
     ("[ \t\r\n]" ^ name ^ "[ \t\r\n]*=[ \t\r\n]*\\(\"\\([^\"]*\\)\"\\|'\\([^']*\\)'\\|\\([^ \t\r\n>]+\\)\\)") in
@@ -149,13 +166,14 @@ let icons uri html =
                   let square = try Scanf.sscanf token "%dx%d" (fun w h -> if w = h then w else 0)
                     with _ -> 0 in
                   max largest square) 0 (html_words s) in
-            if not apple && size < 64 then acc
+            (* An icon without a usable size is still a candidate, after the sized ones; its bytes are checked. *)
+            if not apple && size > 0 && size < 64 then acc
             else ((if apple then 0 else 1), -size, Uri.resolve "https" uri (Uri.of_string href)) :: acc
         | _ -> acc in
       collect next acc
     with Not_found -> acc
   in
-  let ranked = List.sort (fun (a,b,_) (c,d,_) -> compare (a,b) (c,d)) (collect 0 []) in
+  let ranked = List.stable_sort (fun (a,b,_) (c,d,_) -> compare (a,b) (c,d)) (List.rev (collect 0 [])) in
   let seen = Hashtbl.create 8 in
   let rec select remaining acc = function
     | [] -> List.rev acc
@@ -214,11 +232,12 @@ let fetch network link =
   in
   let verified_image final response =
     if String.length response.body > 262_144 then Error Oversized_body
-    else match dimensions response.body with
+    else match identify response.body with
     | None -> Error Unsupported_image
-    | Some (kind, width, height) ->
-        if width < 32 || height < 32 then Error Too_small_image
-        else Ok { bytes = response.body; content_type = kind; width; height; source_url = Uri.to_string final }
+    | Some (bytes, kind, width, height) ->
+        (* An SVG scales, so only a raster image has a minimum size. *)
+        if kind <> svg && (width < 32 || height < 32) then Error Too_small_image
+        else Ok { bytes; content_type = kind; width; height; source_url = Uri.to_string final }
   in
   let image uri =
     let* final, response = request 0 262_144 uri in
@@ -230,7 +249,7 @@ let fetch network link =
   if direct then image initial
   else
     let* page_uri, page = request ~prefix_ok:true 0 524_288 initial in
-    match dimensions page.body with
+    match identify page.body with
     | Some _ -> verified_image page_uri page
     | None ->
         let rec candidates last = function
