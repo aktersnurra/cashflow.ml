@@ -833,6 +833,155 @@ let test_new_currency_uncategorized_is_stored_in_english () =
   ignore (imported (Import.confirm (Import.context service alice) (request euro "Bokföringsdag;Text;Belopp;Saldo\n2026-11-10;SPOTIFY;-119,00;9 393,00\n")));
   ignore (account_named service alice "Uncategorized (EUR)")
 
+(* Moves between a person's own accounts, imported every way a person might: income is the salary, spending is the
+   purchases, and each move nets out, in every scope. Alice is paid into checking, keeps some in savings and pays her
+   part of the household's costs into the shared account, every month. *)
+let months = [ "2026-05"; "2026-06"; "2026-07"; "2026-08"; "2026-09"; "2026-10" ]
+let statement rows = "Datum;Text;Belopp\n" ^ String.concat "" (List.concat_map rows months)
+
+let checking_csv =
+  statement (fun m -> [ m ^ "-05;LÖN;30000,00\n"; m ^ "-05;TILL SPARKONTO;-3000,00\n"; m ^ "-06;TILL HUSHÅLL;-8000,00\n"; m ^ "-10;ICA;-450,00\n" ])
+
+let savings_csv = statement (fun m -> [ m ^ "-05;FRÅN LÖNEKONTO;3000,00\n" ])
+let shared_csv = statement (fun m -> [ m ^ "-07;FRÅN ALICE;8000,00\n"; m ^ "-12;COOP;-2000,00\n" ])
+
+let moves_setup ?assistant () =
+  let service = Service.make ?assistant ~now:(fun () -> now) (Store_sqlite.open_memory ()) in
+  let alice = sign_in service ~admin:true "alice" in
+  let household = ok (Service.create_household service alice ~name:"Home" ~default_currency:"SEK") in
+  let alice = Service.access_for service (Access.user alice) in
+  let checking = open_checking service alice ~statement_backed:true "Checking" in
+  let savings = open_checking service alice ~statement_backed:true "Savings" in
+  let shared = open_checking service alice ~owner:(Household household.id) ~statement_backed:true "Shared" in
+  (service, alice, checking, savings, shared)
+
+let import_into service alice account csv = ignore (imported (Import.confirm (Import.context service alice) (request account csv)))
+
+let personal service alice name =
+  (List.find (fun (i : Account_info.t) -> i.account.name = name && Owner.equal i.account.owner (Access.personal alice)) (Service.accounts service alice)).account.id
+
+(* What a person files every row with [text] in the inbox as. *)
+let file_as service alice text category =
+  List.iter
+    (fun (v : Inbox.item_view) ->
+      if v.transfer.transfer.memo.description = text then
+        ignore (ok (Inbox.categorize service alice ~transfer_id:v.item.transfer_id ~category_id:(personal service alice category) ())))
+    (Inbox.list service alice ~limit:max_int)
+
+let cycle_flows service alice ~cycles scope =
+  match field [ "cycles" ] (ok (Query.execute service alice (Option.get (Query.find "cashflow_summary")) [ ("scope", `String scope); ("cycles", `Int cycles) ])) with
+  | `List rows ->
+      List.map
+        (fun c ->
+          let text name = match field [ name ] c with `String s -> s | other -> Yojson.Safe.to_string other in
+          Printf.sprintf "%s income=%s spending=%s in=%s out=%s" (text "cycle") (text "income") (text "spending") (text "transfers_in") (text "transfers_out"))
+        rows
+  | _ -> Alcotest.fail "expected cycles"
+
+let check_moves_net_out service alice =
+  let each_month income spending in_ out = List.map (fun m -> Printf.sprintf "%s income=%s spending=%s in=%s out=%s" m income spending in_ out) months in
+  Alcotest.(check (list string)) "me: the salary in, ICA spent, the contribution out" (each_month "30000.00" "450.00" "0.00" "8000.00") (cycle_flows service alice ~cycles:6 "me");
+  Alcotest.(check (list string)) "household: COOP spent, alice's contribution in" (each_month "0.00" "2000.00" "8000.00" "0.00") (cycle_flows service alice ~cycles:6 "household");
+  Alcotest.(check (list string)) "family: the salary in, ICA and COOP spent" (each_month "30000.00" "2450.00" "0.00" "0.00") (cycle_flows service alice ~cycles:6 "family")
+
+let test_moves_net_out_in_any_order () =
+  List.iter
+    (fun order ->
+      let service, alice, checking, savings, shared = moves_setup () in
+      List.iter
+        (function
+          | `Checking -> import_into service alice checking checking_csv
+          | `Savings -> import_into service alice savings savings_csv
+          | `Shared -> import_into service alice shared shared_csv)
+        order;
+      check_moves_net_out service alice)
+    [ [ `Checking; `Savings; `Shared ]; [ `Shared; `Savings; `Checking ]; [ `Savings; `Checking; `Shared ] ]
+
+(* Checking came first, and alice filed its rows before the other statements were in: the moves out as spending.
+   When the other halves arrive, the move is still one move. Undoing the other half's import files the row where she
+   had put it again, rather than back in the inbox. *)
+let test_moves_filed_before_the_other_half () =
+  let service, alice, checking, savings, shared = moves_setup () in
+  import_into service alice checking checking_csv;
+  file_as service alice "LÖN" "Salary";
+  file_as service alice "ICA" "Groceries";
+  file_as service alice "TILL SPARKONTO" "Other";
+  file_as service alice "TILL HUSHÅLL" "Housing";
+  let savings_batch = imported (Import.confirm (Import.context service alice) (request savings savings_csv)) in
+  import_into service alice shared shared_csv;
+  check_moves_net_out service alice;
+  Alcotest.(check int) "only COOP waits in the inbox" 6 (Inbox.count service alice);
+  ignore (ok_import (Import.undo (Import.context service alice) ~batch_id:savings_batch.batch.batch_id));
+  Alcotest.(check int) "the moves to savings are filed again, not back in the inbox" 6 (Inbox.count service alice);
+  Alcotest.(check string) "as spending, as alice filed them" "2026-10 income=30000.00 spending=3450.00 in=0.00 out=8000.00"
+    (List.hd (cycle_flows service alice ~cycles:1 "me"))
+
+(* Both halves filed by hand, as when pairing didn't exist yet, or when another outflow of the same amount made the move
+   ambiguous and alice filed the rows herself: finding the moves puts them right once the rival is skipped. *)
+let test_moves_with_both_halves_filed () =
+  let service, alice, checking, savings, _ = moves_setup () in
+  import_into service alice checking "Datum;Text;Belopp\n2026-10-05;TILL SPARKONTO;-3000,00\n2026-10-05;SL;-3000,00\n";
+  import_into service alice savings "Datum;Text;Belopp\n2026-10-05;FRÅN LÖNEKONTO;3000,00\n";
+  file_as service alice "TILL SPARKONTO" "Other";
+  file_as service alice "FRÅN LÖNEKONTO" "Other income";
+  ignore (ok (Inbox.dismiss service alice ~transfer_id:(find_item service alice "SL")));
+  Alcotest.(check string) "filed, the move is income and spending, besides SL" "2026-10 income=3000.00 spending=6000.00 in=0.00 out=0.00"
+    (List.hd (cycle_flows service alice ~cycles:1 "me"));
+  Alcotest.(check (triple int int int)) "paired by rule" (1, 0, 0) (Inbox.pair_all service alice);
+  Alcotest.(check string) "paired, it is neither" "2026-10 income=0.00 spending=3000.00 in=0.00 out=0.00" (List.hd (cycle_flows service alice ~cycles:1 "me"))
+
+(* The assistant files rows it is confident about on an account that opted in, the moves out included: a model that
+   is only asked for a category calls a transfer to savings "Other". *)
+let test_moves_filed_by_the_assistant () =
+  let complete ?schema:_ ~system ~user () =
+    if Str_compat.contains ~sub:"You categorise bank transactions" system then
+      let json = Yojson.Safe.from_string user in
+      let list path = match field path json with `List l -> l | _ -> [] in
+      let id_of name = List.find_map (fun c -> if field [ "name" ] c = `String name then Some (field [ "id" ] c) else None) (list [ "categories" ]) in
+      let suggestions =
+        List.filter_map
+          (fun r ->
+            let spending = match field [ "amount" ] r with `String s -> String.starts_with ~prefix:"-" s | _ -> false in
+            Option.map (fun id -> `Assoc [ ("row", field [ "row" ] r); ("category_id", id); ("confidence", `Int 80) ]) (id_of (if spending then "Other" else "Other income")))
+          (list [ "rows" ])
+      in
+      Ok (Yojson.Safe.to_string (`Assoc [ ("suggestions", `List suggestions) ]))
+    else Ok {|{"pairs":[]}|}
+  in
+  let service, alice, checking, savings, shared = moves_setup ~assistant:Llm.{ model = "fake"; complete } () in
+  ok (Inbox.set_auto_apply service alice ~account_id:checking ~min_confidence:(Some 80));
+  import_into service alice checking checking_csv;
+  import_into service alice savings savings_csv;
+  import_into service alice shared shared_csv;
+  (* The salary, ICA and COOP the model filed or left as other income and other spending: only the moves are checked. *)
+  let each_month f = List.map f months in
+  Alcotest.(check (list string)) "me: only the salary in, only ICA spent, the contribution out"
+    (each_month (fun m -> Printf.sprintf "%s income=30000.00 spending=450.00 in=0.00 out=8000.00" m)) (cycle_flows service alice ~cycles:6 "me")
+
+(* History files a row when the account asks for it: once alice has called the move to savings "Other", the next
+   ones are filed without asking, and must still pair with savings' side. *)
+let test_moves_filed_from_history () =
+  let service, alice, checking, savings, shared = moves_setup () in
+  let first, rest = match String.split_on_char '\n' checking_csv with header :: rows -> (header, rows) | [] -> assert false in
+  let may, later = List.partition (fun row -> String.starts_with ~prefix:"2026-05" row) rest in
+  import_into service alice checking (String.concat "\n" (first :: may) ^ "\n");
+  file_as service alice "TILL SPARKONTO" "Other";
+  ok (Inbox.set_auto_apply service alice ~account_id:checking ~min_confidence:(Some 60));
+  import_into service alice checking (String.concat "\n" (first :: later));
+  import_into service alice savings savings_csv;
+  import_into service alice shared shared_csv;
+  check_moves_net_out service alice
+
+(* Undoing one side's import and uploading it again pairs the move again. *)
+let test_moves_after_undo_and_reupload_of_one_side () =
+  let service, alice, checking, savings, shared = moves_setup () in
+  import_into service alice checking checking_csv;
+  import_into service alice savings savings_csv;
+  let shared_batch = imported (Import.confirm (Import.context service alice) (request shared shared_csv)) in
+  ignore (ok_import (Import.undo (Import.context service alice) ~batch_id:shared_batch.batch.batch_id));
+  import_into service alice shared shared_csv;
+  check_moves_net_out service alice
+
 let () =
   Alcotest.run "import"
     [ ("parsing", [ Alcotest.test_case "amounts and csv" `Quick test_parsing ]);
@@ -863,4 +1012,11 @@ let () =
           Alcotest.test_case "undo doesn't revive a row" `Quick test_undo_does_not_revive_a_row;
           Alcotest.test_case "a manual move confirmed by both statements" `Quick test_manual_move_confirmed_by_both_statements;
           Alcotest.test_case "a member shares a purchase" `Quick test_member_shares_a_purchase;
-          Alcotest.test_case "reconciliation follows the ledger" `Quick test_reconciliation_follows_the_ledger; Alcotest.test_case "reconcile" `Quick test_reconcile ] ) ]
+          Alcotest.test_case "reconciliation follows the ledger" `Quick test_reconciliation_follows_the_ledger; Alcotest.test_case "reconcile" `Quick test_reconcile ] );
+      ( "moves",
+        [ Alcotest.test_case "net out in any order" `Quick test_moves_net_out_in_any_order;
+          Alcotest.test_case "filed before the other half" `Quick test_moves_filed_before_the_other_half;
+          Alcotest.test_case "both halves filed" `Quick test_moves_with_both_halves_filed;
+          Alcotest.test_case "filed by the assistant" `Quick test_moves_filed_by_the_assistant;
+          Alcotest.test_case "filed from history" `Quick test_moves_filed_from_history;
+          Alcotest.test_case "undo and reupload of one side" `Quick test_moves_after_undo_and_reupload_of_one_side ] ) ]
