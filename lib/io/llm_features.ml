@@ -301,3 +301,38 @@ let unusual_spending (service : Service.t) access ~(cycle : Cycle.t) ~currency ~
               Sql.run service.db cache_put key text llm.model (service.now ());
               Some text
           | _ -> None))
+
+(* Two or three sentences on the last full week, written from its computed figures alone. Cached per user, week, language
+   and a digest of the figures, so the text is written again only when the facts behind it change, and never per
+   transaction. With [write] false only a text already written is returned. A failed attempt is remembered for the same
+   figures, so a provider that is down is not asked again on every refresh. *)
+let week_summary (service : Service.t) access ~write ~(last : Date.t) ~figures =
+  match service.assistant with
+  | None -> `Off
+  | Some llm -> (
+      let user = Access.user access in
+      let digest = String.sub (Digest.to_hex (Digest.string (Yojson.Safe.to_string figures))) 0 12 in
+      let key = Printf.sprintf "week:%s:%s:%s:%s" (User_id.to_string user.id) (Date.to_string last) digest user.locale in
+      let failed_key = key ^ ":failed" in
+      match Sql.run service.db cache_get key with
+      | Some text -> `Text text
+      | None when Option.is_some (Sql.run service.db cache_get failed_key) -> `Failed
+      | None when not write -> `Unwritten
+      | None -> (
+          let language = if String.starts_with ~prefix:"sv" user.locale then "Swedish" else "English" in
+          let system =
+            Printf.sprintf
+              "Write two or three short, plain sentences in %s summarising a household's last week from the figures given: how \
+               spending compares with the week before and which categories explain it. Use only the figures given. No advice, no \
+               greetings, no markdown." language
+          in
+          let result = llm.complete ~system ~user:(Yojson.Safe.to_string figures) () in
+          Service.log_llm_call service access ~purpose:"week_summary" ~items:1 ~ok:(Result.is_ok result);
+          match result with
+          | Ok text when String.trim text <> "" ->
+              let text = String.trim text in
+              Sql.run service.db cache_put key text llm.model (service.now ());
+              `Text text
+          | _ ->
+              Sql.run service.db cache_put failed_key "failed" llm.model (service.now ());
+              `Failed))
