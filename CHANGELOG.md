@@ -11,6 +11,7 @@
   only where the options differ, as for money coming in.
 - The selected inbox row's actions run under it at full width, so on a phone they fit on one line instead of
   wrapping beside the amount.
+- English uses US spelling throughout: "categorize" and "Uncategorized" (some messages said "categorise").
 
 ### Logos from more websites
 

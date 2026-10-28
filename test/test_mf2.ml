@@ -1,10 +1,10 @@
 let money minor = { Mf2_runtime.minor; scale = 2; code = "SEK" }
 
 let test_generated_messages () =
-  Alcotest.(check string) "en plural one" "1 transaction to categorise" (Msg.card_inbox_title ~count:1 "en");
-  Alcotest.(check string) "en plural other" "1,204 transactions to categorise" (Msg.card_inbox_title ~count:1204 "en");
+  Alcotest.(check string) "en plural one" "1 transaction to categorize" (Msg.card_inbox_title ~count:1 "en");
+  Alcotest.(check string) "en plural other" "1,204 transactions to categorize" (Msg.card_inbox_title ~count:1204 "en");
   Alcotest.(check string) "sv plural" "3 transaktioner att kategorisera" (Msg.card_inbox_title ~count:3 "sv");
-  Alcotest.(check string) "exact match beats the category" "Imported. Everything is categorised." (Msg.card_import_done ~count:0 "en");
+  Alcotest.(check string) "exact match beats the category" "Imported. Everything is categorized." (Msg.card_import_done ~count:0 "en");
   Alcotest.(check string) "sv money" "4\xC2\xA0100,00\xC2\xA0kr kvar" (Msg.label_left ~left:(money 4_100_00L) "sv");
   Alcotest.(check string) "en money" "SEK\xC2\xA01,240.50 left" (Msg.label_left ~left:(money 1_240_50L) "en");
   Alcotest.(check string) "dates" "25 okt." (Mf2_runtime.format_date "sv" { year = 2026; month = 10; day = 25 });

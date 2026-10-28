@@ -146,14 +146,14 @@ card.import.already = This file was already imported.
 card.import.done =
   .input {$count :integer}
   .match $count
-  0 {{Imported. Everything is categorised.}}
+  0 {{Imported. Everything is categorized.}}
   one {{Imported. 1 transaction to review.}}
   * {{Imported. {$count} transactions to review.}}
 card.inbox.title =
   .input {$count :integer}
   .match $count
-  one {{1 transaction to categorise}}
-  * {{{$count} transactions to categorise}}
+  one {{1 transaction to categorize}}
+  * {{{$count} transactions to categorize}}
 card.inbox.body = Suggestions are ready; most take one keystroke.
 card.unmatched.title = Not on the statement: {$description}
 card.unmatched.body = You entered {$amount :currency} on {$date :date}, but the bank's statement doesn't show it.
@@ -201,7 +201,7 @@ label.spent = Spent
 label.left = {$left :currency} left
 label.over = {$over :currency} over
 label.suggested = Suggested: {$category}
-label.uncategorized = Uncategorised
+label.uncategorized = Uncategorized
 label.last_import = Last import {$date :date}
 label.never_imported = Never imported
 label.reconciled = Reconciled
@@ -228,7 +228,7 @@ label.goals = Savings goals
 label.compared = vs {$previous :currency} last month
 
 inbox.title = Inbox
-inbox.empty = Nothing to categorise. Nice.
+inbox.empty = Nothing to categorize. Nice.
 inbox.keys = j / k to move · enter to accept · c to choose · s shared · p pair · x skip
 inbox.pick_category = Choose a category
 inbox.pick_pair = Which transaction is the other side?
