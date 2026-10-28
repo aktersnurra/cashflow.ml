@@ -16,6 +16,8 @@ type t = {
   spending : int64;
   previous_spending : int64;
   top : (string * int64 * int64 option) list;  (** category name, spent, spent the week before *)
+  upcoming : int * int64;  (** recurring payments expected within the next seven days (or up to five days late, as the bank lags): how many, and their
+      typical total. Shown beside the text, not given to the model: the window moves every day and would rewrite the text daily. *)
   text : string option;
   can_write : bool;  (** a model is configured, no text has been written for these figures yet and an attempt has not failed *)
 }
@@ -25,16 +27,19 @@ let last_full_week today =
   let last = Date.add_days today (-(since_monday + 1)) in
   (Date.add_days last (-6), last)
 
-let figures (b : t) =
+let scope_name = function Analytics.Me -> "me" | Household -> "household" | Family -> "family"
+
+let figures ~scope (b : t) =
   let m = Json.money b.currency in
   `Assoc
-    [ ("week", `String (Date.to_string b.first ^ " to " ^ Date.to_string b.last)); ("currency", `String (Currency.code b.currency));
+    [ ("scope", `String (scope_name scope));
+      ("week", `String (Date.to_string b.first ^ " to " ^ Date.to_string b.last)); ("currency", `String (Currency.code b.currency));
       ("income", m b.income); ("spending", m b.spending); ("spending_the_week_before", m b.previous_spending);
       ( "top_categories",
         `List (List.map (fun (name, total, previous) -> `Assoc [ ("name", `String name); ("total", m total); ("previous", Json.option m previous) ]) b.top) ) ]
 
-let compute (service : Service.t) access ~write =
-  match Insights.context service access ~scope:Me () with
+let compute ?(scope = Analytics.Me) ?currency (service : Service.t) access ~write =
+  match Insights.context service access ~scope ?currency () with
   | Error _ -> None
   | Ok ctx ->
       let first, last = last_full_week ctx.today in
@@ -52,12 +57,19 @@ let compute (service : Service.t) access ~write =
             |> List.filteri (fun i _ -> i < 3)
             |> List.map (fun (c : Analytics.category_total) -> (Starter.display_name ~locale c.category, c.total, c.previous))
           in
+          let upcoming =
+            List.fold_left
+              (fun (count, total) (r : Analytics.recurring) ->
+                if Date.compare r.next_expected (Date.add_days ctx.today (-5)) >= 0 && Date.compare r.next_expected (Date.add_days ctx.today 6) <= 0 then (count + 1, Int64.add total r.typical_amount)
+                else (count, total))
+              (0, 0L) (Insights.recurring ctx)
+          in
           let brief =
-            { first; last; currency = ctx.currency; income = now.flows.income; spending = now.flows.spending; previous_spending = prior.flows.spending; top;
+            { first; last; currency = ctx.currency; income = now.flows.income; spending = now.flows.spending; previous_spending = prior.flows.spending; top; upcoming;
               text = None; can_write = false }
           in
           let text, can_write =
-            match Llm_features.week_summary service access ~write ~last ~figures:(figures brief) with
+            match Llm_features.week_summary service access ~write ~last ~figures:(figures ~scope brief) with
             | `Text t -> (Some t, false)
             | `Unwritten -> (None, true)
             | `Failed | `Off -> (None, false)
@@ -76,14 +88,16 @@ let json = function
                 ("spending", m b.spending); ("previous_spending", m b.previous_spending);
                 ( "top",
                   `List (List.map (fun (name, total, previous) -> `Assoc [ ("name", `String name); ("total", m total); ("previous", Json.option m previous) ]) b.top) );
+                ("upcoming_count", `Int (fst b.upcoming)); ("upcoming_total", m (snd b.upcoming));
                 ("text", Json.option (fun t -> `String t) b.text); ("can_write", `Bool b.can_write) ] ) ]
 
 let commands =
   let open Commands in
   [ command ~mcp:false "get_weekly_brief" Read
-      "The last full week in figures, with a few generated sentences when a model is configured. Returns null when the week had no income or spending."
-      [ ("write", `Assoc [ ("type", `String "boolean"); ("description", `String "Write the sentences if they have not been written for these figures; defaults to false.") ]) ]
+      "The last full week in figures, with a few generated sentences when a model is configured. Returns null when the week had no income or spending. Takes scope me, household or family."
+      (Query.common_props @ [ ("write", `Assoc [ ("type", `String "boolean"); ("description", `String "Write the sentences if they have not been written for these figures; defaults to false.") ]) ])
       (fun service access fields ->
         let ( let* ) = Result.bind in
         let* write = arg (Query.Args.bool "write" ~default:false fields) in
-        Ok (json (compute service access ~write))) ]
+        let* common = arg (Query.Args.common fields) in
+        Ok (json (compute ~scope:common.scope ?currency:common.currency service access ~write))) ]

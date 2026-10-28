@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### The weekly brief covers households and what is coming
+
+- Home's weekly brief follows the personal, household and family switch: the household's brief is about the household's
+  own accounts, and a member's personal spending is not in it. It also says what recurring payments are expected in the
+  next seven days. The sentences are written a few seconds after the figures stop changing, once per set of figures.
+
 ### The advisor no longer proposes a category you already have under another name
 
 - A proposed category counts as a duplicate if it matches an existing one in any language: asking for "Mat & hushåll"

@@ -161,6 +161,7 @@ card.review.title = How {$month} went
 brief.title = Last week, {$first :date} to {$last :date}
 brief.top = Most spent on
 brief.before = The week before: {$amount :currency} spent.
+brief.upcoming = Expected in the next seven days: {$amount :currency} in recurring payments.
 brief.writing = Writing a summary…
 card.budget.over = {$category} is over budget
 card.budget.ahead = {$category} is ahead of pace

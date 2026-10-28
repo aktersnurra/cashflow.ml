@@ -160,21 +160,25 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
   let categories =
     Remote.load ~active:visible ~name:"spending_by_category" ~args:(let%arr scope and offset in `Assoc [ ("scope", `String scope); ("cycle_offset", `Int offset) ]) ~ctx graph
   in
-  (* The figures show at once; when there is no text yet, a second load asks for it to be written, a few seconds after the
-     figures last changed, so a run of changes (clearing last week's inbox) writes once. Any change takes the request back
-     until the next quiet moment. The server writes once per set of figures and remembers a failure. Never on the Advisor
-     page, where this page is not showing. *)
-  let write, set_write = Bonsai.state false graph in
-  let brief = Remote.load ~active:visible ~name:"get_weekly_brief" ~args:(let%arr write in `Assoc [ ("write", `Bool write) ]) ~ctx graph in
+  (* The figures show at once; when there is no text yet, a second load asks for it to be written. That request is armed for
+     one scope and one version of the data, a few seconds after the figures arrived: a change of either lets it lapse (a run
+     of changes, like clearing last week's inbox, writes once when it settles) and a scope switch starts over. The server
+     writes once per set of figures and remembers a failure. Never on the Advisor page, where this page is not showing. *)
+  let armed, set_armed = Bonsai.state None graph in
+  let brief =
+    Remote.load ~active:visible ~name:"get_weekly_brief"
+      ~args:(let%arr armed and scope and version = ctx.version in
+             `Assoc [ ("scope", `String scope); ("write", `Bool (Option.equal [%equal: string * int] armed (Some (scope, version)))) ])
+      ~ctx graph
+  in
   Bonsai.Edge.on_change ~equal:phys_equal brief
-    ~callback:(let%arr set_write and advisor_route in fun (result : Remote.t) ->
+    ~callback:(let%arr set_armed and advisor_route and scope and version = ctx.version in fun (result : Remote.t) ->
       match result with
       | Loaded json when J.bool (J.path [ "brief"; "can_write" ] json) && not advisor_route ->
           let%bind.Effect () = Effect.of_deferred_thunk (fun () -> Async_kernel.after (Time_ns.Span.of_sec 6.)) in
-          set_write true
+          set_armed (Some (scope, version))
       | _ -> Effect.Ignore)
     graph;
-  Bonsai.Edge.on_change ~equal:Int.equal ctx.version ~callback:(let%arr set_write in fun (_ : int) -> set_write false) graph;
   let feed = Remote.load ~active:visible ~name:"get_attention_feed" ~args:(Bonsai.return (`Assoc [("narrative", `Bool false)])) ~ctx graph in
   let cards =
     let%arr feed in
@@ -284,6 +288,8 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
             Ui.div ~cls:"kpis"
               [ Ui.kpi (Msg.label_income locale) (money "income"); Ui.kpi (Msg.label_spending locale) (money "spending") ];
             Ui.muted (Msg.brief_before ~amount:(Fmt.money_json ~code (J.field "previous_spending" b)) locale);
+            (if J.int (J.field "upcoming_count" b) = 0 then Vdom.Node.none
+             else Ui.muted (Msg.brief_upcoming ~amount:(Fmt.money_json ~code (J.field "upcoming_total" b)) locale));
             (if List.is_empty top then Vdom.Node.none
              else
                Ui.div

@@ -160,6 +160,7 @@ card.review.title = Så gick {$month}
 brief.title = Förra veckan, {$first :date} till {$last :date}
 brief.top = Mest pengar gick till
 brief.before = Veckan innan: {$amount :currency} spenderat.
+brief.upcoming = Väntas de närmaste sju dagarna: {$amount :currency} i återkommande betalningar.
 brief.writing = Skriver en sammanfattning…
 card.budget.over = {$category} är över budget
 card.budget.ahead = {$category} går fortare än planerat
