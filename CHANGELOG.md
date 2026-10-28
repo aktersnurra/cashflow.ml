@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### The advisor no longer proposes a category you already have under another name
+
+- A proposed category counts as a duplicate if it matches an existing one in any language: asking for "Mat & hushåll"
+  when the starter Groceries is already there is refused, as "Groceries" is.
+
 ### A weekly brief on Home
 
 - Home opens with last week (Monday to Sunday) in figures: income, spending, the week before and the three categories

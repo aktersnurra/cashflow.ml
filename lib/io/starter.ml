@@ -34,3 +34,10 @@ let untouched (info : Account_info.t) =
   | _ -> None
 
 let display_name ~locale (info : Account_info.t) = match untouched info with Some starter -> name ~locale starter | None -> info.account.name
+
+(* Every name a category goes by: what is stored, and for an untouched starter its name in each language, because each
+   reader sees it in theirs. *)
+let names (info : Account_info.t) =
+  match untouched info with
+  | Some starter -> info.account.name :: List.map (fun locale -> name ~locale starter) Msg.locales
+  | None -> [ info.account.name ]
