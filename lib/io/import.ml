@@ -575,13 +575,11 @@ let confirm ctx request =
                 in
                 Import_store.save_row db ~batch_id:batch.batch_id ~index:planned.index ~fingerprint:(Idempotency_key.to_string planned.key) ~transfer_id ~status)
               p.rows;
-            let inbox_count = ref 0 in
             List.iter
               (fun (planned, transfer_id, inbox) ->
                 match inbox with
                 | None -> ()
                 | Some current ->
-                    incr inbox_count;
                     Import_store.add_item db ~now
                       { transfer_id; bank_account_id = account.id; current_account_id = current; revision = 0;
                         suggested_account_id = Option.map (fun (s : Suggest.suggestion) -> s.category_id) planned.suggestion;
@@ -590,6 +588,7 @@ let confirm ctx request =
                         candidate_pending_id = Option.map (fun (t : Transfer.t) -> t.id) planned.near_pending;
                         merchant_key = Suggest.merchant_key planned.row; status = "open" })
               posted;
+            let inbox_count = List.length (List.filter_map (fun (_, id, inbox) -> Option.map (fun _ -> id) inbox) posted) in
             (* The file teaches the account what it is, so the next one finds it by itself. *)
             let details = d.account.details in
             let learned =
@@ -609,7 +608,23 @@ let confirm ctx request =
                   { b with ledger_balance })
                 p.balance
             in
-            Ok (`Imported { account = { d.account with details = learned }; batch; inbox_count = !inbox_count; balance })) in
+            Ok (`Imported { account = { d.account with details = learned }; batch; inbox_count; balance })) in
+    (* Moves between the user's own accounts pair up once the import has committed, so the pairing holds no write lock.
+       The inbox is looked at as a whole, since this file may be the other half of rows imported before. It is best
+       effort: a failure here leaves the rows in the inbox and does not undo an import that succeeded. *)
+    let result =
+      match result with
+      | Ok (`Imported summary) -> (
+          try
+            let new_rows = Import_store.batch_transfers db summary.batch.batch_id in
+            ignore (Inbox.pair_obvious ctx.service ctx.access);
+            ignore (Inbox.pair_unsure ~among:new_rows ctx.service ctx.access);
+            Ok (`Imported { summary with inbox_count = List.length (Inbox.still_open ctx.service new_rows) })
+          with exn ->
+            Logs.err (fun m -> m "pairing moves failed: %s" (Printexc.to_string exn));
+            result)
+      | other -> other
+    in
     (match result with
      | Ok (`Imported _) when Option.is_some ctx.service.assistant && Option.is_some ctx.service.logo_network ->
          let owner = outside.decoded_file.account.account.owner in

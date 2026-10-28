@@ -350,6 +350,13 @@ palette.account = Öppna {$account}
 palette.flip_theme = Växla mellan ljust och mörkt
 inbox.share_pick = Vilken av hushållets kategorier?
 inbox.no_pairs = Ingen transaktion med samma belopp åt andra hållet inom tre dagar.
+inbox.find_moves = Hitta överföringar mellan mina konton
+inbox.moves_found =
+  .input {$paired :integer}
+  .input {$unsure :integer}
+  .match $paired
+  one {{Parade ihop 1 överföring mellan dina konton. {$unsure} behöver du titta på.}}
+  * {{Parade ihop {$paired} överföringar mellan dina konton. {$unsure} behöver du titta på.}}
 budgets.no_budget = Ingen budget
 goals.empty = Inga sparmål än.
 accounts.no_transactions = Inga transaktioner än. Importera ett kontoutdrag eller lägg till en.

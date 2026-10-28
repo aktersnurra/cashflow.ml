@@ -351,6 +351,13 @@ palette.account = Open {$account}
 palette.flip_theme = Switch between light and dark
 inbox.share_pick = Which household category?
 inbox.no_pairs = No transaction with the same amount the other way within three days.
+inbox.find_moves = Find transfers between my accounts
+inbox.moves_found =
+  .input {$paired :integer}
+  .input {$unsure :integer}
+  .match $paired
+  one {{Paired 1 transfer between your accounts. {$unsure} still need a look.}}
+  * {{Paired {$paired} transfers between your accounts. {$unsure} still need a look.}}
 budgets.no_budget = No budget
 goals.empty = No savings goals yet.
 accounts.no_transactions = No transactions yet. Import a statement or add one.

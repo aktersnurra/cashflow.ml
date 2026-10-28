@@ -60,6 +60,16 @@
   together or not at all. Money out can only go to an expense category and money in to an income one.
 - Not built yet: proposing a new category or rule, goals and entries, and undoing an applied proposal.
 
+### Transfers between your accounts
+
+- Importing a statement now pairs a move between your own accounts (a salary transfer to the household account, checking
+  to savings) with its other half automatically, so it no longer counts as income in one account and spending in the
+  other. Only clear matches pair by themselves: the same amount the other way, within three days, on another account,
+  with no rival. When an assistant is configured it judges the unsure ones, and anything it isn't sure of stays in the
+  inbox.
+- New button in the inbox, "Find transfers between my accounts", does the same for everything already waiting there.
+- Not built yet: rows you already filed under a category are not re-paired.
+
 ### Command bar
 
 - Typing a question in the command palette (Ctrl+K or /) now offers "Ask the advisor: ..." after any page or action

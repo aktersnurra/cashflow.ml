@@ -322,7 +322,6 @@ let rules (service : Service.t) access = List.concat_map (Import_store.rules ser
 
 let remove_rule (service : Service.t) access ~rule_id =
   if List.exists (fun owner -> Import_store.remove_rule service.db owner rule_id) (Access.owners access) then Ok () else Error (`Not_found "rule")
-
 (* Auto-apply: a bank account's opt-in to applying confident history and LLM suggestions on import. *)
 
 let auto_apply_settings (service : Service.t) access =
@@ -336,3 +335,99 @@ let set_auto_apply (service : Service.t) access ~account_id ~min_confidence =
   else (
     Import_store.set_auto_apply_threshold service.db account_id min_confidence;
     Ok ())
+
+(* Which of these rows are still waiting in the inbox. *)
+let still_open (service : Service.t) ids =
+  List.filter (fun id -> match Import_store.find_item service.db id with Some { status = "open"; _ } -> true | _ -> false) ids
+
+(* Finding moves between the user's own accounts across the whole inbox, in memory: two years of
+   imports from several accounts is thousands of open rows, too many to ask the database about one by one.
+   A row's counterparts are the open rows of the same amount the other way within three days on another
+   bank account. *)
+type move_row = { view : item_view; out : bool }
+
+let counterparts_of rows =
+  let by_amount = Hashtbl.create 1024 in
+  List.iter (fun r -> Hashtbl.add by_amount (Amount.to_int64 r.view.transfer.transfer.amount) r) rows;
+  fun r ->
+    List.filter
+      (fun o ->
+        o.out <> r.out && (not (Account_id.equal o.view.item.bank_account_id r.view.item.bank_account_id))
+        && abs (Date.days_between ~first:o.view.transfer.transfer.value_date ~last:r.view.transfer.transfer.value_date) <= 3)
+      (Hashtbl.find_all by_amount (Amount.to_int64 r.view.transfer.transfer.amount))
+
+let open_rows (service : Service.t) access =
+  List.map (fun (view : item_view) -> { view; out = outflow view.item view.transfer.transfer }) (list service access ~limit:max_int)
+
+let pair_rows (service : Service.t) access ~out ~in_ =
+  match pair service access ~out_id:out.view.item.transfer_id ~in_id:in_.view.item.transfer_id with Ok (Ok _) -> true | _ -> false
+
+let same_row a b = Transfer_id.equal a.view.item.transfer_id b.view.item.transfer_id
+
+(* A row with exactly one counterpart, which has no other counterpart either, is the same move seen from both
+   accounts, so it is paired without asking. Pairing a move can make its neighbours unambiguous, so it repeats
+   until nothing more pairs. A move [pair] refuses stays among the rows, so it still counts as a rival, but is
+   not tried again. Returns how many moves it paired. *)
+let pair_obvious (service : Service.t) access =
+  let refused = Hashtbl.create 16 in
+  let rec go rows paired =
+    let counterparts = counterparts_of rows in
+    let moves =
+      List.filter_map
+        (fun r ->
+          if (not r.out) || Hashtbl.mem refused r.view.item.transfer_id then None
+          else match counterparts r with [ o ] when (match counterparts o with [ back ] -> same_row back r | _ -> false) -> Some (r, o) | _ -> None)
+        rows
+    in
+    let made = List.filter (fun (r, o) -> pair_rows service access ~out:r ~in_:o || (Hashtbl.replace refused r.view.item.transfer_id (); false)) moves in
+    if made = [] then paired
+    else go (List.filter (fun r -> not (List.exists (fun (a, b) -> same_row a r || same_row b r) made)) rows) (paired + List.length made)
+  in
+  go (open_rows service access) 0
+
+(* What is still unsure goes to the LLM, a batch at a time: each outflow row with its possible counterparts.
+   [among] limits it to the rows involving those transfers, so an import doesn't ask again about old leftovers.
+   [pair] still checks amount, dates and currency of what the model picks. Returns how many moves it paired. *)
+let max_llm_batches = 20
+
+let unsure_cases rows ?among () =
+  let counterparts = counterparts_of rows in
+  let concerns r = match among with None -> true | Some ids -> List.exists (Transfer_id.equal r.view.item.transfer_id) ids in
+  List.filter_map
+    (fun r ->
+      if not r.out then None
+      else match counterparts r with [] -> None | options -> if concerns r || List.exists concerns options then Some (r, options) else None)
+    rows
+
+let rec chunks n = function
+  | [] -> []
+  | items -> let batch = List.filteri (fun i _ -> i < n) items in batch :: chunks n (List.filteri (fun i _ -> i >= n) items)
+
+let pair_unsure ?among (service : Service.t) access =
+  let rows = open_rows service access in
+  let scale_of r = match Service.find_account service access r.view.item.bank_account_id with Ok bank -> Currency.scale bank.account.currency | Error _ -> 2 in
+  let describe r = (Transfer_id.to_string r.view.item.transfer_id, r.view.transfer.transfer.value_date, r.view.transfer.transfer.memo.description) in
+  let find id = List.find_opt (fun r -> String.equal (Transfer_id.to_string r.view.item.transfer_id) id) rows in
+  let paired = ref 0 in
+  if Option.is_some service.assistant then
+    List.iter
+      (fun batch ->
+        let cases =
+          List.map
+            (fun (r, options) ->
+              let id, date, text = describe r in
+              { Llm_features.id; date; text; amount = Json.decimal ~scale:(scale_of r) (Amount.to_int64 r.view.transfer.transfer.amount); options = List.map describe options })
+            batch
+        in
+        List.iter
+          (fun (id, option) -> match find id, find option with Some out, Some in_ -> if pair_rows service access ~out ~in_ then incr paired | _ -> ())
+          (Llm_features.pair_moves service access cases))
+      (List.filteri (fun i _ -> i < max_llm_batches) (chunks Llm_features.max_rows (unsure_cases rows ?among ())));
+  !paired
+
+(* Everything at once, for rows imported before this existed or left over: returns (paired by rule, paired by the
+   model, rows with a possible counterpart still left to a person). *)
+let pair_all service access =
+  let obvious = pair_obvious service access in
+  let by_llm = pair_unsure service access in
+  (obvious, by_llm, List.length (unsure_cases (open_rows service access) ()))
