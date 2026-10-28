@@ -34,9 +34,10 @@ fs.writeFileSync(out + '/savings.csv', savings);
     await page.goto(base + '/');
     await page.waitForSelector('.page .panel, .page .empty', { timeout: 15000 });
     await page.screenshot({ path: out + '/01-home-empty.png' });
+    assert.deepEqual(await page.locator('.sidebar > .nav-link .label').allTextContents(), ['Overview', 'Transactions', 'Accounts', 'Plan']);
+    assert.equal(await page.locator('.section-nav').count(), 0, 'no second navigation layer');
     // Open a checking account through the form.
-    await page.click('.sidebar >> text=Money');
-    await page.click('.section-nav >> text=Accounts');
+    await page.click('.sidebar >> text=Accounts');
     await page.click('text=Open account');
     await page.fill('.sheet input >> nth=0', 'Lönekonto');
     await page.click('.sheet .button.primary');
@@ -105,8 +106,9 @@ fs.writeFileSync(out + '/savings.csv', savings);
     // Forecast: one imported month has no recurring payments yet, so Upcoming says so; a one-off
     // draws the what-if line, and removing it takes the line away.
     await page.click('.sidebar >> text=Plan');
-    await page.click('.section-nav >> text=Forecast');
-    await page.locator('.section-nav a[aria-current=page]', { hasText: 'Forecast' }).waitFor({ timeout: 10000 });
+    await page.locator('#forecast').getByRole('heading', { name: 'Forecast', exact: true }).waitFor({ timeout: 10000 });
+    assert.equal(await page.locator('.section-nav').count(), 0, 'Plan has no secondary navigation');
+    await page.getByRole('heading', { name: 'Savings goals', exact: true }).waitFor();
     await page.locator('.sidebar .nav-link.active', { hasText: 'Plan' }).waitFor({ timeout: 10000 });
     await page.waitForSelector('svg.projection >> visible=true', { timeout: 10000 });
     const kpis = await page.locator('.forecast-kpis .kpi').count();
@@ -156,14 +158,13 @@ fs.writeFileSync(out + '/savings.csv', savings);
     // Switch to Swedish in Settings; the whole UI follows.
     await page.selectOption('.setting-row select >> nth=0', 'sv');
     await page.click('.table-foot .button.primary');
-    await page.waitForSelector('.sidebar >> text=Pengar', { timeout: 10000 });
+    await page.waitForSelector('.sidebar >> text=Konton', { timeout: 10000 });
     await page.getByRole('heading', { name: 'Minne', exact: true }).waitFor({ timeout: 10000 });
     await page.getByRole('heading', { name: 'Automatiska kategorier', exact: true }).waitFor({ timeout: 10000 });
     await page.getByPlaceholder('Till exempel: svara i hela kronor').waitFor();
     // The starter categories follow too, with nothing reloaded: they are stored once, in English,
     // and the browser names them in the reader's language.
-    await page.click('.sidebar >> text=Pengar');
-    await page.click('.section-nav >> text=Konton');
+    await page.click('.sidebar >> text=Konton');
     await page.locator('.row-title', { hasText: /^Mat & hushåll$/ }).first().waitFor({ timeout: 10000 });
     // Categories nothing has moved through yet wait, folded, under one line.
     const unused = page.locator('.page:visible .unused-categories');
@@ -188,15 +189,14 @@ fs.writeFileSync(out + '/savings.csv', savings);
     await page.waitForTimeout(800);
     await page.screenshot({ path: out + '/12-home-sv.png', fullPage: true });
     await page.click('.sidebar >> text=Planering');
-    await page.click('.section-nav >> text=Prognos');
-    await page.waitForSelector('h1 >> text=Prognos', { timeout: 10000 });
+    await page.waitForSelector('#forecast h2 >> text=Prognos', { timeout: 10000 });
   });
   await run('phone', { width: 390, height: 844 }, async page => {
     await page.goto(base + '/');
     await page.waitForSelector('.page .panel, .page .empty', { timeout: 15000 });
     await page.screenshot({ path: out + '/20-phone-home.png' });
-    // Importing is the middle tab; the file says which account it is for.
-    await page.click('.tabbar >> text=Importera');
+    // Import is a visible shell action; the file says which account it is for.
+    await page.click('.shell-actions >> text=Importera');
     const upload = page.locator('.page:visible .dropzone:visible');
     await upload.waitFor({ timeout: 10000 });
     assert.equal(await upload.locator('.dropzone-hint').isVisible(), false, 'a touch screen offers no drop');
@@ -213,14 +213,22 @@ fs.writeFileSync(out + '/savings.csv', savings);
     await page.waitForSelector('h1 >> text=Sparkonto', { timeout: 10000 });
     await page.screenshot({ path: out + '/23-phone-account.png', fullPage: true });
     // Adding by hand is the way round.
-    await page.click('.tabbar >> text=Importera');
+    await page.click('.shell-actions >> text=Importera');
     await page.click('.import-manual a');
     await page.waitForSelector('.add-form', { timeout: 10000 });
-    await page.click('.tabbar >> text=Pengar');
-    await page.waitForSelector('.section-nav');
-    const strip = await page.locator('.section-nav').boundingBox();
-    assert.ok(strip.x >= 0 && strip.width <= 390, 'the section strip fits the phone width');
-    assert.ok((await page.locator('.section-nav a').first().boundingBox()).x >= 16, 'the strip keeps the page gutter');
+    await page.click('.tabbar >> text=Transaktioner');
+    await page.getByRole('heading', { name: 'Transaktioner', exact: true }).waitFor();
+    assert.equal(await page.locator('.section-nav').count(), 0, 'no submenu on a phone');
+    assert.deepEqual(await page.locator('.tabbar .label').allTextContents(), ['Översikt', 'Transaktioner', 'Konton', 'Planering']);
+    await page.click('.tabbar >> text=Konton');
+    await page.getByRole('heading', { name: 'Konton', exact: true }).waitFor();
+    await page.click('.tabbar >> text=Planering');
+    await page.getByRole('heading', { name: 'Planering', exact: true }).waitFor();
+    await page.locator('#budgets').waitFor();
+    await page.locator('#forecast').waitFor();
+    await page.locator('#goals').waitFor();
+    assert.equal(await page.locator('.page:visible .tabs').count(), 0, 'budgets, forecast and goals need no tabs');
+    assert.ok(await page.locator('.shell-actions').getByRole('link', { name: 'Importera', exact: true }).isVisible(), 'Import remains available on Plan');
     // A phone has no Escape key: a tap above the category sheet closes it, leaving the row to review.
     await page.goto(base + '/inbox');
     const rows = page.locator('.page:visible .list .row');
