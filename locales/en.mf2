@@ -662,3 +662,6 @@ advisor.evidence.label_description = Description
 advisor.evidence.label_status = Status
 advisor.evidence.status_pending = Waits for the bank statement to confirm it
 advisor.evidence.status_posted = Posted at once
+
+overview.view_plan = View plan
+overview.no_upcoming = No outgoing payments predicted in the next month.
