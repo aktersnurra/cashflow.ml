@@ -135,6 +135,55 @@ let layout_of_json json : (Statement_format.layout, string) result =
         account_number_cell = cell (member "account_number_cell" json) }
   with Type_error (reason, _) -> Error reason
 
+(* Rows that might each be one half of a move between the user's own accounts, with the rows that might
+   be the other half. The model sees dates, texts and amounts, never account names or balances. It answers
+   only for the pairs it is sure of; the caller still checks them. Returns (row id, counterpart id). *)
+type move_case = { id : string; date : Date.t; text : string; amount : string; options : (string * Date.t * string) list }
+
+let min_move_confidence = 80
+
+let pair_moves (service : Service.t) access (cases : move_case list) =
+  match service.assistant, cases with
+  | None, _ | _, [] -> []
+  | Some llm, cases ->
+      let cases = List.filteri (fun i _ -> i < max_rows) cases in
+      let user =
+        Yojson.Safe.to_string
+          (`List
+             (List.map
+                (fun c ->
+                  `Assoc
+                    [ ("id", `String c.id); ("date", `String (Date.to_string c.date)); ("text", `String c.text); ("amount", `String c.amount);
+                      ( "options",
+                        `List (List.map (fun (id, date, text) -> `Assoc [ ("id", `String id); ("date", `String (Date.to_string date)); ("text", `String text) ]) c.options) ) ])
+                cases))
+      in
+      let system =
+        "You match bank transactions that are one transfer of the user's own money between two of their accounts: the same money leaving \
+         one account and arriving in another, a few days apart. For each case choose the option that is the other half of the transfer, \
+         judging from the texts and dates, or leave it out if none clearly is. A purchase and an unrelated deposit of the same amount are not \
+         a transfer. Reply with JSON only: {\"pairs\": [{\"id\": <id>, \"option\": <option id>, \"confidence\": <0-100>}]}."
+      in
+      let result = llm.complete ~system ~user () in
+      Service.log_llm_call service access ~purpose:"pair_moves" ~items:(List.length cases) ~ok:(Result.is_ok result);
+      (match Result.map Llm.json_of_reply result with
+      | Ok (Some (`Assoc fields)) -> (
+          match List.assoc_opt "pairs" fields with
+          | Some (`List items) ->
+              List.filter_map
+                (function
+                  | `Assoc p -> (
+                      match List.assoc_opt "id" p, List.assoc_opt "option" p, List.assoc_opt "confidence" p with
+                      | Some (`String id), Some (`String option), Some (`Int c) when c >= min_move_confidence -> (
+                          match List.find_opt (fun case -> case.id = id) cases with
+                          | Some case when List.exists (fun (o, _, _) -> o = option) case.options -> Some (id, option)
+                          | _ -> None)
+                      | _ -> None)
+                  | _ -> None)
+                items
+          | _ -> [])
+      | _ -> [])
+
 let statement_layout (service : Service.t) access (table : Csv.table) =
   match service.assistant with
   | None -> Error None

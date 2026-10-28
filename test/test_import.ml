@@ -310,10 +310,9 @@ let test_pair_and_share () =
   ignore (imported (Import.confirm ctx (request checking "Datum;Text;Belopp\n2026-10-02;TILL SPARKONTO;-1000,00\n2026-10-03;COOP;-300,00\n")));
   ignore (imported (Import.confirm ctx (request savings "Datum;Text;Belopp\n2026-10-03;FRÅN LÖNEKONTO;1000,00\n")));
   let items = Inbox.list service alice ~limit:50 in
+  Alcotest.(check (list string)) "the move paired itself on the second import" [ "COOP" ]
+    (List.map (fun (v : Inbox.item_view) -> v.transfer.transfer.memo.description) items);
   let find text = (List.find (fun (v : Inbox.item_view) -> v.transfer.transfer.memo.description = text) items).item.transfer_id in
-  let candidates = ok (Inbox.pair_candidates service alice ~transfer_id:(find "TILL SPARKONTO")) in
-  Alcotest.(check int) "one candidate" 1 (List.length candidates);
-  ignore (ok (Inbox.pair service alice ~out_id:(find "TILL SPARKONTO") ~in_id:(find "FRÅN LÖNEKONTO")));
   Alcotest.(check int64) "uncategorized cancelled out" 300_00L (balance service alice (account_named service alice "Uncategorized"));
   let household_groceries =
     (List.find (fun (i : Account_info.t) -> i.account.name = "Groceries" && Owner.equal i.account.owner (Household household.id)) (Service.accounts service alice)).account.id
@@ -330,6 +329,49 @@ let test_pair_and_share () =
       | other -> Alcotest.failf "unexpected %s" (Yojson.Safe.to_string other))
   | _ -> Alcotest.fail "unexpected settle-up"
 
+(* Two equal outflows could each be the contribution: the model, asked after the import has committed,
+   picks the one whose text says so, and a low-confidence answer pairs nothing. *)
+let test_llm_pairs_unsure_moves () =
+  let run ~confidence =
+    let asked = ref 0 in
+    let complete ?schema:_ ~system ~user () =
+      if not (Str_compat.contains ~sub:"one transfer of the user's own money" system) then Ok {|{"suggestions":[]}|}
+      else (
+        incr asked;
+        match Yojson.Safe.from_string user with
+        | `List cases ->
+            let pairs =
+              List.filter_map
+                (fun case ->
+                  let options = match field [ "options" ] case with `List o -> o | _ -> [] in
+                  List.find_opt (fun o -> field [ "text" ] o = `String "FRÅN ALICE") options
+                  |> Option.map (fun chosen ->
+                         if field [ "text" ] case = `String "TILL HUSHÅLL" then `Assoc [ ("id", field [ "id" ] case); ("option", field [ "id" ] chosen); ("confidence", `Int confidence) ]
+                         else `Assoc [ ("id", field [ "id" ] case); ("option", field [ "id" ] chosen); ("confidence", `Int 10) ]))
+                cases
+            in
+            Ok (Yojson.Safe.to_string (`Assoc [ ("pairs", `List pairs) ]))
+        | _ -> Alcotest.fail "expected cases")
+    in
+    let service = Service.make ~assistant:Llm.{ model = "fake"; complete } ~now:(fun () -> now) (Store_sqlite.open_memory ()) in
+    let alice = sign_in service ~admin:true "alice" in
+    let household = ok (Service.create_household service alice ~name:"Home" ~default_currency:"SEK") in
+    let alice = Service.access_for service (Access.user alice) in
+    let checking = open_checking service alice ~statement_backed:true "Checking" in
+    let shared = open_checking service alice ~owner:(Household household.id) ~statement_backed:true "Shared" in
+    let ctx = Import.context service alice in
+    ignore (imported (Import.confirm ctx (request checking "Datum;Text;Belopp\n2026-10-02;TILL HUSHÅLL;-1000,00\n2026-10-02;SL;-1000,00\n")));
+    let summary = imported (Import.confirm ctx (request shared "Datum;Text;Belopp\n2026-10-02;FRÅN ALICE;1000,00\n")) in
+    (!asked, summary.inbox_count, List.map (fun (v : Inbox.item_view) -> v.transfer.transfer.memo.description) (Inbox.list service alice ~limit:50))
+  in
+  let asked, left, open_rows = run ~confidence:95 in
+  Alcotest.(check int) "asked once" 1 asked;
+  Alcotest.(check int) "the new row is no longer open" 0 left;
+  Alcotest.(check (list string)) "only SL is left to triage" [ "SL" ] open_rows;
+  let _, left, open_rows = run ~confidence:40 in
+  Alcotest.(check int) "unsure answer leaves the row" 1 left;
+  Alcotest.(check int) "all three stay open" 3 (List.length open_rows)
+
 let household_setup () =
   let service = make_service () in
   let alice = sign_in service ~admin:true "alice" in
@@ -341,6 +383,22 @@ let household_setup () =
 
 let find_item service alice text =
   (List.find (fun (v : Inbox.item_view) -> v.transfer.transfer.memo.description = text) (Inbox.list service alice ~limit:50)).item.transfer_id
+
+(* Rows already in the inbox, however many: two years from two accounts is far more than a page of 500, and a move
+   that was ambiguous when imported pairs once its rival is gone. *)
+let test_pair_all_moves_retroactively () =
+  let service, alice, _, checking, shared = household_setup () in
+  let ctx = Import.context service alice in
+  ignore (imported (Import.confirm ctx (request checking "Datum;Text;Belopp\n2026-10-02;TILL HUSHÅLL;-1000,00\n2026-10-02;SL;-1000,00\n")));
+  ignore (imported (Import.confirm ctx (request shared "Datum;Text;Belopp\n2026-10-02;FRÅN ALICE;1000,00\n")));
+  Alcotest.(check int) "ambiguous at import, all open" 3 (Inbox.count service alice);
+  ignore (ok (Inbox.dismiss service alice ~transfer_id:(find_item service alice "SL")));
+  Alcotest.(check (triple int int int)) "paired by rule" (1, 0, 0) (Inbox.pair_all service alice);
+  Alcotest.(check int) "inbox is clear" 0 (Inbox.count service alice);
+  let rows sign text = String.concat "" (List.init 700 (fun i -> Printf.sprintf "%s;%s;%s%d,00\n" (Date.to_string (Date.add_days (date "2024-01-01") i)) text sign (1000 + i))) in
+  ignore (imported (Import.confirm ctx (request checking ("Datum;Text;Belopp\n" ^ rows "-" "TILL HUSHÅLL")))) ;
+  ignore (imported (Import.confirm ctx (request shared ("Datum;Text;Belopp\n" ^ rows "" "FRÅN ALICE"))));
+  Alcotest.(check int) "a long history pairs completely" 0 (Inbox.count service alice)
 
 let sum_of service alice owner =
   List.fold_left (fun acc (i : Account_info.t) -> if Owner.equal i.account.owner owner then acc @ [ (i.account.name, Account.posted_balance i.account) ] else acc) [] (Service.accounts service alice)
@@ -369,8 +427,8 @@ let test_undo_does_not_revive_a_row () =
   let ctx = Import.context service alice in
   let first = imported (Import.confirm ctx (request checking "Datum;Text;Belopp\n2026-10-01;TILL SPAR;-100,00\n")) in
   let second = imported (Import.confirm ctx (request savings "Datum;Text;Belopp\n2026-10-01;FRÅN LÖN;100,00\n")) in
-  let out_id = find_item service alice "TILL SPAR" and in_id = find_item service alice "FRÅN LÖN" in
-  ignore (ok (Inbox.pair service alice ~out_id ~in_id));
+  Alcotest.(check int) "the move paired itself" 0 (Inbox.count service alice);
+  let out_id = List.hd (Import_store.batch_transfers service.db first.batch.batch_id) and in_id = List.hd (Import_store.batch_transfers service.db second.batch.batch_id) in
   ignore (ok_import (Import.undo ctx ~batch_id:first.batch.batch_id));
   let in_inbox id = List.exists (fun (v : Inbox.item_view) -> Transfer_id.equal v.item.transfer_id id) (Inbox.list service alice ~limit:50) in
   Alcotest.(check bool) "the savings row is back in the inbox" true (in_inbox in_id);
@@ -391,6 +449,7 @@ let test_pairing_a_contribution () =
   let in_batch = imported (Import.confirm ctx (request shared "Datum;Text;Belopp\n2026-10-02;FRÅN ALICE;1000,00\n")) in
   let out_id = find_item service alice "TILL HUSHÅLL" and in_id = find_item service alice "FRÅN ALICE" in
   let other = find_item service alice "SL" in
+  Alcotest.(check int) "both equal outflows are candidates to choose between by hand" 2 (List.length (ok (Inbox.pair_candidates service alice ~transfer_id:in_id)));
   let first = ok (Inbox.pair service alice ~out_id ~in_id) in
   let again = ok (Inbox.pair service alice ~out_id ~in_id) in
   (match first, again with
@@ -736,6 +795,8 @@ let () =
       ( "inbox",
         [ Alcotest.test_case "pair and share" `Quick test_pair_and_share; Alcotest.test_case "undo after share" `Quick test_undo_after_share;
           Alcotest.test_case "pairing a contribution" `Quick test_pairing_a_contribution;
+          Alcotest.test_case "llm pairs unsure moves" `Quick test_llm_pairs_unsure_moves;
+          Alcotest.test_case "pair all moves retroactively" `Quick test_pair_all_moves_retroactively;
           Alcotest.test_case "undo doesn't revive a row" `Quick test_undo_does_not_revive_a_row;
           Alcotest.test_case "a manual move confirmed by both statements" `Quick test_manual_move_confirmed_by_both_statements;
           Alcotest.test_case "a member shares a purchase" `Quick test_member_shares_a_purchase;

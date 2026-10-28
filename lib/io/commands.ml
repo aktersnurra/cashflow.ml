@@ -468,6 +468,15 @@ let pair =
       let* in_id = transfer_id "in_id" fields in
       one_outcome (lift (Inbox.pair service access ~out_id ~in_id)))
 
+let pair_all_moves =
+  command "pair_all_moves" Write
+    "Find every move between your own accounts (or to the household) among the inbox transactions and pair them, so they stop counting as income and spending. \
+     Clear matches are paired by rule, unsure ones by the assistant when one is configured; whatever is still unsure stays for you."
+    []
+    (fun service access _ ->
+      let paired_by_rule, paired_by_assistant, still_unsure = Inbox.pair_all service access in
+      Ok (`Assoc [ ("paired_by_rule", `Int paired_by_rule); ("paired_by_assistant", `Int paired_by_assistant); ("still_unsure", `Int still_unsure) ]))
+
 let pair_candidates =
   command "inbox_pair_candidates" Read "Inbox transactions that could be the other side of a move: the same amount the other way within three days." ~required:[ "id" ]
     [ string_prop "id" "The inbox transaction." ]
@@ -935,7 +944,7 @@ let queries =
 let base =
   [ get_session; list_accounts; open_account; update_account; close_account; set_opening_balance; set_market_value; query_transactions;
     set_merchant_logo; clear_merchant_logo; get_transaction; add_transaction; reverse_transaction; correct_transaction; post_pending; void_pending; list_inbox; categorize; share;
-    pair; pair_candidates; accept_candidate; dismiss; identify_statement; import_statement; undo_import; list_imports; reconcile; set_budget; save_goal; earmark;
+    pair; pair_all_moves; pair_candidates; accept_candidate; dismiss; identify_statement; import_statement; undo_import; list_imports; reconcile; set_budget; save_goal; earmark;
     list_rules; add_rule; remove_rule; auto_apply_settings; set_auto_apply; update_settings; respond_to_invitation; leave_household; create_household; invite_member;
     update_household ]
   @ queries
