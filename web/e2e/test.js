@@ -165,6 +165,11 @@ fs.writeFileSync(out + '/savings.csv', savings);
     await page.click('.sidebar >> text=Pengar');
     await page.click('.section-nav >> text=Konton');
     await page.locator('.row-title', { hasText: /^Mat & hushåll$/ }).first().waitFor({ timeout: 10000 });
+    // Categories nothing has moved through yet wait, folded, under one line.
+    const unused = page.locator('.page:visible .unused-categories');
+    assert.equal(await unused.count(), 2, 'spending and income each fold their unused categories');
+    assert.equal(await unused.first().evaluate(d => d.open), false, 'folded until opened');
+    assert.equal(await unused.first().locator('.row-title', { hasText: /^Mat & hushåll$/ }).count(), 0, 'a used category is not among them');
     assert.equal(await page.locator('.row-title', { hasText: /^Groceries$/ }).count(), 0, 'no starter category left in English');
     await page.keyboard.press('Control+k');
     await page.waitForFunction(() => document.activeElement && document.activeElement.matches('.palette input'));

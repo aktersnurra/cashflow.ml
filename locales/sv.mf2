@@ -237,6 +237,11 @@ accounts.categories = Kategorier
 accounts.this_month = den här månaden
 accounts.col_account = Konto
 accounts.col_total = Totalt
+accounts.unused =
+  .input {$count :integer}
+  .match $count
+  one {{1 kategori som inte använts än}}
+  * {{{$count} kategorier som inte använts än}}
 
 budgets.title = Budget
 budgets.tab_categories = Kategorier

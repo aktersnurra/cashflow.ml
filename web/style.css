@@ -269,6 +269,9 @@ kbd { font: 11px/16px var(--mono); padding: 0 4px; border: 1px solid var(--line-
 .day-head, .group-head { padding: 14px 16px 6px; font-size: 13px; font-weight: 600; border-top: 1px solid var(--line); }
 .table-head + .day-head, .table-head + .group-head { border-top: 0; }
 .day-head + .row, .group-head + .row { border-top: 0; }
+.unused-categories { border-top: 1px solid var(--line); }
+.unused-categories > summary { padding: 10px 16px; font-size: 13px; color: var(--text-2); cursor: pointer; }
+.unused-categories > summary:hover { color: var(--text); }
 .statement-row, .row.statement-row { display: grid; grid-template-columns: 64px minmax(0, 2fr) minmax(0, 1.3fr) minmax(0, 1fr); gap: 16px; align-items: center; }
 .table .row.statement-row { padding-top: 8px; padding-bottom: 8px; }
 .statement.plain .statement-row { grid-template-columns: 64px minmax(0, 1fr) minmax(0, .5fr); }

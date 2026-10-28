@@ -238,6 +238,11 @@ accounts.categories = Categories
 accounts.this_month = this month
 accounts.col_account = Account
 accounts.col_total = All time
+accounts.unused =
+  .input {$count :integer}
+  .match $count
+  one {{1 category not used yet}}
+  * {{{$count} categories not used yet}}
 
 budgets.title = Budgets
 budgets.tab_categories = Categories

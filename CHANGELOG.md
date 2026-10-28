@@ -17,6 +17,10 @@
   Insights, Settings). Import, Add and Household keep theirs, which say something the title doesn't.
 - Insights says "Not yet reconciled with the bank" once above its findings instead of on each, and no longer offers
   "Uncategorized accounts for 100% of your spending" as a finding.
+- Accounts lists the categories money has gone through; the ones not used yet fold into one line you can open ("15
+  categories not used yet"), instead of a row of dashes each.
+- "Add transaction" and "Open account" are plain buttons rather than the page's main action: statements bring most
+  rows in, and opening an account is rare.
 
 ### The advisor can propose a manual entry
 
