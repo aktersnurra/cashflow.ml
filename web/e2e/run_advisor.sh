@@ -111,6 +111,9 @@ run controller python3 test/test_advisor_browser.py
 product product advisor.js
 product navigation advisor_navigation.js
 product command-bar advisor_command_bar.js
+product proposal advisor_proposal.js --privacy-mode propose
+product categorize advisor_categorize.js --privacy-mode propose-categorize
+product goal advisor_goal.js --privacy-mode propose-goal
 product presentation advisor_presentation.js
 ADVISOR_CHAT_PAUSED=1 product presentation-paused advisor_presentation.js
 product smoothness advisor_smoothness.js

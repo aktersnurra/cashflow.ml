@@ -137,6 +137,8 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
     fun id action ->
       match%bind.Effect Effect.of_deferred_thunk (fun () -> Advisor_api.decide_proposal ~id action) with
       | Ok state -> record_proposal_state (id, state)
+      (* Only a refused undo means "it changed since"; anything else is a failure to try again. *)
+      | Error (C.Not_accepted W.Version_conflict) when String.equal action "undo" -> notify (Msg.advisor_proposal_undo_failed locale)
       | Error _ -> notify (Msg.advisor_proposal_failed locale) in
   let advisor_turns = let%arr advisor_snapshot and advisor_dispatch and advisor_locale and markdown_nodes and proposal_states and decide in
     Advisor_view.render_turns ~locale:advisor_locale ~snapshot:advisor_snapshot

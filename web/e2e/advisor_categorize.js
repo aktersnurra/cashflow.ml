@@ -40,6 +40,12 @@ const output=process.env.ADVISOR_EVIDENCE_DIR||'/tmp/advisor-categorize';fs.mkdi
   await page.reload();
   await card.getByText('Applied.',{exact:true}).waitFor({timeout:10000});
   await page.screenshot({path:output+'/categorize-applied.png',fullPage:true});
+  // Undo puts the row back in the inbox.
+  await card.getByRole('button',{name:'Undo',exact:true}).click();
+  await card.getByText('Undone.',{exact:true}).waitFor({timeout:10000});
+  assert.ok(await count()>0,'the row is waiting in the inbox again');
+  await page.reload();
+  await card.getByText('Undone.',{exact:true}).waitFor({timeout:10000});
   assert.deepEqual(errors,[]);
   console.log('categorize: card names row, category and amount; nothing filed before Apply; Apply files it; state survives reload');
  } finally { await browser.close(); }

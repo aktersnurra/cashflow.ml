@@ -191,7 +191,21 @@ let () =
                       ("index", `Int 0); ("id", `String id); ("type", `String "function");
                       ("function", `Assoc [("name", `String name); ("arguments", `String "{}")])]])]);
                     ("finish_reason", `String "tool_calls")]])]) ^ "\n\ndata: [DONE]\n\n") in
-                if privacy_mode = "propose-categorize" then (
+                if privacy_mode = "propose-goal" then (
+                  (* One round: propose a savings goal, then answer. *)
+                  let open Yojson.Safe.Util in
+                  let proposed = Yojson.Safe.from_string body |> member "messages" |> to_list
+                    |> List.exists (fun m -> member "role" m = `String "tool") in
+                  if proposed then (on_chunk (text "I have proposed a goal; it is waiting for your confirmation."); finish ())
+                  else
+                    on_chunk
+                      ("data: " ^ Yojson.Safe.to_string (`Assoc [("choices", `List [`Assoc [
+                        ("index", `Int 0); ("delta", `Assoc [("tool_calls", `List [`Assoc [
+                          ("index", `Int 0); ("id", `String "goal"); ("type", `String "function");
+                          ("function", `Assoc [("name", `String "propose_save_goal");
+                            ("arguments", `String "{\"name\":\"Sofa\",\"target_amount\":\"9000\",\"target_date\":\"2027-06-01\",\"monthly_amount\":\"750\"}")])]])]);
+                        ("finish_reason", `String "tool_calls")]])]) ^ "\n\ndata: [DONE]\n\n"))
+                else if privacy_mode = "propose-categorize" then (
                   (* Read the uncategorized rows and the categories, then file the first row under Groceries. *)
                   let open Yojson.Safe.Util in
                   let tools = Yojson.Safe.from_string body |> member "messages" |> to_list

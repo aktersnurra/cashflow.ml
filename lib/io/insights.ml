@@ -323,7 +323,7 @@ let goal_progress ctx (goal : Planning_store.goal) =
 let goals ctx =
   List.concat_map (fun owner -> List.map (goal_progress ctx) (goals_in_currency ctx owner)) ctx.owners
 
-let save_goal ctx ?goal_id ~name ~target_amount ~target_date ~monthly_amount () =
+let save_goal ctx ?goal_id ?create_with ~name ~target_amount ~target_date ~monthly_amount () =
   let owner = budget_owner ctx in
   let name = String.trim name in
   if name = "" then Error (`Invalid "goal name must not be empty")
@@ -331,7 +331,7 @@ let save_goal ctx ?goal_id ~name ~target_amount ~target_date ~monthly_amount () 
   else
     let* goal_id =
       match goal_id with
-      | None -> Ok (Uuidm.to_string (Uuidm.v4_gen (Random.State.make_self_init ()) ()))
+      | None -> Ok (match create_with with Some id -> id | None -> Uuidm.to_string (Uuidm.v4_gen (Random.State.make_self_init ()) ()))
       | Some id -> (
           match Planning_store.find_goal ctx.service.db id with
           | Some g when Access.can_use ctx.access g.goal_owner ->

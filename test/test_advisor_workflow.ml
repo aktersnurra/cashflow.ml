@@ -596,6 +596,35 @@ let history () =
   completed (execute f);
   check_int "whole too-large turn excluded" 0 (List.length (List.hd f.contexts).history)
 
+(* The model is told what became of each kind of proposal in that kind's own words, so a declined goal is not
+   remembered as a declined budget. *)
+let proposal_outcomes () =
+  let card title facts state : A.evidence = { display with title; facts; proposal = Some state } in
+  let text label s = { A.label; value = A.Text s } in
+  let attempt segments : A.attempt = { ids; ordinal = 1L; state = A.Completed; segments; last_sequence = 1L } in
+  let said evidence_cards =
+    let segments = A.Text_segment { segment_id = context.segment_id; text = "ok" } :: List.map (fun e -> A.Evidence_segment e) evidence_cards in
+    let snapshot : A.snapshot =
+      { conversation_id = ids.conversation_id; scope = A.Personal; currency; locale = "en"; source_finding = None; active_run = None; version = 1L;
+        turns = [ { A.turn_id = ids.turn_id; user_message_id = ids.user_message_id; user_text = "u"; attempts = [ attempt segments ] } ] }
+    in
+    (List.hd (Result.get_ok (W.select_history snapshot))).assistant_text
+  in
+  let has label haystack needle = check_bool label true (Cashflow_core.Str_compat.contains ~sub:needle haystack) in
+  let told =
+    said
+      [ card "propose_set_budget" [ text "Category" "Groceries" ] A.Declined;
+        card "propose_add_rule" [ text "Pattern" "spotify"; text "Category" "Subscriptions" ] A.Applied;
+        card "propose_save_goal" [ text "Name" "Sofa" ] A.Declined;
+        card "propose_new_category" [ text "Name" "Coffee" ] A.Reverted;
+        card "propose_categorize" [ text "Transaction" "a"; text "Transaction" "b" ] A.Out_of_date ]
+  in
+  has "budget" told "[Budget proposal for Groceries: declined by the user.]";
+  has "rule" told "[Rule proposal \"spotify\" suggesting Subscriptions: applied by the user.]";
+  has "goal" told "[Savings goal proposal \"Sofa\": declined by the user.]";
+  has "category" told "[New category proposal \"Coffee\": applied, then undone by the user.]";
+  has "categorize" told "[Proposal to categorize 2 transactions: not applied: it was out of date.]"
+
 let commands () =
   let submit : A.submit =
     {
@@ -861,6 +890,7 @@ let tests =
     ("original deadline", deadline);
     ("keepalive total deadline", keepalive_total_deadline);
     ("successful history", history);
+    ("proposal outcomes by kind", proposal_outcomes);
     ("command ordering", commands);
     ("command authority and validation", command_authority_and_validation);
     ("terminal ordering", terminal_order);

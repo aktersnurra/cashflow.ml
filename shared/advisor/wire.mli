@@ -59,7 +59,7 @@ type finding = { kind : string; key : string; scope : scope; title : string; sum
 type display_value = Text of string | Money of money | Date of string
 type fact = { label : string; value : display_value }
 type import_status = Current | Stale | Incomplete | Unknown
-type proposal_state = Awaiting | Applied | Declined | Out_of_date | Not_applied | Lapsed
+type proposal_state = Awaiting | Applied | Declined | Out_of_date | Not_applied | Lapsed | Reverted
 
 type evidence = {
   id : string;

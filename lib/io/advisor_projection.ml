@@ -48,6 +48,9 @@ let parse_call ~name ~arguments =
     | "propose_set_budget" -> Some [ "category"; "monthly_amount"; "rollover" ]
     | "inbox_rows" | "categories" -> Some []
     | "propose_categorize" -> Some [ "rows" ]
+    | "propose_add_rule" -> Some [ "pattern"; "category"; "direction" ]
+    | "propose_save_goal" -> Some [ "name"; "target_amount"; "target_date"; "monthly_amount" ]
+    | "propose_new_category" -> Some [ "name"; "kind" ]
     | _ -> None
   in
   match allowed with
@@ -56,7 +59,7 @@ let parse_call ~name ~arguments =
       try
         if String.length arguments > 8192 then raise Invalid;
         (* A proposal never takes a currency: it acts in the conversation's own. *)
-        let proposing = String.equal name "propose_set_budget" || String.equal name "propose_categorize" in
+        let proposing = String.starts_with ~prefix:"propose_" name in
         let f = fields ((if proposing then [] else [ "currency" ]) @ allowed) (Yojson.Safe.from_string arguments) in
         let currency = Option.map (fun s -> require (T.currency_code s)) (text f "currency") in
         let c = { T.currency } in
@@ -74,6 +77,18 @@ let parse_call ~name ~arguments =
           | "goals" -> T.Goals c
           | "inbox_rows" -> T.Inbox_rows c
           | "categories" -> T.Categories c
+          | "propose_add_rule" ->
+              (* Models often send null for an optional field; that means the same as leaving it out. *)
+              let text f k = match List.assoc_opt k f with Some `Null -> None | _ -> text f k in
+              let direction = match text f "direction" with None -> None | Some "in" -> Some `In | Some "out" -> Some `Out | Some _ -> raise Invalid in
+              T.Propose_rule { pattern = require (text f "pattern"); category = require (T.account_reference (require (text f "category"))); direction }
+          | "propose_save_goal" ->
+              let text f k = match List.assoc_opt k f with Some `Null -> None | _ -> text f k in
+              let short k = Option.map (fun s -> if String.length s > 30 then raise Invalid else s) (text f k) in
+              T.Propose_goal { name = require (text f "name"); target_amount = require (short "target_amount"); target_date = short "target_date"; monthly_amount = short "monthly_amount" }
+          | "propose_new_category" ->
+              let kind = match require (text f "kind") with "expense" -> `Expense | "income" -> `Income | _ -> raise Invalid in
+              T.Propose_category { name = require (text f "name"); kind }
           | "propose_categorize" ->
               let rows =
                 List.map
@@ -199,6 +214,24 @@ let resolve_category service aliases ctx reference =
 
 let period (T.Cycle_offset n) = Insights.Cycle_offset n
 
+(* A name or pattern the user will see and later search for: trimmed, short, one line. *)
+let one_line ~max ~min s =
+  let s = String.trim s in
+  (* Valid UTF-8 only, counted in characters (as the schema's maxLength is), and no control, format, line or paragraph
+     separator characters: nothing that could make the card show something other than what is stored. *)
+  let hidden cp =
+    cp < 0x20 || (cp >= 0x7f && cp <= 0x9f) || (cp >= 0x200b && cp <= 0x200f) || (cp >= 0x2028 && cp <= 0x202e)
+    || (cp >= 0x2060 && cp <= 0x206f) || cp = 0xfeff || cp = 0x061c || cp = 0x180e
+  in
+  let rec scan i count =
+    if i >= String.length s then Some count
+    else
+      let d = String.get_utf_8_uchar s i in
+      if not (Uchar.utf_decode_is_valid d) || hidden (Uchar.to_int (Uchar.utf_decode_uchar d)) then None
+      else scan (i + Uchar.utf_decode_length d) (count + 1)
+  in
+  match scan 0 0 with Some count when count >= min && count <= max -> Some s | _ -> None
+
 let refs = function
   | T.Category_spending_result xs -> List.map (fun (x : T.category) -> x.account) xs
   | T.Category_trend_result (a, _) -> [ a ]
@@ -213,6 +246,7 @@ let refs = function
   | T.Inbox_rows_result rows -> List.filter_map (fun (r : T.inbox_row) -> Option.map (fun (a, _, _) -> a) r.suggestion) rows
   | T.Categories_result xs -> xs
   | T.Categorize_proposal_result rows -> List.map (fun (r : T.categorize_row) -> r.category) rows
+  | T.Proposal_card_result c -> c.accounts
   | T.Cycle_summary_result _ | T.Goals_result _ -> []
 
 let assumptions (f : Forecast.t) =
@@ -264,7 +298,7 @@ let read (service : Service.t) ~principal ~scope ~aliases ~currency:pinned reque
                 && s.input.leave_out = []
                 && List.length s.leave_out <= 20
                 && List.length s.input.one_off <= 10
-            | Recurring _ | Goals _ | Propose_budget _ | Inbox_rows _ | Categories _ -> true
+            | Recurring _ | Goals _ | Propose_budget _ | Inbox_rows _ | Categories _ | Propose_rule _ | Propose_goal _ | Propose_category _ -> true
             | Propose_categorize { rows } ->
                 let n = List.length rows in
                 n >= 1 && n <= 20 && List.length (List.sort_uniq String.compare (List.map (fun (r, _) -> T.row_reference_text r) rows)) = n
@@ -359,6 +393,98 @@ let read (service : Service.t) ~principal ~scope ~aliases ~currency:pinned reque
                   in
                   let shown = take 60 all |> List.map (account ~locale:(Access.user ctx.access).locale) in
                   Ok (T.Categories_result shown, List.length all, List.length shown, [])
+              | Propose_rule { pattern; category; direction } ->
+                  let* pattern = match one_line ~min:3 ~max:60 pattern with Some p -> Ok p | None -> error A.Invalid_tool_arguments in
+                  let* a = resolve_category service aliases ctx category in
+                  let* target = match Service.find_account service access a.id with Ok i -> Ok i | Error _ -> error A.Not_found in
+                  if Option.is_some target.details.role || target.account.closed
+                     || (match (direction, a.kind) with Some `In, Account.Expense | Some `Out, Account.Income -> true | _ -> false)
+                  then error A.Invalid_tool_arguments
+                  else
+                    let direction_text = match direction with Some `In -> "in" | Some `Out -> "out" | None -> "any" in
+                    Ok
+                      ( T.Proposal_card_result
+                          { tool = "propose_add_rule"; kind = "add_rule";
+                            facts =
+                              [ { A.label = "Pattern"; value = A.Text pattern }; { A.label = "Direction"; value = A.Text direction_text };
+                                { A.label = "Category"; value = A.Text (Option.value a.name ~default:"") } ];
+                            model = [ ("pattern", T.Text_value pattern); ("direction", T.Text_value direction_text); ("category", T.Account_value a) ];
+                            accounts = [ a ];
+                            arguments =
+                              Yojson.Safe.to_string
+                                (`Assoc [ ("pattern", `String pattern); ("category_id", `String (Account_id.to_string a.id));
+                                          ("direction", match direction with Some `In -> `String "in" | Some `Out -> `String "out" | None -> `Null) ]);
+                            precondition = "{}" },
+                        1, 1, [] )
+              | Propose_goal { name; target_amount; target_date; monthly_amount } ->
+                  let scale = Currency.scale ctx.currency in
+                  let* name = match one_line ~min:1 ~max:60 name with Some n -> Ok n | None -> error A.Invalid_tool_arguments in
+                  let* target = match Json.parse_decimal ~scale target_amount with Some n when Int64.compare n 0L > 0 -> Ok n | _ -> error A.Invalid_tool_arguments in
+                  let* monthly =
+                    match monthly_amount with
+                    | None -> Ok None
+                    | Some m -> (match Json.parse_decimal ~scale m with Some n when Int64.compare n 0L >= 0 -> Ok (Some n) | _ -> error A.Invalid_tool_arguments)
+                  in
+                  let* date =
+                    match target_date with
+                    | None -> Ok None
+                    | Some d ->
+                        (* In the future, and within fifty years: a far date makes every goals page build thousands of cycles. *)
+                        (match Date.of_string d with
+                         | Ok d when Date.compare d ctx.today > 0 && Date.compare d (Date.add_days ctx.today 18_250) <= 0 -> Ok (Some d)
+                         | _ -> error A.Invalid_tool_arguments)
+                  in
+                  (* A goal name that already exists is only refused when it is applied: refusing it here would tell the
+                     model which goal names exist, and goal names are not shown to it. *)
+                  if (match monthly with Some m -> Int64.compare m target > 0 | None -> false) then error A.Invalid_tool_arguments
+                  else
+                    let owner_text = match Insights.budget_owner ctx with Owner.Household _ -> "household" | Owner.User _ -> "personal" in
+                    let money label n = { A.label; value = A.Money { minor_units = n; currency = ctx.currency } } in
+                    let none label = { A.label; value = A.Text "none" } in
+                    Ok
+                      ( T.Proposal_card_result
+                          { tool = "propose_save_goal"; kind = "save_goal";
+                            facts =
+                              [ { A.label = "Name"; value = A.Text name }; money "Target" target;
+                                (match date with Some d -> { A.label = "Target date"; value = A.Date d } | None -> none "Target date");
+                                (match monthly with Some m -> money "Monthly saving" m | None -> none "Monthly saving");
+                                { A.label = "Owner"; value = A.Text owner_text } ];
+                            model =
+                              [ ("name", T.Text_value name); ("target", T.Number_value target);
+                                ("target_date", (match date with Some d -> T.Text_value (Date.to_string d) | None -> T.Null_value));
+                                ("monthly_saving", (match monthly with Some m -> T.Number_value m | None -> T.Null_value)) ];
+                            accounts = [];
+                            arguments =
+                              Yojson.Safe.to_string
+                                (`Assoc [ ("name", `String name); ("target_amount", `String (Int64.to_string target));
+                                          ("target_date", (match date with Some d -> `String (Date.to_string d) | None -> `Null));
+                                          ("monthly_amount", (match monthly with Some m -> `String (Int64.to_string m) | None -> `Null)) ]);
+                            precondition = "{}" },
+                        1, 1, [] )
+              | Propose_category { name; kind } ->
+                  let* name = match one_line ~min:1 ~max:40 name with Some n -> Ok n | None -> error A.Invalid_tool_arguments in
+                  let kind_account = match kind with `Expense -> Account.Expense | `Income -> Account.Income in
+                  let owner = Insights.budget_owner ctx in
+                  let taken =
+                    List.exists
+                      (fun (i : Account_info.t) ->
+                        i.account.kind = kind_account && (not i.account.closed) && Owner.equal i.account.owner owner
+                        && String.equal (String.lowercase_ascii i.account.name) (String.lowercase_ascii name))
+                      (Insights.accounts ctx)
+                  in
+                  if taken then error A.Invalid_tool_arguments
+                  else
+                    let kind_text = match kind with `Expense -> "expense" | `Income -> "income" in
+                    let owner_text = match owner with Owner.Household _ -> "household" | Owner.User _ -> "personal" in
+                    Ok
+                      ( T.Proposal_card_result
+                          { tool = "propose_new_category"; kind = "new_category";
+                            facts = [ { A.label = "Name"; value = A.Text name }; { A.label = "Kind"; value = A.Text kind_text }; { A.label = "Owner"; value = A.Text owner_text } ];
+                            model = [ ("name", T.Text_value name); ("kind", T.Text_value kind_text); ("owner", T.Text_value owner_text) ];
+                            accounts = [];
+                            arguments = Yojson.Safe.to_string (`Assoc [ ("name", `String name); ("kind", `String kind_text) ]);
+                            precondition = "{}" },
+                        1, 1, [] )
               | Propose_categorize { rows } ->
                   let* rows =
                     List.fold_left
@@ -651,6 +777,7 @@ let display (e : T.evidence) : A.evidence =
             { A.label = "From cycle"; value = A.Text p.from_cycle };
             { A.label = "Carry over"; value = A.Text (string_of_bool p.rollover) };
           ]
+    | T.Proposal_card_result card -> Some card.facts
     | T.Categorize_proposal_result rows ->
         Some
           (List.concat_map
@@ -683,7 +810,7 @@ let display (e : T.evidence) : A.evidence =
     import_status = e.import_status;
     reconciled = e.reconciled;
     assumptions = e.assumptions;
-    proposal = (match e.result with T.Budget_proposal_result _ | T.Categorize_proposal_result _ -> Some A.Awaiting | _ -> None);
+    proposal = (match e.result with T.Budget_proposal_result _ | T.Categorize_proposal_result _ | T.Proposal_card_result _ -> Some A.Awaiting | _ -> None);
   }
 
 let model_json ~aliases (e : T.evidence) =
@@ -829,6 +956,19 @@ let model_json ~aliases (e : T.evidence) =
                     ])
                 rows
           | Categories_result xs -> arr acct xs
+          | Proposal_card_result card ->
+              obj
+                (("status", str "awaiting_user_confirmation")
+                :: List.map
+                     (fun (key, value) ->
+                       ( key,
+                         match value with
+                         | T.Text_value s -> str s
+                         | Number_value n -> num n
+                         | Bool_value b -> `Bool b
+                         | Account_value a -> acct a
+                         | Null_value -> `Null ))
+                     card.model)
           | Categorize_proposal_result rows ->
               let reference id =
                 Hashtbl.fold (fun alias t found -> if Transfer_id.equal t id then Some alias else found) aliases.rows None

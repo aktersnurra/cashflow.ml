@@ -649,7 +649,9 @@ let undo ctx ~batch_id =
         List.concat_map (Import_store.triaged_items db) triage |> List.filter (fun item -> not (List.exists (Transfer_id.equal item) transfers))
       in
       (* Latest first, so a categorisation is undone before the row it moved. *)
-      let to_reverse = List.filter_map view.transfer (List.rev triage @ transfers) in
+      (* A triage reversal (an undone categorisation) is itself a reversal and cannot be reversed again; undoing the
+         categorisation it took back, which is also listed, already finds it by key. *)
+      let to_reverse = List.filter (fun (t : Transfer.t) -> Option.is_none t.reverses) (List.filter_map view.transfer (List.rev triage @ transfers)) in
       let reverse (t : Transfer.t) =
         { Ledger_event.key = Result.get_ok (Idempotency_key.of_string ("undo:" ^ Transfer_id.to_string t.id)); linked = false;
           body = Reverse { transfer_id = t.id; value_date = None; memo = None } }

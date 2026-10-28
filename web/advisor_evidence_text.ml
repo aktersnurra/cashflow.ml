@@ -13,6 +13,9 @@ let title locale = function
   | "forecast" -> Msg.advisor_evidence_forecast locale
   | "propose_set_budget" -> Msg.advisor_evidence_propose_budget locale
   | "propose_categorize" -> Msg.advisor_evidence_propose_categorize locale
+  | "propose_add_rule" -> Msg.advisor_evidence_propose_rule locale
+  | "propose_save_goal" -> Msg.advisor_evidence_propose_goal locale
+  | "propose_new_category" -> Msg.advisor_evidence_propose_category locale
   | "inbox_rows" -> Msg.advisor_evidence_inbox_rows locale
   | "categories" -> Msg.advisor_evidence_categories locale
   | other -> other
@@ -37,6 +40,14 @@ let label locale = function
   | "From cycle" -> Msg.advisor_evidence_label_from_cycle locale
   | "Carry over" -> Msg.advisor_evidence_label_carry_over locale
   | "Transaction" -> Msg.advisor_evidence_label_transaction locale
+  | "Pattern" -> Msg.advisor_evidence_label_pattern locale
+  | "Direction" -> Msg.advisor_evidence_label_direction locale
+  | "Target" -> Msg.advisor_evidence_label_target locale
+  | "Target date" -> Msg.advisor_evidence_label_target_date locale
+  | "Monthly saving" -> Msg.advisor_evidence_label_monthly_saving locale
+  | "Name" -> Msg.advisor_evidence_label_name locale
+  | "Kind" -> Msg.advisor_evidence_label_kind locale
+  | "Owner" -> Msg.advisor_evidence_label_owner locale
   | "Amount" -> Msg.advisor_evidence_label_amount locale
   | "New category" -> Msg.advisor_evidence_label_new_category locale
   | other -> other
@@ -49,6 +60,14 @@ let value locale (f : Cashflow_advisor_protocol.Wire.fact) =
   | "Carry over", W.Text "true" -> Msg.advisor_evidence_yes locale
   | "Carry over", W.Text "false" -> Msg.advisor_evidence_no locale
   | "Current budget", W.Text "none" -> Msg.advisor_evidence_none locale
+  | ("Target date" | "Monthly saving"), W.Text "none" -> Msg.advisor_evidence_none locale
+  | "Direction", W.Text "any" -> Msg.advisor_evidence_dir_any locale
+  | "Direction", W.Text "in" -> Msg.advisor_evidence_dir_in locale
+  | "Direction", W.Text "out" -> Msg.advisor_evidence_dir_out locale
+  | "Kind", W.Text "expense" -> Msg.advisor_evidence_kind_expense locale
+  | "Kind", W.Text "income" -> Msg.advisor_evidence_kind_income locale
+  | "Owner", W.Text "personal" -> Msg.advisor_evidence_owner_personal locale
+  | "Owner", W.Text "household" -> Msg.advisor_evidence_owner_household locale
   | _, (W.Text x | Date x) -> x
   | _, Money m -> m.decimal ^ " " ^ m.currency.code
 

@@ -353,3 +353,12 @@ accepts rows this run was shown, money out to an expense category and money in t
 owner and the conversation's pinned scope and currency. The card lists each transaction, amount and category; the proposal
 stores the transfer and category ids with each row's revision and position. Apply re-checks every row is still open, unchanged
 and the category still valid, then claims the proposal and files all rows through `Inbox.categorize` in one transaction.
+
+### Undo
+
+`POST /api/advisor/proposals/{id}/undo` takes an applied proposal back; the state then reads `Reverted` (stored as
+`undone_at` on an `applied` row, since what happened stays recorded). Budget: set the previous budget again for the same
+pay cycle, or 0 if there was none. Categorize: `Inbox.reopen` reverses the transfer each row's categorisation posted and puts
+the row back where it was, moving its revision on so a new categorisation never finds the reversed one by its idempotency key.
+Both require the change to be exactly as the proposal left it; otherwise `Version_conflict` and nothing moves. Claiming the
+undo and reversing the change are one transaction.

@@ -74,10 +74,10 @@ type display_value = Text of string | Money of money | Date of Date.t
 type fact = { label : string; value : display_value }
 type import_status = Current | Stale | Incomplete | Unknown
 
-(** A card the user can act on. Only the server moves it: [Awaiting] to exactly one of the others, and no further.
+(** A card the user can act on. Only the server moves it: [Awaiting] to exactly one of the others, and no further, except that an [Applied] change the user takes back reads [Reverted].
     [Declined] is dismissed; [Out_of_date] means what it was based on changed; [Not_applied] was rejected when applied;
     [Lapsed] was not decided in time. *)
-type proposal_state = Awaiting | Applied | Declined | Out_of_date | Not_applied | Lapsed
+type proposal_state = Awaiting | Applied | Declined | Out_of_date | Not_applied | Lapsed | Reverted
 
 type evidence = {
   id : Evidence_id.t;

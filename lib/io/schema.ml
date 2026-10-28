@@ -335,6 +335,12 @@ CREATE TABLE advisor_proposals (
 );
 CREATE INDEX advisor_proposals_conversation ON advisor_proposals(conversation_id, created_at);
 |}
+    );
+    ( 11,
+      {|
+-- An applied proposal the user later undid. The state stays 'applied' (that is what happened); this says it was taken back.
+ALTER TABLE advisor_proposals ADD COLUMN undone_at TEXT;
+|}
     ) ]
 
 let latest_version = List.fold_left (fun latest (version, _) -> max latest version) 0 migrations

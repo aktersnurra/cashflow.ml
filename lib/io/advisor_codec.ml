@@ -126,6 +126,7 @@ let proposal_state_out : A.proposal_state -> W.proposal_state = function
   | A.Out_of_date -> W.Out_of_date
   | A.Not_applied -> W.Not_applied
   | A.Lapsed -> W.Lapsed
+  | A.Reverted -> W.Reverted
 
 let evidence_out (v : A.evidence) : W.evidence =
   {

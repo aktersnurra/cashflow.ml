@@ -912,6 +912,261 @@ let categorize_proposal_endpoints () =
       Alcotest.(check string) "a bank account is not a category" "out_of_date" (state (post wrong_kind "apply"));
       Alcotest.(check int) "so the row still waits" 1 (open_rows ()))
 
+(* Undo takes back exactly what an applied proposal did, and only while that is still how it was left. *)
+let undo_endpoints () =
+  fixture (fun _ service token _ req ->
+      let open Yojson.Safe.Util in
+      ignore (req ~meth:POST ~body:"{\"enabled\":true}" "/api/advisor/consent");
+      let access = Test_service_support.sign_in service "http" in
+      let owner = (Access.user access).id in
+      let named name =
+        (List.find (fun (i : Account_info.t) -> i.account.name = name && Owner.equal i.account.owner (Access.personal access)) (Service.accounts service access)).account.id
+      in
+      let groceries = named "Groceries" and subscriptions = named "Subscriptions" in
+      let store = Advisor_store.create ~clock:service.now service.db in
+      let reference = Web_auth.session_ref token in
+      let accepted = ok (Advisor_store.accept store ~owner ~session:reference ~now ~model:"synthetic" ~source_finding:None (submit "undo")) in
+      ignore (ok (Advisor_store.transition store ~run:accepted.ids.run_id (Advisor.Fail { code = Provider_unavailable; context = No_context })));
+      let conversation_id = accepted.ids.conversation_id in
+      let counter = ref 0 in
+      let next_id () = incr counter; Printf.sprintf "00000000-0000-4000-8000-%012d" (200 + !counter) in
+      let ctx () = ok (Result.map_error (fun _ -> ()) (Insights.context service access ~scope:Analytics.Me ~currency:"SEK" ())) in
+      let cycle () = Insights.current_cycle_label (ctx ()) in
+      let budget () = Option.map (fun (b : Analytics.budget) -> (b.monthly_amount, b.rollover)) (Insights.current_budget (ctx ()) groceries) in
+      let set_budget amount rollover =
+        Planning_store.set_budget service.db ~now (Access.personal access) ~category_id:groceries ~effective_from:(cycle ()) ~monthly_amount:amount ~rollover
+      in
+      let propose_budget ?(previous = None) amount =
+        let id = next_id () in
+        ok (Advisor_store.add_proposal store ~owner ~conversation_id ~id ~kind:"set_budget"
+              ~arguments:(`Assoc [ ("category_id", `String (Account_id.to_string groceries)); ("monthly_amount", `String amount); ("rollover", `Bool false) ])
+              ~precondition:(`Assoc [ ("current_monthly", (match previous with Some p -> `String p | None -> `Null));
+                                      ("current_rollover", (match previous with Some _ -> `Bool false | None -> `Null)); ("from_cycle", `String (cycle ())) ])
+              ~now ~expires:(Option.get (Ptime.add_span now (Ptime.Span.of_int_s 3600))));
+        id
+      in
+      let post id action = req ~meth:POST ~body:"{}" ("/api/advisor/proposals/" ^ id ^ "/" ^ action) in
+      let state response = body response |> Yojson.Safe.from_string |> member "state" |> to_string in
+      (* A budget that did not exist is removed again. *)
+      let fresh = propose_budget "350000" in
+      Alcotest.(check int) "an unapplied proposal has nothing to undo" 422 (status (post fresh "undo"));
+      Alcotest.(check string) "apply" "applied" (state (post fresh "apply"));
+      Alcotest.(check (option (pair int64 bool))) "applied" (Some (350000L, false)) (budget ());
+      Alcotest.(check string) "undo" "reverted" (state (post fresh "undo"));
+      Alcotest.(check (option (pair int64 bool))) "the budget is gone again" None (Option.map (fun (a, r) -> if a = 0L then None else Some (a, r)) (budget ()) |> Option.join);
+      Alcotest.(check string) "undoing twice reports the recorded outcome" "reverted" (state (post fresh "undo"));
+      Alcotest.(check string) "and it cannot be applied again" "reverted" (state (post fresh "apply"));
+      (* A budget that existed is put back. *)
+      set_budget 200000L false;
+      let replace = ok (Ok (propose_budget ~previous:(Some "200000") "350000")) in
+      ignore (post replace "apply");
+      Alcotest.(check bool) "replaced" true (match budget () with Some (350000L, _) -> true | _ -> false);
+      Alcotest.(check string) "undo restores" "reverted" (state (post replace "undo"));
+      Alcotest.(check bool) "the earlier amount is back" true (match budget () with Some (200000L, _) -> true | _ -> false);
+      (* A budget the user changed since is theirs now. *)
+      let kept = propose_budget ~previous:(Some "200000") "450000" in
+      ignore (post kept "apply");
+      set_budget 1L false;
+      Alcotest.(check int) "undo is refused" 409 (status (post kept "undo"));
+      Alcotest.(check bool) "and the user's budget is untouched" true (match budget () with Some (1L, _) -> true | _ -> false);
+      Alcotest.(check string) "the proposal still reads applied" "applied" (state (post kept "apply"));
+      (* Filed rows go back to the inbox. *)
+      let bank = Test_service_support.open_checking service access ~statement_backed:true "Bank" in
+      let csv = "Datum;Text;Belopp\n2026-10-02;ICA NARA;-250,00\n2026-10-04;KIOSK;-30,00\n" in
+      (match Import.confirm (Import.context service access) { Import.target = Existing bank; file_name = Some "export.csv"; content = csv; decisions = [] } with
+       | Ok (`Imported _) -> ()
+       | _ -> Alcotest.fail "import");
+      let item description = (List.find (fun (v : Inbox.item_view) -> v.transfer.transfer.memo.description = description) (Inbox.list service access ~limit:50)).item in
+      let balance id = Account.posted_balance (Result.get_ok (Service.find_account service access id)).account in
+      let propose_rows rows =
+        let id = next_id () in
+        let tid (i : Import_store.item) = Transfer_id.to_string i.transfer_id in
+        ok (Advisor_store.add_proposal store ~owner ~conversation_id ~id ~kind:"categorize"
+              ~arguments:(`Assoc [ ("rows", `List (List.map (fun (i, c) -> `Assoc [ ("transfer_id", `String (tid i)); ("category_id", `String (Account_id.to_string c)) ]) rows)) ])
+              ~precondition:(`Assoc [ ("rows", `List (List.map (fun ((i : Import_store.item), _) ->
+                  `Assoc [ ("transfer_id", `String (tid i)); ("revision", `Int i.revision); ("current", `String (Account_id.to_string i.current_account_id)) ]) rows)) ])
+              ~now ~expires:(Option.get (Ptime.add_span now (Ptime.Span.of_int_s 3600))));
+        id
+      in
+      let ica = item "ICA NARA" and kiosk = item "KIOSK" in
+      let filed = propose_rows [ (ica, groceries); (kiosk, subscriptions) ] in
+      Alcotest.(check int) "two rows wait" 2 (Inbox.count service access);
+      ignore (post filed "apply");
+      Alcotest.(check int) "both filed" 0 (Inbox.count service access);
+      Alcotest.(check int64) "money in Groceries" 25000L (balance groceries);
+      Alcotest.(check string) "undo" "reverted" (state (post filed "undo"));
+      Alcotest.(check int) "both rows are back in the inbox" 2 (Inbox.count service access);
+      Alcotest.(check int64) "the categories are empty again" 0L (balance groceries);
+      Alcotest.(check int64) "also the second" 0L (balance subscriptions);
+      (* Filing them again works: the undone categorisation does not get in the way. *)
+      let again = propose_rows [ (item "ICA NARA", groceries) ] in
+      Alcotest.(check string) "apply again" "applied" (state (post again "apply"));
+      Alcotest.(check int64) "filed again" 25000L (balance groceries);
+      (* A row the user has categorised again since is theirs. *)
+      let kiosk_again = item "KIOSK" in
+      let theirs = propose_rows [ (kiosk_again, groceries) ] in
+      ignore (post theirs "apply");
+      ignore (Test_service_support.ok (Inbox.categorize service access ~transfer_id:kiosk_again.transfer_id ~category_id:subscriptions ()));
+      Alcotest.(check int) "undo is refused" 409 (status (post theirs "undo"));
+      Alcotest.(check int64) "their choice stands" 3000L (balance subscriptions);
+      Alcotest.(check string) "and the proposal still reads applied" "applied" (state (post theirs "apply")))
+
+(* The edges of undo: all or nothing across rows, an import undone after an advisor undo, and who may undo what. *)
+let undo_edge_cases () =
+  fixture (fun _ service token _ req ->
+      let open Yojson.Safe.Util in
+      ignore (req ~meth:POST ~body:"{\"enabled\":true}" "/api/advisor/consent");
+      let access = Test_service_support.sign_in service "http" in
+      let owner = (Access.user access).id in
+      let named name =
+        (List.find (fun (i : Account_info.t) -> i.account.name = name && Owner.equal i.account.owner (Access.personal access)) (Service.accounts service access)).account.id
+      in
+      let groceries = named "Groceries" and subscriptions = named "Subscriptions" in
+      let store = Advisor_store.create ~clock:service.now service.db in
+      let reference = Web_auth.session_ref token in
+      let accepted = ok (Advisor_store.accept store ~owner ~session:reference ~now ~model:"synthetic" ~source_finding:None (submit "edges")) in
+      ignore (ok (Advisor_store.transition store ~run:accepted.ids.run_id (Advisor.Fail { code = Provider_unavailable; context = No_context })));
+      let conversation_id = accepted.ids.conversation_id in
+      let counter = ref 0 in
+      let bank = Test_service_support.open_checking service access ~statement_backed:true "Bank" in
+      let csv = "Datum;Text;Belopp\n2026-10-02;ICA NARA;-250,00\n2026-10-04;KIOSK;-30,00\n" in
+      let batch =
+        match Import.confirm (Import.context service access) { Import.target = Existing bank; file_name = Some "export.csv"; content = csv; decisions = [] } with
+        | Ok (`Imported summary) -> summary.batch.batch_id
+        | _ -> Alcotest.fail "import"
+      in
+      let item description = (List.find (fun (v : Inbox.item_view) -> v.transfer.transfer.memo.description = description) (Inbox.list service access ~limit:50)).item in
+      let balance id = Account.posted_balance (Result.get_ok (Service.find_account service access id)).account in
+      let post id action = req ~meth:POST ~body:"{}" ("/api/advisor/proposals/" ^ id ^ "/" ^ action) in
+      let state response = body response |> Yojson.Safe.from_string |> member "state" |> to_string in
+      let propose rows =
+        incr counter;
+        let id = Printf.sprintf "00000000-0000-4000-8000-%012d" (300 + !counter) in
+        let tid (i : Import_store.item) = Transfer_id.to_string i.transfer_id in
+        ok (Advisor_store.add_proposal store ~owner ~conversation_id ~id ~kind:"categorize"
+              ~arguments:(`Assoc [ ("rows", `List (List.map (fun (i, c) -> `Assoc [ ("transfer_id", `String (tid i)); ("category_id", `String (Account_id.to_string c)) ]) rows)) ])
+              ~precondition:(`Assoc [ ("rows", `List (List.map (fun ((i : Import_store.item), _) ->
+                  `Assoc [ ("transfer_id", `String (tid i)); ("revision", `Int i.revision); ("current", `String (Account_id.to_string i.current_account_id)) ]) rows)) ])
+              ~now ~expires:(Option.get (Ptime.add_span now (Ptime.Span.of_int_s 3600))));
+        id
+      in
+      (* An undone categorisation leaves the books as if it never happened, including to a later import undo. *)
+      let ica = item "ICA NARA" and kiosk = item "KIOSK" in
+      let single = propose [ (ica, groceries) ] in
+      ignore (post single "apply");
+      ignore (post single "undo");
+      Alcotest.(check int) "back in the inbox" 2 (Inbox.count service access);
+      (match Import.undo (Import.context service access) ~batch_id:batch with
+       | Ok _ -> ()
+       | Error _ -> Alcotest.fail "the import can still be undone after an advisor undo");
+      Alcotest.(check int64) "nothing left in Groceries" 0L (balance groceries);
+      Alcotest.(check int64) "the bank is whole again" 0L (balance bank);
+      (* All or nothing: a row that changed stops the whole undo, rows that could have gone back included. *)
+      let csv2 = "Datum;Text;Belopp\n2026-10-12;ICA TWO;-100,00\n2026-10-13;KIOSK TWO;-20,00\n" in
+      (match Import.confirm (Import.context service access) { Import.target = Existing bank; file_name = Some "second.csv"; content = csv2; decisions = [] } with
+       | Ok (`Imported _) -> ()
+       | _ -> Alcotest.fail "second import");
+      let first = item "ICA TWO" and second = item "KIOSK TWO" in
+      ignore kiosk;
+      let both = propose [ (first, groceries); (second, subscriptions) ] in
+      ignore (post both "apply");
+      ignore (Test_service_support.ok (Inbox.categorize service access ~transfer_id:first.transfer_id ~category_id:subscriptions ()));
+      Alcotest.(check int) "refused" 409 (status (post both "undo"));
+      Alcotest.(check int) "the other row stays filed" 0 (Inbox.count service access);
+      Alcotest.(check int64) "the second row's money is still filed, with the first one the user moved" 12000L (balance subscriptions);
+      Alcotest.(check int64) "and none of it went to Groceries" 0L (balance groceries);
+      Alcotest.(check string) "and the proposal still reads applied" "applied" (state (post both "apply"));
+      (* Who may undo what. *)
+      let declined = propose [ (first, groceries) ] in
+      ignore (post declined "dismiss");
+      Alcotest.(check int) "a declined proposal has nothing to undo" 422 (status (post declined "undo"));
+      let other = Test_service_support.sign_in service "undo-other" |> Access.user in
+      let other_token = Web_auth.create_session service.db ~now other in
+      let other_csrf = (Option.get (Web_auth.inspect_session service ~now (Web_auth.session_ref other_token))).csrf_token in
+      Alcotest.(check int) "another user cannot undo it" 404
+        (status (req ~meth:POST ~body:"{}"
+                   ~headers:[ ("cookie", Web_auth.session_cookie ^ "=" ^ other_token); ("x-csrf-token", other_csrf); ("origin", "https://cashflow.example"); ("content-type", "application/json") ]
+                   ("/api/advisor/proposals/" ^ both ^ "/undo"))))
+
+(* Rules, goals and categories: applied with a click, undone only while untouched, and never twice. *)
+let simple_proposal_endpoints () =
+  fixture (fun _ service token _ req ->
+      let open Yojson.Safe.Util in
+      ignore (req ~meth:POST ~body:"{\"enabled\":true}" "/api/advisor/consent");
+      let access = Test_service_support.sign_in service "http" in
+      let owner = (Access.user access).id in
+      let named name =
+        (List.find (fun (i : Account_info.t) -> i.account.name = name && Owner.equal i.account.owner (Access.personal access)) (Service.accounts service access)).account.id
+      in
+      let subscriptions = named "Subscriptions" in
+      let store = Advisor_store.create ~clock:service.now service.db in
+      let reference = Web_auth.session_ref token in
+      let accepted = ok (Advisor_store.accept store ~owner ~session:reference ~now ~model:"synthetic" ~source_finding:None (submit "simple")) in
+      ignore (ok (Advisor_store.transition store ~run:accepted.ids.run_id (Advisor.Fail { code = Provider_unavailable; context = No_context })));
+      let conversation_id = accepted.ids.conversation_id in
+      let counter = ref 0 in
+      let propose kind arguments =
+        incr counter;
+        let id = Printf.sprintf "00000000-0000-4000-8000-%012d" (400 + !counter) in
+        ok (Advisor_store.add_proposal store ~owner ~conversation_id ~id ~kind ~arguments:(`Assoc arguments) ~precondition:(`Assoc [])
+              ~now ~expires:(Option.get (Ptime.add_span now (Ptime.Span.of_int_s 3600))));
+        id
+      in
+      let post id action = req ~meth:POST ~body:"{}" ("/api/advisor/proposals/" ^ id ^ "/" ^ action) in
+      let state response = body response |> Yojson.Safe.from_string |> member "state" |> to_string in
+      let ctx () = ok (Result.map_error (fun _ -> ()) (Insights.context service access ~scope:Analytics.Me ~currency:"SEK" ())) in
+      (* A rule: only ever a suggestion; undo removes it, unless the user already did. *)
+      let rule_ids () = List.map (fun (r : Suggest.rule) -> r.rule_id) (Inbox.rules service access) in
+      let rule =
+        propose "add_rule" [ ("pattern", `String "spotify"); ("category_id", `String (Account_id.to_string subscriptions)); ("direction", `String "out") ]
+      in
+      Alcotest.(check string) "apply a rule" "applied" (state (post rule "apply"));
+      Alcotest.(check bool) "it exists" true (List.mem rule (rule_ids ()));
+      Alcotest.(check bool) "and only suggests" true
+        (List.for_all (fun (r : Suggest.rule) -> (not (r.rule_id = rule)) || not r.auto_apply) (Inbox.rules service access));
+      Alcotest.(check string) "undo it" "reverted" (state (post rule "undo"));
+      Alcotest.(check bool) "it is gone" false (List.mem rule (rule_ids ()));
+      let rule2 = propose "add_rule" [ ("pattern", `String "netflix"); ("category_id", `String (Account_id.to_string subscriptions)); ("direction", `Null) ] in
+      ignore (post rule2 "apply");
+      ignore (Test_service_support.ok (Inbox.remove_rule service access ~rule_id:rule2));
+      Alcotest.(check int) "a rule the user already removed cannot be undone" 409 (status (post rule2 "undo"));
+      (* A goal: archived again, unless the user changed it. *)
+      let goals () = List.map (fun (g : Planning_store.goal) -> g.goal_id) (Planning_store.goals service.db (Access.personal access)) in
+      let goal_args name = [ ("name", `String name); ("target_amount", `String "900000"); ("target_date", `String "2027-06-01"); ("monthly_amount", `String "75000") ] in
+      let goal = propose "save_goal" (goal_args "Sofa") in
+      Alcotest.(check string) "apply a goal" "applied" (state (post goal "apply"));
+      Alcotest.(check bool) "it exists" true (List.mem goal (goals ()));
+      Alcotest.(check string) "undo it" "reverted" (state (post goal "undo"));
+      Alcotest.(check bool) "it is archived" false (List.mem goal (goals ()));
+      let again = propose "save_goal" (goal_args "Sofa") in
+      Alcotest.(check string) "the same name can be proposed again once the first is gone" "applied" (state (post again "apply"));
+      let clash = propose "save_goal" (goal_args "sofa") in
+      Alcotest.(check string) "a goal that already exists is out of date" "out_of_date" (state (post clash "apply"));
+      ignore (Test_service_support.ok (Insights.save_goal (ctx ()) ~goal_id:again ~name:"Sofa" ~target_amount:1000000L ~target_date:None ~monthly_amount:None ()));
+      Alcotest.(check int) "a goal the user changed is theirs" 409 (status (post again "undo"));
+      Alcotest.(check bool) "and is kept" true (List.mem again (goals ()));
+      (* A category: closed again, unless it has been used. *)
+      let exists name = List.exists (fun (i : Account_info.t) -> i.account.name = name && not i.account.closed) (Service.accounts service access) in
+      let coffee = propose "new_category" [ ("name", `String "Coffee"); ("kind", `String "expense") ] in
+      Alcotest.(check string) "apply a category" "applied" (state (post coffee "apply"));
+      Alcotest.(check bool) "it exists" true (exists "Coffee");
+      Alcotest.(check string) "undo it" "reverted" (state (post coffee "undo"));
+      Alcotest.(check bool) "it is closed" false (exists "Coffee");
+      let taken = propose "new_category" [ ("name", `String "groceries"); ("kind", `String "expense") ] in
+      Alcotest.(check string) "a category that already exists is out of date" "out_of_date" (state (post taken "apply"));
+      let tea = propose "new_category" [ ("name", `String "Tea"); ("kind", `String "expense") ] in
+      ignore (post tea "apply");
+      let bank = Test_service_support.open_checking service access "Wallet" in
+      let tea_id = (List.find (fun (i : Account_info.t) -> i.account.name = "Tea") (Service.accounts service access)).account.id in
+      (match Service.add_entry service access { (Test_service_support.entry "tea" ~from_account:bank ~to_account:tea_id 500) with value_date = Test_service_support.date "2026-10-20" } with
+       | Ok _ -> ()
+       | Error _ -> Alcotest.fail "entry");
+      Alcotest.(check int) "a category in use cannot be undone" 409 (status (post tea "undo"));
+      Alcotest.(check bool) "and stays open" true (exists "Tea");
+      Alcotest.(check string) "nothing is applied twice" "applied" (state (post tea "apply"));
+      Alcotest.(check int) "the category exists once" 1
+        (List.length (List.filter (fun (i : Account_info.t) -> i.account.name = "Tea") (Service.accounts service access))))
+
 let () =
   Alcotest.run "advisor_http"
     [
@@ -935,5 +1190,8 @@ let () =
           Alcotest.test_case "memory notes endpoints" `Quick memory_endpoints;
           Alcotest.test_case "proposal endpoints" `Quick proposal_endpoints;
           Alcotest.test_case "categorize proposal endpoints" `Quick categorize_proposal_endpoints;
+          Alcotest.test_case "undo endpoints" `Quick undo_endpoints;
+          Alcotest.test_case "undo edge cases" `Quick undo_edge_cases;
+          Alcotest.test_case "rule, goal and category proposals" `Quick simple_proposal_endpoints;
         ] );
     ]

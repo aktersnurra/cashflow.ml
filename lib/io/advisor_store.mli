@@ -97,6 +97,10 @@ val add_proposal :
 val proposal : t -> owner:Cashflow_core.User_id.t -> string -> (proposal, A.error) result
 (** Owner-bound: another user's id is [Not_found]. *)
 
+val undo_proposal : t -> owner:Cashflow_core.User_id.t -> id:string -> (bool, A.error) result
+(** Records that an applied proposal was taken back; the state then reads [Reverted]. [Ok false] when it was not applied or
+    was already undone. *)
+
 val decide_proposal : t -> owner:Cashflow_core.User_id.t -> id:string -> A.proposal_state -> (bool, A.error) result
 (** Moves an [Awaiting] proposal to the given state; [Ok false] when it was already decided. Terminal states are final. *)
 

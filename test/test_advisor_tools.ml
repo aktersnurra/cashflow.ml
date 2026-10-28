@@ -310,6 +310,65 @@ let categories_in_the_users_language () =
   check "in Swedish" (List.mem "Mat & hushåll" names);
   check "not in English" (not (List.mem "Groceries" names))
 
+(* Rules, goals and categories are proposals built from typed, checked values; none is written while proposing. *)
+let propose_simple_cards () =
+  fixture @@ fun service access principal h _ _ ->
+  let _ = seed service access h in
+  let c = conversation service principal A.Personal "simple" in
+  let aliases = ok (P.create_aliases service ~principal ~scope:A.Personal ~conversation:c) in
+  let open Yojson.Safe.Util in
+  let cats = read service principal aliases A.Personal "categories" "{}" in
+  let cats = Yojson.Safe.from_string (json aliases cats) |> member "data" |> to_list in
+  let category name = List.find (fun c -> member "name" c = `String name) cats |> member "reference" |> to_string in
+  let subscriptions = category "Subscriptions" and salary = category "Salary" in
+  (* A handle allows eight tool calls: take a fresh one (account aliases carry over) when it is running out. *)
+  let handle = ref aliases in
+  let fresh () = handle := ok (P.create_aliases service ~principal ~scope:A.Personal ~conversation:c) in
+  let propose name arguments = P.read service ~principal ~scope:A.Personal ~aliases:!handle ~currency:sek_pin (ok (P.parse_call ~name ~arguments)) in
+  let accepted name arguments =
+    let e = match propose name arguments with Ok e -> e | Error _ -> Alcotest.fail ("rejected: " ^ name ^ " " ^ arguments) in
+    (match e.T.result with T.Proposal_card_result _ -> () | _ -> Alcotest.fail (name ^ " is not a card"));
+    let card = P.display e in
+    check (name ^ " can be acted on") (card.proposal = Some A.Awaiting);
+    check (name ^ " tells the model it awaits") (contains (json !handle e) "awaiting_user_confirmation");
+    card
+  in
+  let rejected name arguments = check (name ^ " " ^ arguments) (Result.is_error (propose name arguments)) in
+  let rule = accepted "propose_add_rule" (Printf.sprintf "{\"pattern\":\"  spotify \",\"category\":%S,\"direction\":\"out\"}" subscriptions) in
+  Alcotest.(check int) "a rule shows pattern, direction and category" 3 (List.length rule.facts);
+  check "the pattern is trimmed" (List.exists (fun (f : A.fact) -> f.label = "Pattern" && f.value = A.Text "spotify") rule.facts);
+  rejected "propose_add_rule" (Printf.sprintf "{\"pattern\":\"ab\",\"category\":%S}" subscriptions);
+  rejected "propose_add_rule" (Printf.sprintf "{\"pattern\":\"two\\nlines\",\"category\":%S}" subscriptions);
+  rejected "propose_add_rule" (Printf.sprintf "{\"pattern\":\"spotify\",\"category\":%S,\"direction\":\"out\"}" salary);
+  rejected "propose_add_rule" "{\"pattern\":\"spotify\",\"category\":\"account_notissued_1\"}";
+  fresh ();
+  let goal = accepted "propose_save_goal" "{\"name\":\"Sofa\",\"target_amount\":\"9000.50\",\"target_date\":\"2027-06-01\",\"monthly_amount\":\"750\"}" in
+  check "the goal's target is the exact amount"
+    (List.exists (fun (f : A.fact) -> f.label = "Target" && f.value = A.Money { minor_units = 900050L; currency = sek_pin }) goal.facts);
+  ignore (accepted "propose_save_goal" "{\"name\":\"Rainy day\",\"target_amount\":\"5000\"}");
+  rejected "propose_save_goal" "{\"name\":\"Sofa\",\"target_amount\":\"-5\"}";
+  rejected "propose_save_goal" "{\"name\":\"Sofa\",\"target_amount\":\"0\"}";
+  rejected "propose_save_goal" "{\"name\":\"Sofa\",\"target_amount\":\"10\",\"target_date\":\"2020-01-01\"}";
+  rejected "propose_save_goal" "{\"name\":\"Sofa\",\"target_amount\":\"1.005\"}";
+  (* A name that exists is refused when applied, not here: refusing it here would tell the model which goals exist. *)
+  ignore (accepted "propose_save_goal" "{\"name\":\"secret goal\",\"target_amount\":\"10\"}");
+  fresh ();
+  rejected "propose_save_goal" "{\"name\":\"Sofa\",\"target_amount\":\"100\",\"monthly_amount\":\"101\"}";
+  rejected "propose_save_goal" "{\"name\":\"Sofa\",\"target_amount\":\"100\",\"target_date\":\"9999-12-31\"}";
+  ignore (accepted "propose_save_goal" "{\"name\":\"Sofa\",\"target_amount\":\"100\",\"target_date\":null,\"monthly_amount\":null}");
+  ignore (accepted "propose_add_rule" (Printf.sprintf "{\"pattern\":\"spotify\",\"category\":%S,\"direction\":null}" subscriptions));
+  rejected "propose_new_category" "{\"name\":\"Cof\\u202efee\",\"kind\":\"expense\"}";
+  rejected "propose_new_category" "{\"name\":\"Cof\\u200bfee\",\"kind\":\"expense\"}";
+  rejected "propose_new_category" "{\"name\":\"Cof\\u2028fee\",\"kind\":\"expense\"}";
+  ignore (accepted "propose_new_category" "{\"name\":\"Kaffe & fika på jobbet\",\"kind\":\"expense\"}");
+  rejected "propose_save_goal" "{\"name\":\"\",\"target_amount\":\"10\"}";
+  fresh ();
+  let created = accepted "propose_new_category" "{\"name\":\"Coffee\",\"kind\":\"expense\"}" in
+  check "a category card says it is for you" (List.exists (fun (f : A.fact) -> f.label = "Owner" && f.value = A.Text "personal") created.facts);
+  ignore (accepted "propose_new_category" "{\"name\":\"Side income\",\"kind\":\"income\"}");
+  rejected "propose_new_category" "{\"name\":\"groceries\",\"kind\":\"expense\"}";
+  rejected "propose_new_category" "{\"name\":\"Bad\\u0007name\",\"kind\":\"expense\"}"
+
 let redacted_eight_tools () =
   fixture @@ fun service access principal h _ calls ->
   let bank, category, shared, _, injection = seed service access h in
@@ -763,6 +822,7 @@ let () =
           Alcotest.test_case "eight tools and redaction" `Quick redacted_eight_tools;
           Alcotest.test_case "propose budget card" `Quick propose_budget_card;
           Alcotest.test_case "propose categorize card" `Quick propose_categorize_card;
+          Alcotest.test_case "propose rule, goal and category cards" `Quick propose_simple_cards;
           Alcotest.test_case "categories in the user's language" `Quick categories_in_the_users_language;
           Alcotest.test_case "resource isolation and import freshness" `Quick isolation_and_freshness;
           Alcotest.test_case "household and empty results" `Quick household_and_empty;
