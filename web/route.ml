@@ -33,7 +33,7 @@ let of_path path =
   | [ "inbox" ] -> Inbox
   | [ "accounts" ] -> Accounts
   | [ "accounts"; id ] -> Account id
-  | [ "budgets" ] -> Budgets
+  | [ "plan" ] | [ "budgets" ] -> Budgets
   | [ "forecast" ] -> Forecast
   | [ "household" ] -> Household
   | [ "insights" ] -> Insights
@@ -49,7 +49,7 @@ let title locale = function
   | Transactions _ -> Msg.nav_transactions locale
   | Inbox -> Msg.nav_inbox locale
   | Accounts | Account _ -> Msg.nav_accounts locale
-  | Budgets -> Msg.nav_budgets locale
+  | Budgets -> Msg.nav_plan locale
   | Forecast -> Msg.nav_forecast locale
   | Household -> Msg.nav_household locale
   | Insights -> Msg.nav_insights locale
@@ -57,22 +57,13 @@ let title locale = function
   | Add -> Msg.nav_add locale
   | Import -> Msg.nav_import locale
 
-(* The sidebar shows two sections instead of every page: Money (what happened) and Plan (what is
-   coming). Each page keeps its own address; a strip above the page switches between a section's pages. *)
-type section = Money | Plan [@@deriving equal]
+(* Four visible destinations. Details and old deep links keep their URLs and highlight the
+   destination that owns them; there is no second navigation level to discover. *)
+let primary = [ Home; Transactions { offset = 0; category = None }; Accounts; Budgets ]
 
-let section = function
-  | Transactions _ | Inbox | Accounts | Account _ | Cashflow -> Some Money
-  | Budgets | Forecast | Insights -> Some Plan
-  | Home | Advisor _ | Household | Settings | Add | Import -> None
-
-let section_entry = function Money -> Transactions { offset = 0; category = None } | Plan -> Budgets
-let section_pages = function Money -> [ Transactions { offset = 0; category = None }; Accounts; Cashflow ] | Plan -> [ Budgets; Forecast; Insights ]
-
-(* The page a strip highlights: the inbox is part of Transactions, an account part of Accounts. *)
-let section_page = function
-  | Inbox | Transactions _ -> Transactions { offset = 0; category = None }
-  | Account _ -> Accounts
+let destination = function
+  | Home | Cashflow | Insights -> Home
+  | Inbox | Transactions _ | Add -> Transactions { offset = 0; category = None }
+  | Accounts | Account _ -> Accounts
+  | Budgets | Forecast -> Budgets
   | route -> route
-
-let section_title locale = function Money -> Msg.nav_money locale | Plan -> Msg.nav_plan locale
