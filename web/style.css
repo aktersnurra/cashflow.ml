@@ -623,16 +623,6 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
 .advisor-proposal-hint { margin: 0 0 8px; color: var(--chat-muted); }
 .advisor-proposal .actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .advisor-composer-area { position: sticky; bottom: 14px; z-index: 2; padding-top: 12px; background: var(--chat-paper); }
-/* Phones, as in a native app: no zooming (no double-tap zoom here; pinching is refused in Keyboard), and form
-   fields at 16px, below which iOS zooms in on the field it focuses. While typing, the tab bar steps aside and
-   the composer sits on the keyboard (--keyboard: how much of the page iOS's keyboard covers; 0 where the page
-   itself shrinks above it). */
-html { touch-action: manipulation; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
-@media (hover: none) and (pointer: coarse) {
-  input, select, textarea, .advisor-conversation .advisor-input { font-size: 16px; }
-  html.typing .tabbar { display: none; }
-  html.typing .page { padding-bottom: calc(16px + var(--keyboard, 0px)); }
-  html.typing .advisor-composer-area { bottom: calc(8px + var(--keyboard, 0px)); }
 }
 .advisor-composer { display: grid; grid-template-columns: 1fr auto; align-items: end; border: 1px solid var(--line-strong); border-radius: 18px; padding: 6px 8px 6px 6px; background: var(--chat-composer); }
 .advisor-composer:focus-within { border-color: var(--focus); }
@@ -649,10 +639,11 @@ html { touch-action: manipulation; -webkit-text-size-adjust: 100%; text-size-adj
 .advisor-composer[data-over-limit] .advisor-input-error { display: block; }
 .advisor-composer[data-over-limit] { border-color: var(--negative); }
 .advisor-composer-bottom { display: flex; }
-.advisor-send { display: grid; place-items: center; flex: none; width: 32px; height: 42px; margin-left: auto; padding: 0; border: 0; background: none; color: var(--chat-ink); cursor: pointer; }
-.advisor-send:disabled { color: var(--chat-muted); cursor: default; }
+/* A round accent button with an up arrow; dimmed while there is nothing to send. */
+.advisor-send { display: grid; place-items: center; flex: none; width: 36px; height: 36px; margin: 3px 0 3px auto; padding: 0; border: 0; border-radius: 50%; background: var(--accent); color: var(--on-accent); cursor: pointer; }
+.advisor-send:disabled { background: var(--surface-2); color: var(--chat-muted); cursor: default; }
 .advisor-composer:has(.advisor-input:placeholder-shown) .advisor-send[data-advisor-send] { visibility: hidden; }
-.advisor-send:not(:disabled):hover { color: var(--chat-accent); }
+.advisor-send:not(:disabled):hover { background: var(--accent-hover); color: var(--on-accent); }
 .advisor-status, .advisor-attempt-status { font: 12px/20px var(--chat-ui); color: var(--chat-muted); margin: 8px 4px 0; }
 .advisor-status:empty { display: none; }
 .advisor-conversation-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; padding: 12px 0 4px; }
@@ -667,3 +658,41 @@ html { touch-action: manipulation; -webkit-text-size-adjust: 100%; text-size-adj
 }
 .advisor-mobile-link { display: none; }
 @media (max-width: 760px) { .advisor-mobile-link { display: inline-flex; } }
+
+.advisor-title-menu { display: none; }
+/* Phones: the chat looks and feels like a native chat app. Round buttons float over a blurred header the
+   conversation scrolls under; the composer is a rounded card docked at the bottom (on the keyboard while
+   typing), the text above and the send button at its lower right, always there. */
+@media (max-width: 760px) {
+  .advisor-page .advisor-navigation { top: 0; margin: -20px -16px 12px; padding: calc(10px + env(safe-area-inset-top)) 16px 10px;
+    background: transparent; grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+  /* The blur sits on a layer behind the header: on the header itself it would become the box the fixed
+     history sheet is placed in. */
+  .advisor-page .advisor-navigation::before { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+    background: color-mix(in srgb, var(--bg) 78%, transparent); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); }
+  .advisor-title-button { gap: 12px; margin-left: 0; padding: 0; font-size: 16px; }
+  .advisor-title-button:hover { background: transparent; }
+  .advisor-title-menu { display: grid; place-items: center; flex: none; width: 44px; height: 44px; border-radius: 50%;
+    background: var(--surface); border: 1px solid var(--line); color: var(--text); }
+  .advisor-title-chevron { display: none; }
+  .advisor-navigation-meta { padding-left: 56px; margin-top: -12px; font-size: 12px; }
+  .advisor-actions-button { width: 56px; height: 44px; border-radius: 22px; background: var(--surface); border: 1px solid var(--line); font-size: 22px; }
+  .advisor-composer { grid-template-columns: 1fr; gap: 4px; border-radius: 24px; padding: 8px 8px 8px 10px;
+    background: var(--surface); border-color: var(--line); box-shadow: 0 -8px 24px color-mix(in srgb, var(--bg) 70%, transparent); }
+  .advisor-composer-bottom { justify-content: flex-end; }
+  .advisor-composer:has(.advisor-input:placeholder-shown) .advisor-send[data-advisor-send] { visibility: visible; }
+  .advisor-conversation .advisor-input { padding: 8px 8px 2px; font-size: 16px; line-height: 24px; }
+  /* Docked on the tab bar (54px high) with nothing showing through between them. */
+  .advisor-composer-area { bottom: calc(54px + env(safe-area-inset-bottom)); padding: 8px 0 8px; background: linear-gradient(to bottom, transparent, var(--chat-paper) 16px); }
+  .advisor-status:empty, .advisor-status { margin-top: 4px; }
+}
+/* Phones, as in a native app: no zooming (no double-tap zoom here; pinching is refused in Keyboard), and form
+   fields at 16px, below which iOS zooms in on the field it focuses. While typing, the tab bar steps aside and
+   the composer sits on the keyboard (--keyboard: how much of the page iOS's keyboard covers; 0 where the page
+   itself shrinks above it). */
+html { touch-action: manipulation; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+@media (hover: none) and (pointer: coarse) {
+  input, select, textarea, .advisor-conversation .advisor-input { font-size: 16px; }
+  html.typing .tabbar { display: none; }
+  html.typing .page { padding-bottom: calc(16px + var(--keyboard, 0px)); }
+  html.typing .advisor-composer-area { bottom: var(--keyboard, 0px); }

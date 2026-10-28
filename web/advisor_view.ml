@@ -278,9 +278,9 @@ let render_body ~turns ~show_source ~locale ~(view : C.view) ~dispatch =
                          Vdom.Attr.create "height" "20";
                          Vdom.Attr.create "fill" (if active then "currentColor" else "none");
                          Vdom.Attr.create "stroke" "currentColor";
-                         Vdom.Attr.create "stroke-width" "1.5";
+                         Vdom.Attr.create "stroke-width" "2.25";
                          Vdom.Attr.create "stroke-linecap" "round";
-                         Vdom.Attr.create "stroke-linejoin" "miter";
+                         Vdom.Attr.create "stroke-linejoin" "round";
                          Vdom.Attr.create "aria-hidden" "true";
                        ]
                      [
@@ -292,7 +292,7 @@ let render_body ~turns ~show_source ~locale ~(view : C.view) ~dispatch =
                             []
                         else
                           Vdom.Node.create_svg "path"
-                            ~attrs:[ Vdom.Attr.create "d" "M9 6h8v8H4M8 10l-4 4 4 4" ]
+                            ~attrs:[ Vdom.Attr.create "d" "M12 19V5M5.5 11.5L12 5l6.5 6.5" ]
                             []);
                      ];
                  ]);
