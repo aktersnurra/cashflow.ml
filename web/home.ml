@@ -342,7 +342,7 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
                 (List.map items ~f:(fun (i : Forecast_data.item) ->
                    Vdom.Node.a ~attrs:[Vdom.Attr.class_ "row upcoming-row"; Vdom.Attr.href (Route.to_path (Route.Account i.account_id));
                      Vdom.Attr.on_click (fun _ -> Effect.Many [Effect.Prevent_default; navigate (Route.Account i.account_id)])]
-                     [ Ui.span ~cls:"muted" [Ui.text (Fmt.date i.date)];
+                     [ Ui.span ~cls:"muted" [Ui.text (Fmt.format_date locale (`String i.date))];
                        Ui.div [Ui.div ~cls:"row-title" [Ui.text i.name]; Ui.div ~cls:"row-sub" [Ui.text i.account_name]];
                        Ui.span ~cls:"amount" [Ui.text (Fmt.format_money locale ~code:f.currency i.amount)] ])) ]) ]
   in
