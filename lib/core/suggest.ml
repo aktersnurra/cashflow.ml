@@ -19,10 +19,14 @@ let none : t = fun _ -> None
 let ( <|> ) (a : t) (b : t) : t = fun input -> match a input with Some _ as found -> found | None -> b input
 let first suggesters = List.fold_right ( <|> ) suggesters none
 
-(* Rules carry their own [auto_apply]. History and LLM suggestions are applied without asking only when the
-   bank account opted in and the suggestion is at least as confident as it asked for. *)
-let promote ~threshold (s : suggestion) =
+(* Rules carry their own [auto_apply], and so does history: a merchant a person always filed under the same
+   category is filed there again. Otherwise history and LLM suggestions are applied without asking only when
+   the bank account opted in and the suggestion is at least as confident as it asked for. A suggestion whose
+   category doesn't [fit] the bank account (another owner or currency) is never applied. *)
+let promote ?(fits = true) ~threshold (s : suggestion) =
   match s.source with
+  | _ when not fits -> { s with auto_apply = false }
+  | History _ when s.auto_apply -> s
   | History _ | Llm ->
       { s with auto_apply = (match threshold with Some minimum -> (not s.shared) && s.confidence >= minimum | None -> false) }
   | Rule _ -> s
@@ -66,10 +70,13 @@ let compile (rule : rule) : t =
 
 let of_rules rules = first (List.map compile rules)
 
-(* What this merchant was categorised as before, with more confidence the more often it agreed. *)
-let of_history (lookup : string -> (Account_id.t * int) option) : t =
+(* What this merchant was categorised as before, with more confidence the more often it agreed. When every
+   choice was the same category, from the first one on, it is applied without asking. *)
+let of_history (lookup : string -> (Account_id.t * int * bool) option) : t =
  fun input ->
   match lookup input.merchant with
-  | Some (category_id, times) ->
-      Some { category_id; tags = []; shared = false; source = History times; confidence = min 90 (50 + (times * 10)); auto_apply = false }
+  | Some (category_id, times, consistent) ->
+      Some
+        { category_id; tags = []; shared = false; source = History times; confidence = (if consistent then 95 else min 90 (50 + (times * 10)));
+          auto_apply = consistent }
   | None -> None

@@ -32,10 +32,17 @@ let error_to_string : [< error ] -> string = function
   | `Invalid reason -> reason
   | `Storage_unavailable _ -> "internal error"
 
-type t = { db : Sql.db; now : unit -> Ptime.t; assistant : Llm.t option; logo_network : Logo_fetch.network option; schedule : (unit -> unit) -> unit }
+type t = {
+  db : Sql.db;
+  now : unit -> Ptime.t;
+  assistant : Llm.t option;
+  classifier : Decisions.t option;  (** chooses categories with calibrated probabilities, when configured *)
+  logo_network : Logo_fetch.network option;
+  schedule : (unit -> unit) -> unit;
+}
 
-let make ?(now = fun () -> Ptime_clock.now ()) ?assistant ?logo_network ?(schedule = fun _ -> ()) db =
-  { db; now; assistant; logo_network; schedule }
+let make ?(now = fun () -> Ptime_clock.now ()) ?assistant ?classifier ?logo_network ?(schedule = fun _ -> ()) db =
+  { db; now; assistant; classifier; logo_network; schedule }
 
 (* Every LLM call is logged with its purpose and size, never its content, for the settings page. *)
 let log_llm_call service (access : Access.t) ~purpose ~items ~ok =

@@ -20,7 +20,7 @@ module User_id = Cashflow_core.User_id
 
 let max_rows = 60
 
-let suggest_categories (service : Service.t) access ~(bank_account : Account_info.t) (rows : (int * Statement_format.row) list) =
+let suggest_with_chat (service : Service.t) access ~(bank_account : Account_info.t) (rows : (int * Statement_format.row) list) =
   match service.assistant, rows with
   | None, _ | _, [] -> []
   | Some llm, rows ->
@@ -67,7 +67,7 @@ let suggest_categories (service : Service.t) access ~(bank_account : Account_inf
                       | Some (`Int row), Some (`String id), confidence when List.mem_assoc row rows -> (
                           match valid id with
                           | Some category ->
-                              let confidence = match confidence with Some (`Int c) -> max 0 (min 80 c) | _ -> 50 in
+                              let confidence = match confidence with Some (`Int c) -> max 0 (min 75 c) | _ -> 50 in
                               Some (row, { Suggest.category_id = category.account.id; tags = []; shared = false; source = Llm; confidence; auto_apply = false })
                           | None -> None)
                       | _ -> None)
@@ -75,6 +75,91 @@ let suggest_categories (service : Service.t) access ~(bank_account : Account_inf
                 items
           | _ -> [])
       | _ -> []
+
+(* With a decisions model (Jev), each row is a choice among the bank account's owner's categories, money
+   out among expense categories and money in among income ones, or none of them. The model sees what
+   the chat model would (merchant text, date, amount, category names) and answers with a calibrated
+   probability, which is the suggestion's confidence: at 80, about four in five such answers are right.
+   Rows it couldn't answer (an error, a refusal) are left to the chat model. *)
+let decision_batch = 20
+
+let suggest_with_decisions (service : Service.t) access (decisions : Decisions.t) ~(bank_account : Account_info.t) (rows : (int * Statement_format.row) list) =
+  let categories =
+    List.filter
+      (fun (i : Account_info.t) ->
+        (i.account.kind = Expense || i.account.kind = Income) && i.details.role = None && not i.account.closed
+        && Owner.equal i.account.owner bank_account.account.owner)
+      (Account_store.for_owner service.db bank_account.account.owner)
+  in
+  let locale = (Access.user access).locale in
+  let scale = Currency.scale bank_account.account.currency in
+  (* Option names are what the model reads, so they are the categories' names, made unique. *)
+  let named kind =
+    let seen = Hashtbl.create 16 in
+    List.filter_map
+      (fun (i : Account_info.t) ->
+        if i.account.kind <> kind then None
+        else
+          let base = Starter.display_name ~locale i in
+          let n = Option.value (Hashtbl.find_opt seen base) ~default:0 in
+          Hashtbl.replace seen base (n + 1);
+          Some ((if n = 0 then base else Printf.sprintf "%s (%d)" base (n + 1)), i))
+      categories
+  in
+  let expenses = named Expense and incomes = named Income in
+  let none = "None of these" in
+  let options named =
+    List.map (fun (name, (i : Account_info.t)) -> (name, Printf.sprintf "The %s category \"%s\"" (Account.kind_to_string i.account.kind) name)) named
+    @ [ (none, "No category in the list fits this transaction") ]
+  in
+  let question (index, (r : Statement_format.row)) =
+    let out = Int64.compare r.amount 0L < 0 in
+    let text = r.description ^ match r.counterparty with Some c when String.trim c <> "" -> " / " ^ c | _ -> "" in
+    { Decisions.id = "row_" ^ string_of_int index;
+      instructions =
+        Printf.sprintf "Which category does this bank transaction belong to? %s on %s: \"%s\", %s %s." (if out then "Money out" else "Money in")
+          (Date.to_string r.booking_date) text (Json.decimal ~scale (Int64.abs r.amount)) (Currency.code bank_account.account.currency);
+      options = options (if out then expenses else incomes) }
+  in
+  let state = "Rows from a personal finance ledger's bank statement, each to be filed under one of the person's own categories." in
+  let rec batches acc = function
+    | [] -> List.rev acc
+    | rows ->
+        let batch = List.filteri (fun i _ -> i < decision_batch) rows and rest = List.filteri (fun i _ -> i >= decision_batch) rows in
+        batches (batch :: acc) rest
+  in
+  List.concat_map
+    (fun batch ->
+      let questions = List.map question batch in
+      let result = decisions.choose ~state questions in
+      Service.log_llm_call service access ~purpose:"categorise_decisions" ~items:(List.length batch) ~ok:(Result.is_ok result);
+      match result with
+      | Error reason ->
+          Logs.warn (fun m -> m "decisions model failed, falling back: %s" reason);
+          []
+      | Ok answers ->
+          List.filter_map
+            (fun (index, (r : Statement_format.row)) ->
+              match List.assoc_opt ("row_" ^ string_of_int index) answers with
+              | Some { Decisions.choice; probability } when choice <> none -> (
+                  let named = if Int64.compare r.amount 0L < 0 then expenses else incomes in
+                  match List.assoc_opt choice named with
+                  | Some category ->
+                      let confidence = max 0 (min 99 (int_of_float (Float.round (probability *. 100.)))) in
+                      Some (index, { Suggest.category_id = category.account.id; tags = []; shared = false; source = Llm; confidence; auto_apply = false })
+                  | None -> None)
+              | _ -> None)
+            batch)
+    (batches [] rows)
+
+let suggest_categories (service : Service.t) access ~(bank_account : Account_info.t) (rows : (int * Statement_format.row) list) =
+  let decided =
+    match service.classifier, rows with
+    | Some decisions, _ :: _ -> suggest_with_decisions service access decisions ~bank_account rows
+    | _ -> []
+  in
+  let rest = List.filter (fun (index, _) -> not (List.mem_assoc index decided)) rows in
+  decided @ suggest_with_chat service access ~bank_account rest
 
 let cache_get = Sql.(stmt "SELECT content FROM llm_cache WHERE cache_key = ?" (text @-> nil) (opt (row (text @-> nil) Fun.id)))
 let cache_put = Sql.(stmt "INSERT OR REPLACE INTO llm_cache (cache_key, content, model, created_at) VALUES (?, ?, ?, ?)" Codec.(text @-> text @-> text @-> time @-> nil) exec)

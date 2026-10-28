@@ -274,19 +274,24 @@ let test_rules_auto_apply () =
   Alcotest.(check int) "spotify skipped the inbox" 2 summary.inbox_count;
   Alcotest.(check int64) "and was categorised" 238_00L (balance service alice subscriptions)
 
-(* History suggestions wait in the inbox until the bank account asks for the confident ones to be applied. *)
+(* A merchant a person filed under different categories is only a suggestion: it waits in the inbox until the
+   bank account asks for the confident ones to be applied. *)
 let test_auto_apply_threshold () =
   let service, alice, checking = setup () in
   let ctx = Import.context service alice in
   ignore (imported (Import.confirm ctx (request checking october)));
   let subscriptions = account_named service alice "Subscriptions" in
-  let spotify = (List.find (fun (v : Inbox.item_view) -> v.transfer.transfer.memo.description = "SPOTIFY") (Inbox.list service alice ~limit:50)).item.transfer_id in
-  ignore (ok (Inbox.categorize service alice ~transfer_id:spotify ~category_id:subscriptions ()));
+  let entertainment = account_named service alice "Entertainment" in
+  let spotifys = List.filter (fun (v : Inbox.item_view) -> v.transfer.transfer.memo.description = "SPOTIFY") (Inbox.list service alice ~limit:50) in
+  let first, second = match spotifys with [ a; b ] -> (a.item.transfer_id, b.item.transfer_id) | _ -> Alcotest.fail "two spotify rows" in
+  ignore (ok (Inbox.categorize service alice ~transfer_id:first ~category_id:subscriptions ()));
+  ignore (ok (Inbox.categorize service alice ~transfer_id:second ~category_id:entertainment ()));
+  let subscriptions = entertainment in
   let file day = Printf.sprintf "Bokföringsdag;Text;Belopp;Saldo\n2026-11-%02d;SPOTIFY;-119,00;9 393,00\n" day in
   let import day = imported (Import.confirm (Import.context service alice) (request checking (file day))) in
   let set minimum = ok (Inbox.set_auto_apply service alice ~account_id:checking ~min_confidence:minimum) in
   Alcotest.(check (list (pair string int))) "off by default" [] (List.map (fun (id, n) -> (Account_id.to_string id, n)) (Inbox.auto_apply_settings service alice));
-  Alcotest.(check int) "history waits in the inbox" 1 (import 10).inbox_count;
+  Alcotest.(check int) "mixed history waits in the inbox" 1 (import 10).inbox_count;
   set (Some 90);
   Alcotest.(check int) "a threshold above its confidence still waits" 1 (import 11).inbox_count;
   let before = balance service alice subscriptions in
@@ -301,6 +306,28 @@ let test_auto_apply_threshold () =
   Alcotest.(check (list string)) "nor see it" [] (List.map (fun (id, _) -> Account_id.to_string id) (Inbox.auto_apply_settings service bob));
   Alcotest.(check bool) "only a bank account can opt in" true
     (Result.is_error (Inbox.set_auto_apply service alice ~account_id:subscriptions ~min_confidence:(Some 60)))
+
+(* Filed once by a person, a merchant is filed again by itself: the other rows waiting from it at once, and
+   the next import's without asking. What cashflow filed by itself teaches nothing. *)
+let test_filed_once_then_automatic () =
+  let service, alice, checking = setup () in
+  let ctx = Import.context service alice in
+  ignore (imported (Import.confirm ctx (request checking october)));
+  let subscriptions = account_named service alice "Subscriptions" in
+  let waiting description = List.filter (fun (v : Inbox.item_view) -> v.transfer.transfer.memo.description = description) (Inbox.list service alice ~limit:50) in
+  let spotify = (List.hd (waiting "SPOTIFY")).item.transfer_id in
+  ignore (ok (Inbox.categorize service alice ~transfer_id:spotify ~category_id:subscriptions ()));
+  Alcotest.(check int) "the other spotify row followed" 0 (List.length (waiting "SPOTIFY"));
+  Alcotest.(check int64) "both filed" 238_00L (balance service alice subscriptions);
+  Alcotest.(check int) "the rest still wait" 2 (List.length (Inbox.list service alice ~limit:50));
+  let november = "Bokföringsdag;Text;Belopp;Saldo\n2026-11-15;SPOTIFY;-119,00;9 393,00\n" in
+  let summary = imported (Import.confirm ctx (request checking november)) in
+  Alcotest.(check int) "the next one skips the inbox" 0 summary.inbox_count;
+  Alcotest.(check int64) "filed there" 357_00L (balance service alice subscriptions);
+  (* Only the person's own choice counts: one, not the two filed alongside or on import. *)
+  match Import_store.history service.db (Access.personal alice) (Import_store.find_item service.db spotify |> Option.get).merchant_key with
+  | Some (_, times, consistent) -> Alcotest.(check (pair int bool)) "learned from the person only" (1, true) (times, consistent)
+  | None -> Alcotest.fail "nothing learned"
 
 let test_pair_and_share () =
   let service = make_service () in
@@ -1066,6 +1093,7 @@ let () =
           Alcotest.test_case "logo scheduling" `Quick test_logo_scheduling;
           Alcotest.test_case "manual merchant query" `Quick test_manual_merchant_query;
           Alcotest.test_case "rules auto-apply" `Quick test_rules_auto_apply;
+          Alcotest.test_case "filed once, then automatic" `Quick test_filed_once_then_automatic;
           Alcotest.test_case "auto-apply threshold" `Quick test_auto_apply_threshold;
           Alcotest.test_case "auto-apply respects owner and currency" `Quick test_auto_apply_respects_owner_and_currency ] );
       ( "inbox",

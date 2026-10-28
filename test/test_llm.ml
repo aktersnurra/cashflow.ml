@@ -2,6 +2,7 @@ module Config = Cashflow_io.Config
 module Import = Cashflow_io.Import
 module Inbox = Cashflow_io.Inbox
 module Llm = Cashflow_io.Llm
+module Decisions = Cashflow_io.Decisions
 module Llm_features = Cashflow_io.Llm_features
 module Service = Cashflow_io.Service
 module Sql = Cashflow_io.Sql
@@ -48,7 +49,7 @@ let test_suggestions_and_privacy () =
   (match (List.hd preview.rows).suggestion with
   | Some { source = Llm; confidence; category_id; _ } ->
       Alcotest.(check bool) "groceries" true (Account_id.equal category_id (account_named service alice "Groceries"));
-      Alcotest.(check int) "confidence is capped below rules" 80 confidence
+      Alcotest.(check int) "confidence is capped below rules and the auto-file threshold" 75 confidence
   | _ -> Alcotest.fail "no LLM suggestion");
   let prompt = List.hd !prompts in
   Alcotest.(check bool) "no account name" false (Str_compat.contains ~sub:"secret" prompt);
@@ -332,6 +333,58 @@ let test_layout_cells_outside_the_file () =
       | Ok () -> Alcotest.fail ("accepted " ^ cell))
     [ {|{"row": -1, "column": 0}|}; {|{"row": 0, "column": -1}|}; {|{"row": 99, "column": 0}|}; {|{"row": 1, "column": 9}|} ]
 
+(* Jev chooses among the owner's categories with a calibrated probability, which is the suggestion's
+   confidence; a row it can't answer goes to the chat model. *)
+let test_decisions_classifier () =
+  let asked = ref [] in
+  let fail_next = ref false in
+  let classifier : Decisions.t =
+    { model = "typesafe/jev-1.14";
+      choose =
+        (fun ~state:_ questions ->
+          asked := questions @ !asked;
+          if !fail_next then Error "HTTP 503"
+          else Ok (List.map (fun (q : Decisions.question) -> (q.id, { Decisions.choice = fst (List.find (fun (name, _) -> name = "Groceries") q.options); probability = 0.934 })) questions)) }
+  in
+  let service = Service.make ~now:(fun () -> now) ~assistant:fake ~classifier (Store_sqlite.open_memory ()) in
+  let alice = sign_in service "alice" in
+  let checking = open_checking service alice ~statement_backed:true "Alice's secret checking" in
+  let csv = "Datum;Text;Belopp;Saldo\n2026-10-20;WILLYS HEMMA;-412,00;87 654,00\n" in
+  let preview () = ok_import (Import.preview (Import.context service alice) { target = Import.Existing checking; file_name = None; content = csv; decisions = [] }) in
+  (match (List.hd (preview ()).rows).suggestion with
+  | Some { source = Llm; confidence; category_id; _ } ->
+      Alcotest.(check bool) "groceries" true (Account_id.equal category_id (account_named service alice "Groceries"));
+      Alcotest.(check int) "its probability" 93 confidence
+  | _ -> Alcotest.fail "no suggestion");
+  (match !asked with
+  | [ q ] ->
+      let names = List.map fst q.options in
+      Alcotest.(check bool) "spending is asked among expense categories" true (List.mem "Groceries" names && not (List.mem "Salary" names));
+      Alcotest.(check bool) "or none of them" true (List.mem "None of these" names);
+      Alcotest.(check bool) "the merchant, not the account" true
+        (Str_compat.contains ~sub:"WILLYS" q.instructions && not (Str_compat.contains ~sub:"secret" q.instructions) && not (Str_compat.contains ~sub:"87" q.instructions))
+  | _ -> Alcotest.fail "expected one question");
+  fail_next := true;
+  match (List.hd (preview ()).rows).suggestion with
+  | Some { source = Llm; confidence = 75; _ } -> ()
+  | _ -> Alcotest.fail "a failed classifier should fall back to the chat model"
+
+(* What goes over the wire, and how answers are read. *)
+let test_decisions_wire () =
+  let q = { Decisions.id = "row_0"; instructions = "Which?"; options = [ ("Groceries", "Food"); ("None of these", "Nothing fits") ] } in
+  let body = Decisions.request_body ~model:"typesafe/jev-1.14" ~state:"rows" [ q ] in
+  let open Yojson.Safe.Util in
+  Alcotest.(check string) "a choice question" "choice" (body |> member "questions" |> member "row_0" |> member "type" |> to_string);
+  Alcotest.(check bool) "zero data retention" true (body |> member "provider" |> member "zdr" = `Bool true);
+  Alcotest.(check string) "no data collection" "deny" (body |> member "provider" |> member "data_collection" |> to_string);
+  let reply = {|{"model":"typesafe/jev-1.14","answers":{"row_0":{"choice":"Groceries","probabilities":{"Groceries":0.91,"None of these":0.09},"confidence":0.8},"row_9":{"choice":"x"}}}|} in
+  (match Decisions.answers_of_response [ q ] reply with
+  | Ok [ ("row_0", { choice = "Groceries"; probability }) ] -> Alcotest.(check (float 1e-9)) "probability of the choice" 0.91 probability
+  | _ -> Alcotest.fail "answer not read");
+  Alcotest.(check bool) "an unknown option is dropped" true
+    (Decisions.answers_of_response [ q ] {|{"answers":{"row_0":{"choice":"Rent","probabilities":{"Rent":1}}}}|} = Ok []);
+  Alcotest.(check bool) "an error body is an error" true (Result.is_error (Decisions.answers_of_response [ q ] {|{"error":{"message":"bad"}}|}))
+
 let openrouter_config fields =
   match Config.parse
     (Printf.sprintf
@@ -425,7 +478,9 @@ let () =
           Alcotest.test_case "weekly brief follows the reader's timezone" `Quick test_weekly_brief_follows_the_readers_timezone;
           Alcotest.test_case "no network inside the import transaction" `Quick test_no_network_inside_the_import_transaction;
           Alcotest.test_case "an unknown format read by the assistant" `Quick test_unknown_format_read_by_the_assistant;
-          Alcotest.test_case "layout cells outside the file" `Quick test_layout_cells_outside_the_file ] );
+          Alcotest.test_case "layout cells outside the file" `Quick test_layout_cells_outside_the_file;
+          Alcotest.test_case "decisions classifier" `Quick test_decisions_classifier;
+          Alcotest.test_case "decisions wire" `Quick test_decisions_wire ] );
       ( "openrouter",
         [ Alcotest.test_case "privacy policy in requests" `Quick test_openrouter_privacy_policy;
           Alcotest.test_case "advisor models" `Quick test_advisor_models;

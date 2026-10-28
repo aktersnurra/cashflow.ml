@@ -190,13 +190,20 @@ let update_item =
     Codec.(account_id @-> int @-> text @-> time @-> transfer_id @-> nil)
     exec
 
-(* Only what a person chose teaches: a row filed on import without asking is still at revision 0. *)
+(* Only what a person chose teaches: a row filed on import without asking is still at revision 0, and one
+   cashflow filed by itself later is marked so. The latest choice, how often it was made, and whether every
+   choice for this merchant was the same category. *)
 let history_for =
+  let chosen = "FROM inbox_items i JOIN accounts a ON a.id = i.current_account_id \
+                WHERE i.merchant_key = ?1 AND i.merchant_key <> '' AND i.status = 'done' AND i.revision > 0 AND i.filed_by = 'person' \
+                AND a.owner_kind = ?2 AND a.owner_id = ?3 AND a.closed = 0" in
   stmt
-    "SELECT i.current_account_id, count(*) FROM inbox_items i JOIN accounts a ON a.id = i.current_account_id \
-     WHERE i.merchant_key = ? AND i.status = 'done' AND i.revision > 0 AND a.owner_kind = ? AND a.owner_id = ? AND a.closed = 0 \
-     GROUP BY i.current_account_id ORDER BY max(i.updated_at) DESC LIMIT 1"
-    (text @-> text @-> text @-> nil) (opt (row Codec.(account_id @-> int @-> nil) (fun id n -> (id, n))))
+    ("SELECT i.current_account_id, count(*), (SELECT count(DISTINCT i.current_account_id) " ^ chosen ^ ") " ^ chosen
+     ^ " GROUP BY i.current_account_id ORDER BY max(i.updated_at) DESC LIMIT 1")
+    (text @-> text @-> text @-> nil) (opt (row Codec.(account_id @-> int @-> int @-> nil) (fun id n kinds -> (id, n, kinds = 1))))
+
+let set_filed_by_stmt = stmt "UPDATE inbox_items SET filed_by = ? WHERE transfer_id = ?" Codec.(text @-> transfer_id @-> nil) exec
+let set_filed_by db transfer_id by = run db set_filed_by_stmt (match by with `Person -> "person" | `Auto -> "auto") transfer_id
 
 let add_item db ~now (i : item) =
   run db insert_item i.transfer_id i.bank_account_id i.current_account_id i.suggested_account_id i.suggestion_source i.suggestion_confidence

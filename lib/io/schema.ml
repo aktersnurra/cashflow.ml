@@ -347,6 +347,13 @@ ALTER TABLE advisor_proposals ADD COLUMN undone_at TEXT;
 -- A household belongs to the person who created it; there is no deployment-wide admin any more.
 ALTER TABLE users DROP COLUMN is_admin;
 |}
+    );
+    ( 13,
+      {|
+-- Who filed a row: a person, or cashflow by itself (history, a rule, the classifier, the advisor when asked).
+-- Only what a person chose teaches the next suggestion.
+ALTER TABLE inbox_items ADD COLUMN filed_by TEXT NOT NULL DEFAULT 'person' CHECK (filed_by IN ('person', 'auto'));
+|}
     ) ]
 
 let latest_version = List.fold_left (fun latest (version, _) -> max latest version) 0 migrations
