@@ -25,7 +25,7 @@ let test_sign_in_seeds_the_chart_once () =
    included, and a renamed category keeps its name. *)
 let test_changing_language_writes_no_accounts () =
   let service = make_service () in
-  let alice = sign_in service ~admin:true "alice" in
+  let alice = sign_in service "alice" in
   ignore (ok (Service.create_household service alice ~name:"Home" ~default_currency:"SEK"));
   let alice = Service.access_for service (Access.user alice) in
   let other = account_named service alice "Other" in
@@ -45,7 +45,7 @@ let test_new_books_are_seeded_in_english () =
   let service = make_service () in
   let alice =
     Service.sign_in service
-      { issuer = "https://id.example"; subject = "alice"; display_name = Some "alice"; email = None; is_admin = Some true; locale = Some "sv" }
+      { issuer = "https://id.example"; subject = "alice"; display_name = Some "alice"; email = None; locale = Some "sv" }
   in
   Alcotest.(check string) "a Swedish user" "sv" (Access.user alice).locale;
   ignore (account_named service alice "Groceries");
@@ -129,7 +129,7 @@ let test_users_are_isolated () =
 
 let test_household_sharing_and_masking () =
   let service = make_service () in
-  let alice = sign_in service ~admin:true "alice" and bob = sign_in service "bob" in
+  let alice = sign_in service "alice" and bob = sign_in service "bob" in
   let household = ok (Service.create_household service alice ~name:"Home" ~default_currency:"SEK") in
   let alice = Service.access_for service (Access.user alice) in
   let shared = open_checking service alice ~owner:(Household household.id) "Shared" in
@@ -150,20 +150,32 @@ let test_household_sharing_and_masking () =
   Alcotest.(check bool) "bob can't move alice's money" true
     (Result.is_error (Service.add_entry service bob (entry "bob takes" ~from_account:alices ~to_account:groceries 1)))
 
-let test_only_admins_add_household_bank_accounts () =
+(* Whoever creates a household owns it: only they invite, rename, add its bank accounts and close them. A member
+   uses it (categories, entries, uploads) but doesn't run it. Anyone may start a household of their own. *)
+let test_the_creator_owns_the_household () =
   let service = make_service () in
-  let alice = sign_in service ~admin:true "alice" and bob = sign_in service "bob" in
+  let alice = sign_in service "alice" and bob = sign_in service "bob" in
   let household = ok (Service.create_household service alice ~name:"Home" ~default_currency:"SEK") in
-  ignore (ok (Service.invite_member service (Service.access_for service (Access.user alice)) ~email:"bob@example.com"));
+  let alice = Service.access_for service (Access.user alice) in
+  Alcotest.(check bool) "the creator is the owner" true (Access.is_owner alice);
+  ignore (ok (Service.invite_member service alice ~email:"bob@example.com"));
   let bob = ok (Service.respond_to_invitation service bob ~household_id:household.id ~accept:true) in
-  let attempt kind =
-    Service.open_account service bob ~key:(key "bob-opens") ~owner:(Household household.id) ~kind ~name:"Bob's" ~currency:"SEK"
-      ~flags:Account.no_flags ~details:Account_info.no_details
+  Alcotest.(check bool) "a member is not" false (Access.is_owner bob);
+  let attempt access kind =
+    Service.open_account service access ~key:(key (Printf.sprintf "opens-%b" (Access.is_owner access))) ~owner:(Household household.id) ~kind ~name:"Bank"
+      ~currency:"SEK" ~flags:Account.no_flags ~details:Account_info.no_details
   in
-  Alcotest.(check bool) "no asset" true (Result.is_error (attempt Asset));
-  Alcotest.(check bool) "but a category" true (Result.is_ok (attempt Expense));
-  Alcotest.(check bool) "non-admins can't create households" true
-    (Result.is_error (Service.create_household service (sign_in service "carol") ~name:"x" ~default_currency:"SEK"))
+  Alcotest.(check bool) "a member can't add a bank account" true (Result.is_error (attempt bob Asset));
+  Alcotest.(check bool) "but a category" true (Result.is_ok (attempt bob Expense));
+  let shared = match attempt alice Asset with Ok (`Created info | `Exists info) -> info.account.id | Error e -> Alcotest.fail (Service.error_to_string e) in
+  Alcotest.(check bool) "the owner can" true (Result.is_ok (Service.find_account service alice shared));
+  Alcotest.(check bool) "a member can't close it" true (Result.is_error (Service.close_account service bob shared));
+  Alcotest.(check bool) "a member can't invite" true (Result.is_error (Service.invite_member service bob ~email:"alice@example.com"));
+  Alcotest.(check bool) "or change the household" true
+    (Result.is_error (Service.update_household service bob ~name:(Some "Mine") ~report_split_bp:5000 ~pay_cycle:household.pay_cycle));
+  Alcotest.(check bool) "the owner can close it" true (Result.is_ok (Service.close_account service alice shared));
+  Alcotest.(check bool) "anyone may start a household" true
+    (Result.is_ok (Service.create_household service (sign_in service "carol") ~name:"Carol's" ~default_currency:"SEK"))
 
 let test_manual_entry_on_statement_account_is_pending () =
   let service = make_service () in
@@ -234,7 +246,7 @@ let () =
           Alcotest.test_case "account json marks starters" `Quick test_account_json_marks_starters;
           Alcotest.test_case "users are isolated" `Quick test_users_are_isolated;
           Alcotest.test_case "household sharing and masking" `Quick test_household_sharing_and_masking;
-          Alcotest.test_case "only admins add household bank accounts" `Quick test_only_admins_add_household_bank_accounts ] );
+          Alcotest.test_case "the creator owns the household" `Quick test_the_creator_owns_the_household ] );
       ( "entries",
         [ Alcotest.test_case "manual entry on a statement account is pending" `Quick test_manual_entry_on_statement_account_is_pending;
           Alcotest.test_case "opening balance and correction" `Quick test_opening_balance_and_correction ] );

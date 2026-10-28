@@ -62,7 +62,7 @@ let access_fibers () =
     id=Option.get (C.User_id.of_string (Printf.sprintf "00000000-0000-4000-8000-%012d" n));
     oidc_issuer="test"; oidc_subject=string_of_int n; display_name="Fiber";
     email=None; locale="sv"; timezone="UTC"; default_currency="SEK";
-    pay_cycle=C.Pay_cycle_setting.calendar_month; is_admin=false; created_at=clock
+    pay_cycle=C.Pay_cycle_setting.calendar_month; created_at=clock
   } in
   let accesses = Array.init 2 (fun i -> C.Access.make ~user:(user (i+1)) ~household:None) in
   let times = [|clock; ok (C.Time.parse_offset_datetime "2026-10-22T00:00:00Z")|] in

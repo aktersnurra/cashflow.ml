@@ -83,7 +83,7 @@ let storage () =
   Alcotest.(check bool) "typed SQL failure" true (result = Error (Reporting_error.Storage_unavailable Resolve_currency))
 let reconciliation () =
   let service = make_service () in
-  let access = sign_in service ~admin:true "alice" in
+  let access = sign_in service "alice" in
   let household = ok (Service.create_household service access ~name:"Home" ~default_currency:"SEK") in
   let access = Service.access_for service (Access.user access) in
   let bank = open_checking service access ~statement_backed:true "Bank" in
@@ -162,7 +162,7 @@ let cancellation () =
 
 let captured_visibility () =
   let service = make_service () in
-  let alice = sign_in service "alice" and bob = sign_in service ~admin:true "bob" in
+  let alice = sign_in service "alice" and bob = sign_in service "bob" in
   let household = ok (Service.create_household service bob ~name:"Foreign" ~default_currency:"SEK") in
   let bob = Service.access_for service (Access.user bob) in
   let checking = open_checking service alice "Visible bank" in
@@ -236,7 +236,7 @@ let goal ?(currency = "SEK") owner name monthly : Planning_store.goal =
     monthly_amount = Some monthly; earmarks = [] }
 let forecast_facts () =
   let service = make_service () in
-  let alice = sign_in service ~admin:true "alice" and bob = sign_in service "bob" in
+  let alice = sign_in service "alice" and bob = sign_in service "bob" in
   Alcotest.(check bool) "foreign principal" true (load_forecast service alice (forecast_request bob) = Error Reporting_error.Access_denied);
   let checking = open_checking service alice "Checking" in
   let batch n last undone : Import_store.batch =
@@ -256,7 +256,7 @@ let forecast_facts () =
 
 let forecast_contribution () =
   let service = make_service () in
-  let alice = sign_in service ~admin:true "alice" in
+  let alice = sign_in service "alice" in
   let household = ok (Service.create_household service alice ~name:"Home" ~default_currency:"SEK") in
   let alice = Service.access_for service (Access.user alice) in
   let checking = open_checking service alice "Checking" in
@@ -276,7 +276,7 @@ let forecast_contribution () =
    as the transfer it is, so the contribution plan replaces it instead of adding a second one. *)
 let forecast_paired_imports () =
   let service = make_service () in
-  let alice = sign_in service ~admin:true "alice" in
+  let alice = sign_in service "alice" in
   let household = ok (Service.create_household service alice ~name:"Home" ~default_currency:"SEK") in
   let alice = Service.access_for service (Access.user alice) in
   let checking = open_checking service alice ~statement_backed:true "Checking" in

@@ -11,7 +11,7 @@ open Sql
 let log_src = Logs.Src.create "cashflow.web_auth" ~doc:"Web sign-in and sessions"
 module Log = (val Logs.src_log log_src : Logs.LOG)
 
-type config = { issuer : string; client_id : string; client_secret : string; redirect_uri : string; admin_group : string }
+type config = { issuer : string; client_id : string; client_secret : string; redirect_uri : string }
 
 type t = { config : config; client : Oidc.client; verify_id_token : Oidc.t; discovery : Oidc.discovery option ref }
 
@@ -63,7 +63,7 @@ let begin_login auth db ~now ~return_to =
           let uri =
             Uri.add_query_params' (Uri.of_string endpoint)
               [ ("response_type", "code"); ("client_id", auth.config.client_id); ("redirect_uri", auth.config.redirect_uri);
-                ("scope", "openid profile email groups"); ("state", state); ("nonce", nonce); ("code_challenge", s256 verifier);
+                ("scope", "openid profile email"); ("state", state); ("nonce", nonce); ("code_challenge", s256 verifier);
                 ("code_challenge_method", "S256") ]
           in
           Ok (Uri.to_string uri, state))
@@ -116,8 +116,7 @@ let finish_login auth (service : Service.t) ?locale ~now ~state ~code ~cookie_st
                         | Ok claims ->
                             let access =
                               Service.sign_in service
-                                { issuer = claims.issuer; subject = claims.subject; display_name = claims.name; email = claims.email;
-                                  is_admin = Option.map (List.mem auth.config.admin_group) claims.groups; locale }
+                                { issuer = claims.issuer; subject = claims.subject; display_name = claims.name; email = claims.email; locale }
                             in
                             let user = Access.user access in
                             Log.info (fun m -> m "user=%s signed in" (User_id.to_string user.id));

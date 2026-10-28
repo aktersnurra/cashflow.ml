@@ -109,10 +109,9 @@ let update_settings service access (settings : User.settings) =
     Sql.transaction service.db (fun () -> Directory.save_settings service.db (Access.user access) settings);
     Ok (access_for service (Option.get (Directory.find_user service.db (Access.user access).id))))
 
-let require_admin access = if Access.is_admin access then Ok () else Error (`Forbidden "only an admin can do this")
+let require_owner access = if Access.is_owner access then Ok () else Error (`Forbidden "only the household's owner can do this")
 
 let create_household service access ~name ~default_currency =
-  let* () = require_admin access in
   let name = String.trim name in
   if name = "" then Error (`Invalid "household name must not be empty")
   else if Option.is_some (Access.household access) then Error (`Invalid "you already belong to a household")
@@ -128,8 +127,8 @@ let create_household service access ~name ~default_currency =
 let own_household access = Option.to_result ~none:(`Invalid "you don't belong to a household") (Access.household access)
 
 let invite_member service access ~email =
-  let* () = require_admin access in
   let* household = own_household access in
+  let* () = require_owner access in
   match Directory.find_user_by_email service.db email with
   | None -> Error (`Not_found ("a user with email " ^ email ^ " (they need to sign in once first)"))
   | Some invitee ->
@@ -161,8 +160,8 @@ let members service access =
   Ok (Directory.members service.db household.id)
 
 let update_household service access ~name ~report_split_bp ~pay_cycle =
-  let* () = require_admin access in
   let* household = own_household access in
+  let* () = require_owner access in
   if report_split_bp < 0 || report_split_bp > 10_000 then Error (`Invalid "report split must be between 0 and 10000 basis points")
   else
     let household = { household with name = Option.value name ~default:household.name; report_split_bp; pay_cycle } in
@@ -184,7 +183,7 @@ let find_account service access id =
   | None -> Error (`Not_found "account")
 
 (* Anyone may open accounts of their own. In a household, any member may add categories, but only
-   an admin adds the household's bank accounts and liabilities, except the one a member needs for
+   its owner adds the household's bank accounts and liabilities, except the one a member needs for
    sharing a cost: what the household owes them (§4.6). *)
 let may_open ?(details = Account_info.no_details) access owner (kind : Account.kind) =
   let owed_to_me = details.role = Some Payable && Option.equal User_id.equal details.member_id (Some (Access.user access).id) in
@@ -192,8 +191,8 @@ let may_open ?(details = Account_info.no_details) access owner (kind : Account.k
   else
     match owner, kind with
     | Owner.Household _, Liability when owed_to_me -> Ok ()
-    | Owner.Household _, (Asset | Liability) when not (Access.is_admin access) ->
-        Error (`Forbidden "only an admin can add household bank accounts")
+    | Owner.Household _, (Asset | Liability) when not (Access.is_owner access) ->
+        Error (`Forbidden "only the household's owner can add or close its bank accounts")
     | _ -> Ok ()
 
 let open_account service access ~key ~owner ~kind ~name ~currency:code ~flags ~(details : Account_info.details) =

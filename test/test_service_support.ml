@@ -17,9 +17,9 @@ let key value = Result.get_ok (Idempotency_key.of_string value)
 let amount value = Option.get (Amount.of_int64 (Int64.of_int value))
 let date value = Result.get_ok (Date.of_string value)
 
-let sign_in service ?(admin = false) name =
+let sign_in service name =
   Service.sign_in service
-    { issuer = "https://id.example"; subject = name; display_name = Some name; email = Some (name ^ "@example.com"); is_admin = Some admin; locale = None }
+    { issuer = "https://id.example"; subject = name; display_name = Some name; email = Some (name ^ "@example.com"); locale = None }
 
 let ok = function Ok value -> value | Error error -> Alcotest.fail (Service.error_to_string error)
 

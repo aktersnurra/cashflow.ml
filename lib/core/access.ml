@@ -6,7 +6,8 @@ let household access = access.household
 let personal access = Owner.User access.user.id
 let owners access = personal access :: Option.to_list (Option.map (fun (h : Household.t) -> Owner.Household h.id) access.household)
 let can_use access owner = List.exists (Owner.equal owner) (owners access)
-let is_admin access = access.user.is_admin
+(* The household's creator runs it: invites, renames, adds and closes its bank accounts. *)
+let is_owner access = match access.household with Some h -> User_id.equal h.created_by access.user.id | None -> false
 
 let restrict access (view : Ledger_core.view) =
   let visible (account : Account.t) = can_use access account.owner in

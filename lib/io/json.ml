@@ -98,13 +98,13 @@ let user (user : User.t) =
   `Assoc
     [ ("id", `String (User_id.to_string user.id)); ("display_name", `String user.display_name);
       ("email", option (fun s -> `String s) user.email); ("locale", `String user.locale); ("timezone", `String user.timezone);
-      ("default_currency", `String user.default_currency); ("pay_cycle", `String (Pay_cycle_setting.to_string user.pay_cycle));
-      ("is_admin", `Bool user.is_admin) ]
+      ("default_currency", `String user.default_currency); ("pay_cycle", `String (Pay_cycle_setting.to_string user.pay_cycle)) ]
 
 let household (h : Household.t) =
   `Assoc
     [ ("id", `String (Household_id.to_string h.id)); ("name", `String h.name); ("default_currency", `String h.default_currency);
-      ("report_split_bp", `Int h.report_split_bp); ("pay_cycle", `String (Pay_cycle_setting.to_string h.pay_cycle)) ]
+      ("report_split_bp", `Int h.report_split_bp); ("pay_cycle", `String (Pay_cycle_setting.to_string h.pay_cycle));
+      ("created_by", `String (User_id.to_string h.created_by)) ]
 
 let member (m : Household.member) =
   `Assoc [ ("user_id", `String (User_id.to_string m.user_id)); ("display_name", `String m.display_name);

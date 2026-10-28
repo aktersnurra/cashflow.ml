@@ -26,7 +26,7 @@ let query service access name args =
 (* Alice is paid on 25 September; the current pay cycle runs 25 September to 22 October. *)
 let scenario () =
   let service = make_service () in
-  let alice = sign_in service ~admin:true "alice" in
+  let alice = sign_in service "alice" in
   let household = ok (Service.create_household service alice ~name:"Home" ~default_currency:"SEK") in
   let alice = Service.access_for service (Access.user alice) in
   let checking = open_checking service alice "Checking" in

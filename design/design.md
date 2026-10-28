@@ -211,13 +211,13 @@ Each person who uses cash gets an Asset account, `Cash (<name>)`, which has no b
 
 ### 4.1 Entities
 
-- **user:** OIDC `sub`, display name, email (shown only), timezone, default currency, a `locale`, and an `is_admin` flag taken from the `groups` claim (membership of the PocketID group `cashflow-admin`).
+- **user:** OIDC `sub`, display name, email (shown only), timezone, default currency, a `locale`.
 - **household:** name, default currency, an `income_split` policy (§4.5), and a `report_split` (default 50/50) used only by the "my share" reports.
 - **membership:** `(household, user, status)`, where `status` is `Invited` → `Active` | `Declined`, or `Active` → `Left`. In v1 a user belongs to at most one household.
 
 ### 4.2 Linking accounts
 
-The admin creates a household and its accounts, or moves an existing personal account into the household, and invites users by their PocketID identity. The invited user sees an invitation card when they next sign in (§11.3). Accepting it makes them a member, which gives them access to every household-owned account. Personal accounts are never shared; sharing works by household ownership only, not per account.
+Anyone may create a household, and its creator is its owner. The owner creates its accounts, or moves an existing personal account into the household, and invites users by their PocketID identity. The invited user sees an invitation card when they next sign in (§11.3). Accepting it makes them a member, which gives them access to every household-owned account. Personal accounts are never shared; sharing works by household ownership only, not per account.
 
 ### 4.3 Who can see and write what
 
@@ -269,7 +269,7 @@ To settle up, a transfer from the household account to personal checking clears 
 - **Scopes** (for MCP; web sessions get all scopes the user is allowed):
   - `ledger:read`
   - `ledger:write`: post, reverse, import, categorise, budgets
-  - `ledger:admin`: create households, link accounts, close accounts; also requires `is_admin`
+  - `ledger:admin`: link and close accounts, invite members; the household's owner only, which the service checks.
 - **Authorisation:** checked in the service layer on every call, never only in the adapters.
 
 ## 6. Import
@@ -456,7 +456,7 @@ On desktop, the same pages add the sidebar, the command palette and keyboard sho
 | **Forecast** | cash over the coming months, upcoming payments, what-ifs and assumptions (§10.1) |
 | **Insights** | the analytics in §10 with selectable range and scope |
 | **Settings** | timezone, currency, cycle start day, rules, LLM on or off |
-| **Admin** | households, invitations, linking accounts (admins only) |
+| **Household** | invitations, linking accounts (the household's owner only) |
 
 ### 11.3 Attention engine (the landing page's state machine)
 
@@ -579,7 +579,7 @@ The LLM never posts transfers and never decides which cards are shown.
 | `reconcile` | write | statement balance check, optional adjustment |
 | `set_market_value` | write | §3.7 |
 | `set_budget` | write | §8 |
-| `create_account`, `close_account`, `invite_member` | admin | |
+| `create_account`, `close_account`, `invite_member` | owner (household accounts and invitations) | |
 
 As in kcal, an argument mistake the model can correct comes back as `isError: true` with an explanation.
 
@@ -632,7 +632,7 @@ None at the moment.
 
 Resolved:
 - **Handelsbanken's export:** an .xlsx with separate booking and transaction dates and a running balance (§6.2).
-- **Admin:** from the PocketID `groups` claim.
+- **Owner:** the household's creator. There is no deployment-wide admin.
 - **Household posting:** every active member may post to household accounts.
 - **Months:** a configurable pay cycle, defaulting to the 25th.
 - **Phone:** a first-class target.

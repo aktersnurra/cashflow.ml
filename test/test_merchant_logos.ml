@@ -178,7 +178,7 @@ let batching () =
 let association () =
   let db = Store_sqlite.open_memory () in
   let service = Service.make ~logo_network:(network (ref 0)) db in
-  let alice = sign_in service ~admin:true "alice" in
+  let alice = sign_in service "alice" in
   let bob = sign_in service "bob" in
   let household = ok (Service.create_household service alice ~name:"Home" ~default_currency:"SEK") in
   let owner = Owner.Household household.id in
@@ -308,7 +308,7 @@ let provider_failures_check_membership () =
     let db = Store_sqlite.open_memory () and during = ref (fun () -> ()) in
     let assistant = Llm.{model="fake"; complete=(fun ?schema:_ ~system:_ ~user:_ () -> !during (); reply)} in
     let service = Service.make ~assistant ~logo_network:(network (ref 0)) db in
-    let access = sign_in service ~admin:true "alice" in
+    let access = sign_in service "alice" in
     let household = ok (Service.create_household service access ~name:"Home" ~default_currency:"SEK") in
     let access = Service.access_for service (Access.user access) in
     let owner = Owner.Household household.id in
