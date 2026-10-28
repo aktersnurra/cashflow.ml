@@ -35,6 +35,11 @@ let month_label locale cycle =
         names.(month - 1) ^ " " ^ y)
   | _ -> cycle
 
+(* A pay cycle's dates, "Oct 25 – Nov 24", when they aren't the calendar month its name suggests. *)
+let cycle_dates locale cycle =
+  if (date_json (J.field "first" cycle)).day = 1 then None
+  else Some (format_date locale (J.field "first" cycle) ^ " – " ^ format_date locale (J.field "last" cycle))
+
 (* Saving is good news; dipping into savings isn't. *)
 let sign_tone amount = if Float.is_negative (to_float amount) then "negative" else "positive"
 

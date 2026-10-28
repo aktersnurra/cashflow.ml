@@ -15,6 +15,8 @@
 - Overview's inbox card says how many rows have a suggested category, and says nothing about suggestions when none
   has one (it always said "Suggestions are ready"). A changed or new recurring payment's button reads "Got it", for
   what it does, instead of "Keep".
+- A month that runs from payday shows its dates beside its name ("Oct 23 – Nov 24" next to "November 2026") on
+  Overview, Transactions, Cash flow and Budgets.
 
 ### Logos from more websites
 

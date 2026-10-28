@@ -88,7 +88,10 @@ let page ~(ctx : Ctx.t) graph =
           [ (if List.length scopes < 2 then Vdom.Node.none
              else Ui.div ~cls:"segmented" (List.map scopes ~f:(fun (value, label) -> Ui.button ~kind:(if String.equal value scope then "active" else "") label (set_scope value))));
             (match status with
-            | Loaded json -> Ui.div ~cls:"period" [ Ui.span ~cls:"period-label" [ Ui.text (Fmt.month_label locale (J.str (J.path [ "cycle"; "cycle" ] json))) ] ]
+            | Loaded json ->
+                Ui.div ~cls:"period-group"
+                  [ Ui.period_dates (Fmt.cycle_dates locale (J.field "cycle" json));
+                    Ui.div ~cls:"period" [ Ui.span ~cls:"period-label" [ Ui.text (Fmt.month_label locale (J.str (J.path [ "cycle"; "cycle" ] json))) ] ] ]
             | _ -> Vdom.Node.none) ] ]
   in
   let tabs = Ui.div ~cls:"tabs" [ tab_button (not showing_goals) (Msg.budgets_tab_categories locale) (set_showing_goals false); tab_button showing_goals (Msg.label_goals locale) (set_showing_goals true) ] in

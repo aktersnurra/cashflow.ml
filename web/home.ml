@@ -207,9 +207,10 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
           [ (if List.is_empty scopes then Vdom.Node.none
              else Ui.div ~cls:"segmented" (List.map scopes ~f:(fun (value, label) -> Ui.button ~kind:(if String.equal value scope then "active" else "") label (set_scope value))));
             Ui.period
+              ?dates:(Option.bind selected ~f:(Fmt.cycle_dates locale))
               ~label:(match selected with Some c -> Fmt.month_label locale (J.str (J.field "cycle" c)) | None -> "")
               ~previous:(Msg.overview_previous locale, index <= 0 || offset <= -6, set_offset (offset - 1))
-              ~next:(Msg.overview_next locale, offset >= 0, set_offset (offset + 1)) ] ]
+              ~next:(Msg.overview_next locale, offset >= 0, set_offset (offset + 1)) () ] ]
   in
   let figures (c : J.t) =
     let savings = Fmt.to_float (J.field "savings" c) in

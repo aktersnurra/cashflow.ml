@@ -88,6 +88,8 @@ kbd { font: 11px/16px var(--mono); padding: 0 4px; border: 1px solid var(--line-
 .page-head h1 { margin: 0; }
 .page-controls { display: flex; align-items: center; gap: 8px; }
 .page-controls .segmented { margin: 0; }
+.period-group { display: inline-flex; align-items: center; gap: 10px; }
+.period-dates { font-size: 13px; color: var(--text-2); white-space: nowrap; }
 .period { display: inline-flex; align-items: center; height: 30px; background: var(--panel); border: 1px solid var(--line-strong); border-radius: 6px; }
 .period .icon-button { width: 28px; height: 28px; border-radius: 5px; }
 .period-label { min-width: 112px; padding: 0 8px; text-align: center; font-weight: 500; border-left: 1px solid var(--line); border-right: 1px solid var(--line); line-height: 28px; }

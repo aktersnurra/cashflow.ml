@@ -85,6 +85,8 @@ fs.writeFileSync(out + '/savings.csv', savings);
         const inboxCard = page.locator('.page:visible .card', { hasText: /transactions? to categorize/ });
         await inboxCard.waitFor({ timeout: 10000 });
         assert.equal(await inboxCard.locator('.muted').count(), 0, 'no suggestions, no line about them');
+        // The month runs from payday, so its dates show beside its name.
+        assert.match(await page.locator('.page:visible .period-dates').textContent(), /^[A-Z][a-z]{2} \d+ – [A-Z][a-z]{2} \d+$/, 'the cycle shows its dates');
       }
       await page.screenshot({ path: `${out}/${file}.png`, fullPage: true });
     }

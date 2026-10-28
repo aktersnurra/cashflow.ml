@@ -65,9 +65,9 @@ let page ~(ctx : Ctx.t) ~review ~(offset : int Bonsai.t) ~(category : string opt
              else
                match range with
                | Some (c, n) ->
-                   Ui.period ~label:(Fmt.month_label locale (J.str (J.field "cycle" c)))
+                   Ui.period ?dates:(Fmt.cycle_dates locale c) ~label:(Fmt.month_label locale (J.str (J.field "cycle" c)))
                      ~previous:(Msg.overview_previous locale, n - 1 + offset <= 0, go ~offset:(offset - 1) ())
-                     ~next:(Msg.overview_next locale, offset >= 0, go ~offset:(offset + 1) ())
+                     ~next:(Msg.overview_next locale, offset >= 0, go ~offset:(offset + 1) ()) ()
                | None -> Vdom.Node.none);
             Ui.button ~kind:"primary" (Msg.transactions_add locale) (navigate Route.Add) ] ]
   in

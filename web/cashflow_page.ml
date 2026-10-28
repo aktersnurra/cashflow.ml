@@ -46,9 +46,10 @@ let page ~(ctx : Ctx.t) graph =
             (if trend then Vdom.Node.none
              else
                Ui.period
+                 ?dates:(Option.bind selected ~f:(Fmt.cycle_dates locale))
                  ~label:(match selected with Some c -> month c | None -> "")
                  ~previous:(Msg.overview_previous locale, index <= 0, set_offset (offset - 1))
-                 ~next:(Msg.overview_next locale, offset >= 0, set_offset (offset + 1))) ] ]
+                 ~next:(Msg.overview_next locale, offset >= 0, set_offset (offset + 1)) ()) ] ]
   in
   (* Change against the previous period, coloured by whether it is good news: less spending and
      more saving are. Without a previous figure there is nothing to compare. *)

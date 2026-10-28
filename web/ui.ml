@@ -63,10 +63,15 @@ let icon_button ~label ?(disabled = false) (icon : Feather_icon.t) effect =
     [ Feather_icon.svg ~size:(`Px 14) ~stroke:(`Name "currentColor") ~stroke_width:(`Px 2) icon ]
 
 (* ‹ October 2026 ›: step through pay cycles. Each side is (label, disabled, effect). *)
-let period ~label ~previous:(previous_label, previous_disabled, previous) ~next:(next_label, next_disabled, next) =
-  div ~cls:"period"
-    [ icon_button ~label:previous_label ~disabled:previous_disabled Chevron_left previous; span ~cls:"period-label" [ text label ];
-      icon_button ~label:next_label ~disabled:next_disabled Chevron_right next ]
+(* [dates] says which days a pay cycle covers when its month name alone would mislead. *)
+let period_dates = function Some dates -> span ~cls:"period-dates" [ text dates ] | None -> Vdom.Node.none
+
+let period ?dates ~label ~previous:(previous_label, previous_disabled, previous) ~next:(next_label, next_disabled, next) () =
+  div ~cls:"period-group"
+    [ period_dates dates;
+      div ~cls:"period"
+        [ icon_button ~label:previous_label ~disabled:previous_disabled Chevron_left previous; span ~cls:"period-label" [ text label ];
+          icon_button ~label:next_label ~disabled:next_disabled Chevron_right next ] ]
 
 (* The first letter of a name, capitalised, for a tile: "Övrigt" is "Ö", not half of its first
    byte pair. *)
