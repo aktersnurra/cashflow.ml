@@ -18,17 +18,19 @@ type finish_reason = Stop | Tool_calls | Length | Content_filter
 type usage = { prompt_tokens : int; completion_tokens : int; total_tokens : int }
 type provider_event = Text of string | Calls_ready of raw_call list | Round_finished of finish_reason
 type generation_limits = { context_tokens : int; completion_tokens : int }
-type t = { limits : generation_limits option; identity : unit ref; post : Https.stream_post; api_key : string; model : string; provider_only : string list }
-(* Policy below the documented Sonnet 4.6 Bedrock capabilities, not a
+type t = { limits : generation_limits option; identity : unit ref; post : Https.stream_post; api_key : string; app_url : string option; model : string; provider_only : string list }
+(* Policy below the documented Sonnet Bedrock capabilities, not a
    tokenizer/framing guarantee. See design/advisor-deployment.md for sources. *)
+let supported_models = [ "anthropic/claude-sonnet-5.5"; "anthropic/claude-sonnet-4.6" ]
+
 let supported_limits ~model ~provider_only =
-  if model = "anthropic/claude-sonnet-4.6" && provider_only = ["amazon-bedrock"] then
+  if List.mem model supported_models && provider_only = ["amazon-bedrock"] then
     Some { context_tokens = 200000; completion_tokens = 8192 }
   else None
 
-let create ?limits ~post ~api_key ~model ~provider_only () =
+let create ?limits ?app_url ~post ~api_key ~model ~provider_only () =
   let limits = match limits with Some _ -> limits | None -> supported_limits ~model ~provider_only in
-  { limits; identity = ref (); post; api_key; model; provider_only }
+  { limits; identity = ref (); post; api_key; app_url; model; provider_only }
 let model t = t.model
 let limits t = t.limits
 type prepared_request = { identity : unit ref; body : string; conservative_tokens : int }
@@ -234,7 +236,7 @@ let stream_prepared (t : t) prepared ~on_activity ~on_event =
       List.iter (fun frame -> List.iter on_event (decode_frame frame)) frames
     in
     match t.post ~uri:"https://openrouter.ai/api/v1/chat/completions"
-      ~headers:["authorization", "Bearer " ^ t.api_key; "content-type", "application/json"; "x-title", "cashflow"]
+      ~headers:(["authorization", "Bearer " ^ t.api_key; "content-type", "application/json"] @ Llm.attribution_headers ?app_url:t.app_url ())
       ~body:prepared.body ~on_chunk with
     | Error error ->
         log_stream_error error;

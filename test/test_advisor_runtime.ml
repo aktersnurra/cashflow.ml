@@ -29,7 +29,7 @@ let durable_delivery_and_runtime_deadlines () =
               let config = Result.get_ok (Config.parse
                 {|((database /tmp/unused) (listen 127.0.0.1:8081) (public_url https://cashflow.example)
                    (oidc ((issuer https://id.example) (audience https://cashflow.example)))
-                   (openrouter ((api_key (Inline fake)) (model anthropic/claude-sonnet-4.6)
+                   (openrouter ((api_key (Inline fake)) (model anthropic/claude-sonnet-5.5)
                                 (provider_only (amazon-bedrock)))))|}) in
               Alcotest.(check bool) "ordinary supported config ready" true (Config.advisor_available config);
               let provider =

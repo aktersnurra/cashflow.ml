@@ -11,11 +11,12 @@ Advisor supports this ordinary OpenRouter configuration (supply credentials sepa
 ```sexp
 (openrouter
  ((api_key (Env OPENROUTER_API_KEY))
-  (model anthropic/claude-sonnet-4.6)
+  (model anthropic/claude-haiku-5.5)
+  (advisor_model anthropic/claude-sonnet-5.5)
   (provider_only (amazon-bedrock))))
 ```
 
-No manual attestation is required. Default policy is 200000 context tokens and
+`model` serves categorising, pairing and summaries; `advisor_model` (default: `model`) serves the Advisor. `anthropic/claude-sonnet-4.6` on the same route is still accepted. No manual attestation is required. Default policy is 200000 context tokens and
 8192 completion tokens. Optional `advisor_limits` accepts only `context_tokens`
 and `completion_tokens`, both positive, completion <= context, and no greater
 than these defaults. For a bounded smoke use context 100000, completion 2048.
@@ -27,7 +28,7 @@ fail configuration with the required model/provider profile named. No model fall
 
 Capability sources (public, checked during this change):
 
-- [OpenRouter Sonnet 4.6 endpoints](https://openrouter.ai/api/v1/models/anthropic/claude-sonnet-4.6/endpoints)
+- [OpenRouter Sonnet 5.5 endpoints](https://openrouter.ai/api/v1/models/anthropic/claude-sonnet-5.5/endpoints)
   lists Amazon Bedrock endpoints with context 1000000, max completion 128000,
   tools and max_tokens support. Our policy is deliberately smaller.
 - [AWS Claude Messages parameters](https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-anthropic-claude-messages-request-response.html)

@@ -4,7 +4,11 @@
    guarantees matches it. *)
 type t = { model : string; complete : ?schema:string * Yojson.Safe.t -> system:string -> user:string -> unit -> (string, string) result }
 
-let openrouter ~(post : Https.post) ~api_key ~model ~provider_only =
+(* Tells OpenRouter which app is calling, so its dashboard can group the usage. [app_url] is where the app
+   is served; without one only the name is sent. *)
+let attribution_headers ?app_url () = ("x-title", "cashflow") :: (match app_url with Some url -> [ ("http-referer", url) ] | None -> [])
+
+let openrouter ?app_url ~(post : Https.post) ~api_key ~model ~provider_only () =
   let complete ?schema ~system ~user () =
     if provider_only = [] then Error "OpenRouter provider allowlist must not be empty"
     else
@@ -26,7 +30,7 @@ let openrouter ~(post : Https.post) ~api_key ~model ~provider_only =
     in
     match
       post ~uri:"https://openrouter.ai/api/v1/chat/completions"
-        ~headers:[ ("authorization", "Bearer " ^ api_key); ("content-type", "application/json"); ("x-title", "cashflow") ]
+        ~headers:([ ("authorization", "Bearer " ^ api_key); ("content-type", "application/json") ] @ attribution_headers ?app_url ())
         ~body:(Yojson.Safe.to_string body)
     with
     | Error e -> Error e

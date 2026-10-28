@@ -16,7 +16,7 @@ type generation_limits = {
     estimate, not an externally attested upper bound on provider tokenization.
     Upstream context rejection is terminal; no relaxed retry or route fallback. *)
 val supported_limits : model:string -> provider_only:string list -> generation_limits option
-(** Documented Sonnet 4.6/Bedrock profile, or None for unsupported configurations. *)
+(** Documented Sonnet 5.5 or 4.6 on Bedrock profile, or None for unsupported configurations. *)
 type t
 type prepared_request
 val model : t -> string
@@ -31,7 +31,7 @@ val stream_prepared : t -> prepared_request -> on_activity:(unit -> unit) ->
     provider instance. Activity observes every raw chunk, including ignored fields and
     comments, without exposing content. Exceptions/cancellation propagate. *)
 val tool_schemas : Yojson.Safe.t list
-val create : ?limits:generation_limits -> post:Https.stream_post -> api_key:string -> model:string -> provider_only:string list -> unit -> t
+val create : ?limits:generation_limits -> ?app_url:string -> post:Https.stream_post -> api_key:string -> model:string -> provider_only:string list -> unit -> t
 val stream : t -> request -> on_event:(provider_event -> unit) -> (usage, A.error) result
 (** One finite round, no execution or retry. Calls and finish are published only
     after DONE and successful transport EOF. Text is delivered incrementally.

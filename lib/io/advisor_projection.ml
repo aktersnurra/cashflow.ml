@@ -569,7 +569,7 @@ let read (service : Service.t) ~principal ~scope ~aliases ~currency:pinned reque
                     List.exists
                       (fun (i : Account_info.t) ->
                         i.account.kind = kind_account && (not i.account.closed) && Owner.equal i.account.owner owner
-                        && String.equal (String.lowercase_ascii i.account.name) (String.lowercase_ascii name))
+                        && List.exists (fun n -> String.equal (String.lowercase_ascii n) (String.lowercase_ascii name)) (Starter.names i))
                       (Insights.accounts ctx)
                   in
                   if taken then error A.Invalid_tool_arguments
