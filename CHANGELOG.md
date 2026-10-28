@@ -13,6 +13,8 @@
   mismatch with the bank, an invitation, money running short before payday), above the month's figures. The chart of
   where the money went waits until most of the month's spending is categorized, instead of showing one Uncategorized
   band.
+- Page subtitles that only restated the page's name are gone (Transactions, Accounts, Cash flow, Budgets, Forecast,
+  Insights, Settings). Import, Add and Household keep theirs, which say something the title doesn't.
 
 ### The advisor can propose a manual entry
 

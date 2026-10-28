@@ -43,7 +43,7 @@ let page ~(ctx : Ctx.t) ~(advisor : Advisor.controller Bonsai.t) graph =
   let section title rows = Ui.div [ Ui.div ~cls:"section-head" [ Vdom.Node.h2 [ Ui.text title ] ]; Ui.div ~cls:"table" rows ] in
   let name = J.str (J.path [ "user"; "display_name" ] session) in
   Vdom.Node.main ~attrs:[ Vdom.Attr.class_ "page" ]
-    [ Ui.div ~cls:"page-head" [ Ui.div [ Vdom.Node.h1 [ Ui.text (Msg.settings_title locale) ]; Ui.div ~cls:"subtitle" [ Ui.text (Msg.settings_subtitle locale) ] ] ];
+    [ Ui.div ~cls:"page-head" [ Vdom.Node.h1 [ Ui.text (Msg.settings_title locale) ] ];
       section (Msg.settings_account locale)
         [ Ui.div ~cls:"row"
             [ Ui.div ~cls:"category-cell"

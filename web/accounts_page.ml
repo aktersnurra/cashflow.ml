@@ -104,7 +104,7 @@ let list ~(ctx : Ctx.t) graph =
   Vdom.Node.div
     [ Vdom.Node.main ~attrs:[ Vdom.Attr.class_ "page" ]
         [ Ui.div ~cls:"page-head"
-            [ Ui.div [ Vdom.Node.h1 [ Ui.text (Msg.accounts_title locale) ]; Ui.div ~cls:"subtitle" [ Ui.text (Msg.accounts_subtitle locale) ] ];
+            [ Vdom.Node.h1 [ Ui.text (Msg.accounts_title locale) ];
               Ui.div ~cls:"page-controls" [ Ui.button ~kind:"primary" (Msg.action_open_account locale) (set_draft (Some empty_draft)) ] ];
           worth_panel;
           Remote.view ~locale accounts ~f:(fun json ->

@@ -191,7 +191,7 @@ let page ~(ctx : Ctx.t) graph =
   let loading = match summary with Remote.Loading -> true | _ -> false in
   Vdom.Node.main ~attrs:[ Vdom.Attr.class_ "page" ]
     [ Ui.div ~cls:"page-head"
-        [ Ui.div [ Vdom.Node.h1 [ Ui.text (Msg.insights_title locale) ]; Ui.div ~cls:"subtitle" [ Ui.text (Msg.insights_subtitle locale) ] ];
+        [ Vdom.Node.h1 [ Ui.text (Msg.insights_title locale) ];
           Ui.div ~cls:"page-controls"
             [ (if List.is_empty scopes then Vdom.Node.none
                else Ui.div ~cls:"segmented" (List.map scopes ~f:(fun (value, label) -> Ui.button ~kind:(if String.equal value scope then "active" else "") label (set_scope value))));

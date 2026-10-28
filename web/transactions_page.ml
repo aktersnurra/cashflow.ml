@@ -59,7 +59,7 @@ let page ~(ctx : Ctx.t) ~review ~(offset : int Bonsai.t) ~(category : string opt
   in
   let head =
     Ui.div ~cls:"page-head"
-      [ Ui.div [ Vdom.Node.h1 [ Ui.text (Msg.nav_transactions locale) ]; Ui.div ~cls:"subtitle" [ Ui.text (Msg.transactions_subtitle locale) ] ];
+      [ Vdom.Node.h1 [ Ui.text (Msg.nav_transactions locale) ];
         Ui.div ~cls:"page-controls"
           [ (if review then Vdom.Node.none
              else
