@@ -9,6 +9,10 @@
 - "Your balance is growing" counts from the first month with money in an account, not from the empty months before
   it, which counted the whole balance as growth.
 - Forecast shows the lowest point once when it falls on the day before salary, instead of the same number twice.
+- Overview puts what needs doing first when something does (transactions to categorize, a statement due, a
+  mismatch with the bank, an invitation, money running short before payday), above the month's figures. The chart of
+  where the money went waits until most of the month's spending is categorized, instead of showing one Uncategorized
+  band.
 
 ### The advisor can propose a manual entry
 

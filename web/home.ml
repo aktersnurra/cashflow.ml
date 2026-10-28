@@ -151,6 +151,18 @@ let card_view ~(ctx : Ctx.t) (key : string Bonsai.t) (card : J.t Bonsai.t) graph
    figures above (the overview and month-review cards) are left out; at most three remain. *)
 let figure_kinds = [ "overview"; "month_review" ]
 
+(* Cards that ask for something before the figures can be trusted or before it is too late. When one is there, the
+   cards come first. *)
+let urgent_kinds = [ "invitation"; "reconciliation_mismatch"; "import_due"; "inbox"; "shortfall" ]
+
+(* Where the money went says little while most of it went nowhere yet: until the inbox is mostly cleared, the chart
+   would be one Uncategorized band. The UI can't rename a starter category, so the starter slug finds it. *)
+let mostly_uncategorized categories_json =
+  let rows = J.list (J.field "categories" categories_json) in
+  let total f = List.sum (module Float) rows ~f:(fun r -> if f r then Float.abs (Fmt.to_float (J.field "total" r)) else 0.) in
+  let uncategorized r = String.is_prefix (J.str ~default:"" (J.path [ "category"; "starter"; "slug" ] r)) ~prefix:"uncategorized" in
+  Float.(total uncategorized > total (fun _ -> true) /. 2.)
+
 let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor_protocol.Wire.scope -> unit Effect.t) Bonsai.t)
     ~selected_finding ~outlet ~advisor_route ~(visible : bool Bonsai.t) graph =
   let captured, set_captured = Bonsai.state None graph in
@@ -252,7 +264,8 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
     | Loaded _, Some c when Float.(Fmt.to_float (J.field "income" c) = 0. && Fmt.to_float (J.field "spending" c) = 0.) ->
         Ui.div ~cls:"panel empty-panel"
           [ Ui.p (Msg.overview_empty locale); Ui.div ~cls:"actions" [ Ui.button ~kind:"primary" (Msg.import_title locale) (navigate Route.Import) ] ]
-    | Loaded _, Some c -> Ui.div [ figures c; Remote.view ~locale categories ~f:(flow c) ]
+    | Loaded _, Some c ->
+        Ui.div [ figures c; Remote.view ~locale categories ~f:(fun json -> if mostly_uncategorized json then Vdom.Node.none else flow c json) ]
   in
   let attention =
     match Map.data views with
@@ -268,5 +281,7 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
     [(if standalone then Vdom.Node.h1 [Ui.text (Msg.nav_advisor locale)] else Vdom.Node.none);
      (* Keep the financial surface mounted for Home continuity; an unanchored
         Advisor conversation is not a second dashboard above the chat. *)
-     Vdom.Node.div ~attrs:(if standalone then [Vdom.Attr.create "hidden" ""] else []) [head; body; attention];
+     Vdom.Node.div ~attrs:(if standalone then [Vdom.Attr.create "hidden" ""] else [])
+       (let urgent = Map.exists visible_cards ~f:(fun card -> List.mem urgent_kinds (J.str (J.field "kind" card)) ~equal:String.equal) in
+        if urgent then [head; attention; body] else [head; body; attention]);
      (if standalone then outlet else Vdom.Node.none)]

@@ -79,7 +79,23 @@ fs.writeFileSync(out + '/savings.csv', savings);
     for (const [label, file] of [['Plan', '08-budgets'], ['Overview', '09-home'], ['Household', '11-household'], ['Settings', '10-settings']]) {
       await page.click(`.sidebar >> text=${label}`);
       await page.waitForTimeout(800);
-      if (label === 'Overview') assert.ok(feedCalls > feedBefore, 'Home reloads when it is shown again');
+      if (label === 'Overview') {
+        assert.ok(feedCalls > feedBefore, 'Home reloads when it is shown again');
+        // Rows are waiting in the inbox: what needs doing comes before the figures, and the chart of where the money
+        // went, still nearly all Uncategorized, waits until they are sorted.
+        // This month is still empty; the one before holds the imported rows.
+        await page.locator('.page:visible .period .icon-button').first().click();
+        await page.locator('.page:visible .figures').waitFor({ timeout: 10000 });
+        await page.waitForTimeout(500);
+        const order = await page.evaluate(() => {
+          const page = [...document.querySelectorAll('.page')].find(p => p.offsetParent);
+          const at = sel => { const el = page.querySelector(sel); return el ? [...page.querySelectorAll('*')].indexOf(el) : -1; };
+          return { attention: at('.attention'), figures: at('.figures'), flow: at('.flow') };
+        });
+        assert.ok(order.attention >= 0 && order.attention < order.figures, 'attention before the figures: ' + JSON.stringify(order));
+        assert.equal(order.flow, -1, 'no chart while spending is mostly uncategorized');
+        await page.locator('.page:visible .period .icon-button').last().click();
+      }
       await page.screenshot({ path: `${out}/${file}.png`, fullPage: true });
     }
     // Forecast: one imported month has no recurring payments yet, so Upcoming says so; a one-off

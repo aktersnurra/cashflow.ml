@@ -155,6 +155,8 @@ kbd { font: 11px/16px var(--mono); padding: 0 4px; border: 1px solid var(--line-
 /* Needs attention: one list, a tinted marker per row, actions at the end of the row. */
 .section-head { display: flex; align-items: center; gap: 8px; margin: 28px 0 12px; }
 .count { min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: var(--surface-2); font-size: 13px; line-height: 20px; font-weight: 600; text-align: center; font-variant-numeric: lining-nums tabular-nums; }
+/* Ahead of the figures when something needs doing. */
+.attention + div { margin-top: 28px; }
 .attention-list { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
 .attention-list .card { --tint: var(--surface-2); --mark: var(--text-3);
   display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; column-gap: 14px; align-items: center;
