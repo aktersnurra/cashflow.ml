@@ -76,10 +76,30 @@ fs.writeFileSync(out + '/savings.csv', savings);
     await page.keyboard.press('Enter');
     await page.waitForSelector('.insight, .page .empty', { timeout: 10000 });
     await page.screenshot({ path: out + '/07-insights.png', fullPage: true });
+    // Findings about this month share one note that it isn't reconciled yet, and Uncategorized is never "a finding".
+    await page.waitForTimeout(500);
+    assert.ok(await page.locator('.page:visible .provisional').count() <= 1, 'the provisional note is said once');
+    assert.doesNotMatch((await page.locator('.page:visible .insight').allInnerTexts()).join('\n'), /Uncategorized accounts for/);
     for (const [label, file] of [['Plan', '08-budgets'], ['Overview', '09-home'], ['Household', '11-household'], ['Settings', '10-settings']]) {
       await page.click(`.sidebar >> text=${label}`);
       await page.waitForTimeout(800);
-      if (label === 'Overview') assert.ok(feedCalls > feedBefore, 'Home reloads when it is shown again');
+      if (label === 'Overview') {
+        assert.ok(feedCalls > feedBefore, 'Home reloads when it is shown again');
+        // Rows are waiting in the inbox: what needs doing comes before the figures, and the chart of where the money
+        // went, still nearly all Uncategorized, waits until they are sorted.
+        // This month is still empty; the one before holds the imported rows.
+        await page.locator('.page:visible .period .icon-button').first().click();
+        await page.locator('.page:visible .figures').waitFor({ timeout: 10000 });
+        await page.waitForTimeout(500);
+        const order = await page.evaluate(() => {
+          const page = [...document.querySelectorAll('.page')].find(p => p.offsetParent);
+          const at = sel => { const el = page.querySelector(sel); return el ? [...page.querySelectorAll('*')].indexOf(el) : -1; };
+          return { attention: at('.attention'), figures: at('.figures'), flow: at('.flow') };
+        });
+        assert.ok(order.attention >= 0 && order.attention < order.figures, 'attention before the figures: ' + JSON.stringify(order));
+        assert.equal(order.flow, -1, 'no chart while spending is mostly uncategorized');
+        await page.locator('.page:visible .period .icon-button').last().click();
+      }
       await page.screenshot({ path: `${out}/${file}.png`, fullPage: true });
     }
     // Forecast: one imported month has no recurring payments yet, so Upcoming says so; a one-off
@@ -90,7 +110,10 @@ fs.writeFileSync(out + '/savings.csv', savings);
     await page.locator('.sidebar .nav-link.active', { hasText: 'Plan' }).waitFor({ timeout: 10000 });
     await page.waitForSelector('svg.projection >> visible=true', { timeout: 10000 });
     const kpis = await page.locator('.forecast-kpis .kpi').count();
-    if (kpis !== 4) throw new Error(`forecast: ${kpis} key numbers`);
+    if (kpis !== 4 && kpis !== 3) throw new Error(`forecast: ${kpis} key numbers`);
+    // No key number repeats another: the lowest point and the day before salary show once when they are one day.
+    const kpiTexts = await page.locator('.forecast-kpis .kpi').evaluateAll(ks => ks.map(k => k.querySelector('.kpi-value').textContent + ' ' + k.querySelector('.kpi-sub').textContent));
+    assert.equal(new Set(kpiTexts).size, kpiTexts.length, 'no repeated key number: ' + kpiTexts);
     await page.waitForSelector('text=No regular payments found yet');
     const today = await page.getAttribute('.what-if input[type=date]', 'min');
     await page.fill('.what-if input[type=date]', today);
@@ -142,6 +165,11 @@ fs.writeFileSync(out + '/savings.csv', savings);
     await page.click('.sidebar >> text=Pengar');
     await page.click('.section-nav >> text=Konton');
     await page.locator('.row-title', { hasText: /^Mat & hushåll$/ }).first().waitFor({ timeout: 10000 });
+    // Categories nothing has moved through yet wait, folded, under one line.
+    const unused = page.locator('.page:visible .unused-categories');
+    assert.equal(await unused.count(), 2, 'spending and income each fold their unused categories');
+    assert.equal(await unused.first().evaluate(d => d.open), false, 'folded until opened');
+    assert.equal(await unused.first().locator('.row-title', { hasText: /^Mat & hushåll$/ }).count(), 0, 'a used category is not among them');
     assert.equal(await page.locator('.row-title', { hasText: /^Groceries$/ }).count(), 0, 'no starter category left in English');
     await page.keyboard.press('Control+k');
     await page.waitForFunction(() => document.activeElement && document.activeElement.matches('.palette input'));

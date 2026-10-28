@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Only what you need to see
+
+- Insights names a price change from the charge before it, as Overview does: it compared the latest charge with the
+  typical one, so it could say "went from SEK 849 to SEK 849". `recurring_payments` now includes `previous_amount`.
+- "Your balance is growing" counts from the first month with money in an account, not from the empty months before
+  it, which counted the whole balance as growth.
+- Forecast shows the lowest point once when it falls on the day before salary, instead of the same number twice.
+- Overview puts what needs doing first when something does (transactions to categorize, a statement due, a
+  mismatch with the bank, an invitation, money running short before payday), above the month's figures. The chart of
+  where the money went waits until most of the month's spending is categorized, instead of showing one Uncategorized
+  band.
+- Page subtitles that only restated the page's name are gone (Transactions, Accounts, Cash flow, Budgets, Forecast,
+  Insights, Settings). Import, Add and Household keep theirs, which say something the title doesn't.
+- Insights says "Not yet reconciled with the bank" once above its findings instead of on each, and no longer offers
+  "Uncategorized accounts for 100% of your spending" as a finding.
+- Accounts lists the categories money has gone through; the ones not used yet fold into one line you can open ("15
+  categories not used yet"), instead of a row of dashes each.
+- "Add transaction" and "Open account" are plain buttons rather than the page's main action: statements bring most
+  rows in, and opening an account is rare.
+
 ### An undone import leaves no trace
 
 - Undoing an import reverses its rows in the ledger, and the account's list showed the original row, the reversal and,

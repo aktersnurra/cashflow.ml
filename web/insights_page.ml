@@ -99,6 +99,9 @@ let page ~(ctx : Ctx.t) graph =
     match worth with
     | Remote.Loaded json -> (
         let values = List.map (J.list (J.field "points" json)) ~f:(fun p -> Fmt.to_float (J.field "net_worth" p)) in
+        (* Points from before the first account had money in it are zero; counting from them would call the whole
+           balance growth. *)
+        let values = List.drop_while values ~f:(Float.equal 0.) in
         match values, List.last values with
         | first :: _ :: _, Some last ->
             let grew = Float.(last >= first) in
@@ -116,7 +119,9 @@ let page ~(ctx : Ctx.t) graph =
     List.filter_map payments ~f:(fun p ->
         if not (J.bool (J.field "price_changed" p)) then None
         else
-          let before = Float.abs (field "typical_amount" p) and now = Float.abs (field "last_amount" p) in
+          (* The change is from the charge before, which is what price_changed compares; the typical amount can
+             already be the new price. *)
+          let before = Float.abs (field "previous_amount" p) and now = Float.abs (field "last_amount" p) in
           let merchant = J.str (J.field "merchant" p) in
           Some
             { subject = Subscriptions; tone = (if Float.(now > before) then "red" else "green");
@@ -144,10 +149,18 @@ let page ~(ctx : Ctx.t) graph =
   let top_category =
     match categories with
     | Remote.Loaded json -> (
-        let rows = List.filter_map (J.list (J.field "categories" json)) ~f:(fun r -> let v = Fmt.to_float (J.field "total" r) in if Float.(v > 0.) then Some (Accounts_data.name ~locale (J.field "category" r), v) else None) in
+        let positive = List.filter (J.list (J.field "categories" json)) ~f:(fun r -> Float.(Fmt.to_float (J.field "total" r) > 0.)) in
+        let rows = List.map positive ~f:(fun r -> (Accounts_data.name ~locale (J.field "category" r), Fmt.to_float (J.field "total" r))) in
         let total = List.sum (module Float) rows ~f:snd in
+        (* "Uncategorized is your largest category" is not a finding about spending; the inbox already says it. The UI
+           can't rename a starter category, so its slug finds it. *)
+        let uncategorized_first =
+          match positive with
+          | top :: _ -> String.is_prefix (J.str ~default:"" (J.path [ "category"; "starter"; "slug" ] top)) ~prefix:"uncategorized"
+          | [] -> false
+        in
         match rows with
-        | (name, v) :: _ when Float.(total > 0.) ->
+        | (name, v) :: _ when Float.(total > 0.) && not uncategorized_first ->
             let top = List.take rows 4 and other = List.sum (module Float) (List.drop rows 4) ~f:snd in
             let slices = List.mapi top ~f:(fun i (n, v) -> (n, v, sprintf "c%d" (i + 1))) @ if Float.(other > 0.) then [ (Msg.overview_other locale, other, "c-other") ] else [] in
             let share = Fmt.percent locale (v /. total *. 100.) in
@@ -172,7 +185,6 @@ let page ~(ctx : Ctx.t) graph =
       [ Ui.div ~cls:"insight-head" [ Ui.span ~cls:("insight-mark " ^ f.tone) []; Vdom.Node.h3 [ Ui.text f.title ] ];
         Ui.p f.body;
         Ui.div ~cls:"insight-chart" [ f.chart ];
-        (if f.provisional then Ui.div ~cls:"provisional" [ Ui.text (Msg.label_provisional locale) ] else Vdom.Node.none);
         (match f.link with
         | Some (label, route) ->
             Vdom.Node.a
@@ -186,7 +198,7 @@ let page ~(ctx : Ctx.t) graph =
   let loading = match summary with Remote.Loading -> true | _ -> false in
   Vdom.Node.main ~attrs:[ Vdom.Attr.class_ "page" ]
     [ Ui.div ~cls:"page-head"
-        [ Ui.div [ Vdom.Node.h1 [ Ui.text (Msg.insights_title locale) ]; Ui.div ~cls:"subtitle" [ Ui.text (Msg.insights_subtitle locale) ] ];
+        [ Vdom.Node.h1 [ Ui.text (Msg.insights_title locale) ];
           Ui.div ~cls:"page-controls"
             [ (if List.is_empty scopes then Vdom.Node.none
                else Ui.div ~cls:"segmented" (List.map scopes ~f:(fun (value, label) -> Ui.button ~kind:(if String.equal value scope then "active" else "") label (set_scope value))));
@@ -204,4 +216,11 @@ let page ~(ctx : Ctx.t) graph =
       (match summary with
       | Remote.Failed _ -> Remote.view ~locale summary ~f:(fun _ -> Vdom.Node.none)
       | _ when loading -> Remote.view ~locale summary ~f:(fun _ -> Vdom.Node.none)
-      | _ -> if List.is_empty shown then Ui.empty (Msg.insights_empty locale) else Ui.div ~cls:"insight-grid" (List.map shown ~f:card)) ]
+      | _ ->
+          if List.is_empty shown then Ui.empty (Msg.insights_empty locale)
+          else
+            (* Every provisional finding is so for the same reason, this month's unreconciled figures: said once. *)
+            Ui.div
+              [ (if List.exists shown ~f:(fun f -> f.provisional) then Ui.div ~cls:"provisional insights-provisional" [ Ui.text (Msg.label_provisional locale) ]
+                 else Vdom.Node.none);
+                Ui.div ~cls:"insight-grid" (List.map shown ~f:card) ]) ]

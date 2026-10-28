@@ -104,8 +104,8 @@ let list ~(ctx : Ctx.t) graph =
   Vdom.Node.div
     [ Vdom.Node.main ~attrs:[ Vdom.Attr.class_ "page" ]
         [ Ui.div ~cls:"page-head"
-            [ Ui.div [ Vdom.Node.h1 [ Ui.text (Msg.accounts_title locale) ]; Ui.div ~cls:"subtitle" [ Ui.text (Msg.accounts_subtitle locale) ] ];
-              Ui.div ~cls:"page-controls" [ Ui.button ~kind:"primary" (Msg.action_open_account locale) (set_draft (Some empty_draft)) ] ];
+            [ Vdom.Node.h1 [ Ui.text (Msg.accounts_title locale) ];
+              Ui.div ~cls:"page-controls" [ Ui.button (Msg.action_open_account locale) (set_draft (Some empty_draft)) ] ];
           worth_panel;
           Remote.view ~locale accounts ~f:(fun json ->
               let accounts = List.filter (Accounts_data.of_list ~locale json) ~f:(fun a -> not a.closed) in
@@ -117,7 +117,19 @@ let list ~(ctx : Ctx.t) graph =
               let category_row (a : Accounts_data.account) =
                 account_row ~locale ~navigate ~household a ~amount:(Ui.span ~cls:"amount muted" [ Ui.text (if Float.(Fmt.to_float a.balance = 0.) then "–" else Fmt.whole locale ~code:a.currency a.balance) ])
               in
-              let group label kind = match categories kind with [] -> [] | l -> Ui.div ~cls:"group-head" [ Ui.text label ] :: List.map l ~f:category_row in
+              (* Categories nothing has moved through yet fold into one line, so the list shows where money went. *)
+              let group label kind =
+                match categories kind with
+                | [] -> []
+                | l ->
+                    let used, unused = List.partition_tf l ~f:(fun a -> not Float.(Fmt.to_float a.balance = 0.)) in
+                    (Ui.div ~cls:"group-head" [ Ui.text label ] :: List.map used ~f:category_row)
+                    @
+                    if List.is_empty unused then []
+                    else
+                      [ Vdom.Node.create "details" ~attrs:[ Vdom.Attr.class_ "unused-categories" ]
+                          (Vdom.Node.create "summary" [ Ui.text (Msg.accounts_unused ~count:(List.length unused) locale) ] :: List.map unused ~f:category_row) ]
+              in
               Ui.div
                 [ (if List.is_empty banks then Ui.div [ Ui.div ~cls:"section-head" [ Vdom.Node.h2 [ Ui.text (Msg.accounts_bank locale) ] ]; Ui.empty (Msg.accounts_empty locale) ]
                    else table ~title:(Msg.accounts_bank locale) ~columns:(Msg.accounts_col_account locale, Msg.label_balance locale) (List.map banks ~f:bank_row));

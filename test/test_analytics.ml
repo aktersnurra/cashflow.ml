@@ -85,7 +85,9 @@ let test_categories_recurring_and_budgets () =
   | `List [ spotify ] ->
       Alcotest.(check string) "merchant, as written" "Spotify AB" (str [ "merchant" ] spotify);
       Alcotest.(check string) "cadence" "monthly" (str [ "cadence" ] spotify);
-      Alcotest.(check string) "next" "2026-11-02" (str [ "next_expected" ] spotify)
+      Alcotest.(check string) "next" "2026-11-02" (str [ "next_expected" ] spotify);
+      (* price_changed compares the latest charge with the one before, so that one is there to name. *)
+      Alcotest.(check string) "the charge before the latest" (str [ "last_amount" ] spotify) (str [ "previous_amount" ] spotify)
   | other -> Alcotest.failf "expected spotify, got %s" (Yojson.Safe.to_string other));
   let ctx = ok (Insights.context service alice ~scope:Me ()) in
   ignore (ok (Insights.set_budget ctx ~category_id:groceries.account.id ~monthly_amount:6_000_00L ~rollover:false ~effective_from:None));
