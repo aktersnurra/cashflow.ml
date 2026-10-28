@@ -37,7 +37,7 @@ let page ~(ctx : Ctx.t) graph =
   and locale = ctx.locale and session = ctx.session and navigate = ctx.navigate in
   let code = match summary with Remote.Loaded json -> J.str ~default:"SEK" (J.field "currency" json) | _ -> "SEK" in
   let whole v = Fmt.whole locale ~code (`String (Float.to_string v)) in
-  let exact v = Fmt.format_money locale ~code (`String (sprintf "%.2f" v)) in
+  let exact v = Mf2_runtime.format_money locale (Fmt.in_sentence (Fmt.money ~code (sprintf "%.2f" v))) in
   let cycles = match summary with Remote.Loaded json -> J.list (J.field "cycles" json) | _ -> [] in
   let field name c = Fmt.to_float (J.field name c) in
   let current = List.last cycles in

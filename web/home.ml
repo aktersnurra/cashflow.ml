@@ -15,7 +15,7 @@ let card_view ~(ctx : Ctx.t) (key : string Bonsai.t) (card : J.t Bonsai.t) graph
   let currency = J.str ~default:"SEK" (J.path [ "user"; "default_currency" ] session) in
   let data = J.field "data" card in
   let card_key = J.str (J.field "key" card) in
-  let money ?(code = currency) json = Fmt.money_json ~code json in
+  let money ?(code = currency) json = Fmt.in_sentence (Fmt.money_json ~code json) in
   let account_currency = J.str ~default:currency (J.path [ "account"; "currency" ] data) in
   let after effect =
     let%bind.Effect result = effect in
@@ -67,9 +67,9 @@ let card_view ~(ctx : Ctx.t) (key : string Bonsai.t) (card : J.t Bonsai.t) graph
           if J.is_null summary then []
           else
             [ Ui.div ~cls:"kpis"
-                [ Ui.kpi (Msg.label_income locale) (Fmt.format_money locale ~code:currency (J.field "income" summary));
-                  Ui.kpi (Msg.label_spending locale) (Fmt.format_money locale ~code:currency (J.field "spending" summary));
-                  Ui.kpi ~tone:(Fmt.sign_tone (J.field "savings" summary)) (Msg.label_savings locale) (Fmt.format_money locale ~code:currency (J.field "savings" summary));
+                [ Ui.kpi (Msg.label_income locale) (Fmt.whole locale ~code:currency (J.field "income" summary));
+                  Ui.kpi (Msg.label_spending locale) (Fmt.whole locale ~code:currency (J.field "spending" summary));
+                  Ui.kpi ~tone:(Fmt.sign_tone (J.field "savings" summary)) (Msg.label_savings locale) (Fmt.whole locale ~code:currency (J.field "savings" summary));
                   Ui.kpi (Msg.label_savings_rate locale) (J.str ~default:"–" (J.field "savings_rate" summary)) ] ])
         ~actions:[ done_ ] ()
   | "budget_alert" ->
@@ -139,9 +139,9 @@ let card_view ~(ctx : Ctx.t) (key : string Bonsai.t) (card : J.t Bonsai.t) graph
           (if J.is_null summary then []
            else
              [ Ui.div ~cls:"kpis"
-                 [ Ui.kpi (Msg.label_income locale) (Fmt.format_money locale ~code (J.field "income" summary));
-                   Ui.kpi (Msg.label_spending locale) (Fmt.format_money locale ~code (J.field "spending" summary));
-                   Ui.kpi ~tone:(Fmt.sign_tone (J.field "savings" summary)) (Msg.label_savings locale) (Fmt.format_money locale ~code (J.field "savings" summary)) ];
+                 [ Ui.kpi (Msg.label_income locale) (Fmt.whole locale ~code (J.field "income" summary));
+                   Ui.kpi (Msg.label_spending locale) (Fmt.whole locale ~code (J.field "spending" summary));
+                   Ui.kpi ~tone:(Fmt.sign_tone (J.field "savings" summary)) (Msg.label_savings locale) (Fmt.whole locale ~code (J.field "savings" summary)) ];
                (if J.bool (J.field "reconciled" summary) then Vdom.Node.none else Ui.muted (Msg.label_provisional locale)) ])
         ~actions:[ Ui.button (Msg.nav_insights locale) (navigate Route.Insights) ] ()
   | _ -> Vdom.Node.none

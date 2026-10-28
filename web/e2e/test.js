@@ -85,6 +85,9 @@ fs.writeFileSync(out + '/savings.csv', savings);
         const inboxCard = page.locator('.page:visible .card', { hasText: /transactions? to categorize/ });
         await inboxCard.waitFor({ timeout: 10000 });
         assert.equal(await inboxCard.locator('.muted').count(), 0, 'no suggestions, no line about them');
+        // Amounts in Home's cards are whole or keep real cents, never a trailing .00.
+        const cardText = (await page.locator('.page:visible .card').allInnerTexts()).join('\n');
+        assert.doesNotMatch(cardText, /\d[.,]00\b/, 'no .00 in card text: ' + cardText);
         // The month runs from payday, so its dates show beside its name.
         assert.match(await page.locator('.page:visible .period-dates').textContent(), /^[A-Z][a-z]{2} \d+ – [A-Z][a-z]{2} \d+$/, 'the cycle shows its dates');
       }

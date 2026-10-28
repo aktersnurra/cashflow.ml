@@ -13,6 +13,12 @@ let money ~code text : Mf2_runtime.money =
 let money_json ~code json = money ~code (J.str ~default:"0" json)
 let format_money locale ~code json = Mf2_runtime.format_money locale (money_json ~code json)
 
+(* An amount in a sentence: "SEK 268", not "SEK 268.00", but "SEK 99.50" keeps its cents. Lists and forms show every
+   decimal, so their columns line up. *)
+let in_sentence (m : Mf2_runtime.money) =
+  let unit = Int64.pow 10L (Int64.of_int m.scale) in
+  if m.scale > 0 && Int64.equal (Int64.rem m.minor unit) 0L then { m with minor = Int64.( / ) m.minor unit; scale = 0 } else m
+
 let date text : Mf2_runtime.date =
   match String.split text ~on:'-' with
   | [ y; m; d ] -> { year = Int.of_string y; month = Int.of_string m; day = Int.of_string (String.prefix d 2) }

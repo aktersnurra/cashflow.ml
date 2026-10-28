@@ -17,6 +17,9 @@
   what it does, instead of "Keep".
 - A month that runs from payday shows its dates beside its name ("Oct 23 – Nov 24" next to "November 2026") on
   Overview, Transactions, Cash flow and Budgets.
+- Amounts in sentences drop a trailing ".00" ("went from SEK 369 to SEK 268") and keep real cents; the income,
+  spending and savings figures on Overview's cards are whole, like the figures above them. Lists and forms still show
+  every decimal.
 
 ### Logos from more websites
 
