@@ -46,7 +46,7 @@ let page ~(ctx : Ctx.t) ~review ~(offset : int Bonsai.t) ~(category : string opt
   and offset and category and locale = ctx.locale and session = ctx.session and navigate = ctx.navigate and changed = ctx.changed
   and notify = ctx.notify in
   let logo_tile, logo_editor = logo_component in
-  let accounts = match accounts with Remote.Loaded json -> Accounts_data.of_list json | _ -> [] in
+  let accounts = match accounts with Remote.Loaded json -> Accounts_data.of_list ~locale json | _ -> [] in
   let find id = Accounts_data.find accounts id in
   let inbox_count = J.int (J.field "inbox_count" session) in
   let go ?(offset = offset) ?(category = category) () = navigate (Route.Transactions { offset; category }) in

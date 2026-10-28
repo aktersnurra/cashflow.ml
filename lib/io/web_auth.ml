@@ -120,8 +120,6 @@ let finish_login auth (service : Service.t) ?locale ~now ~state ~code ~cookie_st
                                   is_admin = Option.map (List.mem auth.config.admin_group) claims.groups; locale }
                             in
                             let user = Access.user access in
-                            (* Starter categories named before the user chose a language catch up. *)
-                            Sql.transaction db (fun () -> Service.localize_chart service (Access.personal access) ~locale:user.locale);
                             Log.info (fun m -> m "user=%s signed in" (User_id.to_string user.id));
                             Ok (create_session db ~now user, return_to))
                     | _ -> Error "the token response has no ID token")

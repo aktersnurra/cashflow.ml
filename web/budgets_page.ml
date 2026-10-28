@@ -26,7 +26,7 @@ let page ~(ctx : Ctx.t) graph =
   let unbudgeted =
     match accounts with
     | Loaded json ->
-        List.filter (Accounts_data.of_list json) ~f:(fun a ->
+        List.filter (Accounts_data.of_list ~locale json) ~f:(fun a ->
             String.equal a.kind "expense" && Option.is_none a.role && String.equal a.owner owner && not (List.mem budgeted a.id ~equal:String.equal))
     | _ -> []
   in
@@ -49,7 +49,7 @@ let page ~(ctx : Ctx.t) graph =
     let whole v = Fmt.whole locale ~code:c (`String (Float.to_string v)) in
     let spent = Fmt.to_float (J.field "spent" l) and budget = Fmt.to_float (J.field "budget" l) +. Fmt.to_float (J.field "carried" l) in
     let left = budget -. spent in
-    let category = J.str (J.path [ "category"; "id" ] l) and name = J.str (J.path [ "category"; "name" ] l) in
+    let category = J.str (J.path [ "category"; "id" ] l) and name = Accounts_data.name ~locale (J.field "category" l) in
     let tone = match J.str (J.field "status" l) with "over_budget" -> "over" | "ahead_of_pace" -> "ahead" | _ -> "on-pace" in
     match editing with
     | Budget b when String.equal b.category category -> budget_form ~category ~name ~amount:b.amount ~rollover:b.rollover

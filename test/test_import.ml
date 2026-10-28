@@ -16,6 +16,7 @@ module Owner = Cashflow_core.Owner
 module Statement_format = Cashflow_core.Statement_format
 module Str_compat = Cashflow_core.Str_compat
 module Transfer_id = Cashflow_core.Transfer_id
+module User = Cashflow_core.User
 module User_id = Cashflow_core.User_id
 
 open Test_service_support
@@ -690,6 +691,26 @@ let test_auto_apply_respects_owner_and_currency () =
       Alcotest.(check int64) (label ^ " leaves the category alone") before (balance service alice subscriptions))
     [ ("a household account", shared); ("a euro account", euro) ]
 
+(* A row in a new currency lands in an Uncategorized account for that currency, stored in English
+   like the rest of the starter chart, whatever the importer's language. *)
+let test_new_currency_uncategorized_is_stored_in_english () =
+  let service = make_service () in
+  let alice = sign_in service "alice" in
+  let user = Access.user alice in
+  let alice =
+    ok (Service.update_settings service alice { User.locale = "sv"; timezone = user.timezone; default_currency = user.default_currency; pay_cycle = user.pay_cycle })
+  in
+  let euro =
+    match
+      Service.open_account service alice ~key:(key "open:euro") ~owner:(Access.personal alice) ~kind:Asset ~name:"Euro card" ~currency:"EUR"
+        ~flags:Account.no_flags ~details:{ Account_info.no_details with statement_backed = true }
+    with
+    | Ok (`Created info | `Exists info) -> info.account.id
+    | Error error -> Alcotest.fail (Service.error_to_string error)
+  in
+  ignore (imported (Import.confirm (Import.context service alice) (request euro "Bokföringsdag;Text;Belopp;Saldo\n2026-11-10;SPOTIFY;-119,00;9 393,00\n")));
+  ignore (account_named service alice "Uncategorized (EUR)")
+
 let () =
   Alcotest.run "import"
     [ ("parsing", [ Alcotest.test_case "amounts and csv" `Quick test_parsing ]);
@@ -698,6 +719,7 @@ let () =
           Alcotest.test_case "identical rows without balances" `Quick test_identical_rows_without_balances;
           Alcotest.test_case "closing balance, oldest first" `Quick test_closing_balance_oldest_first;
           Alcotest.test_case "handelsbanken xlsx" `Quick test_handelsbanken_xlsx;
+          Alcotest.test_case "a new currency's uncategorized is stored in english" `Quick test_new_currency_uncategorized_is_stored_in_english;
           Alcotest.test_case "a new account from the file" `Quick test_new_account_from_the_file;
           Alcotest.test_case "a new card opens owing" `Quick test_new_card_opens_owing;
           Alcotest.test_case "an account learns its number" `Quick test_an_account_learns_its_number;

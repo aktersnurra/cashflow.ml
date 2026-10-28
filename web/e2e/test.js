@@ -137,6 +137,25 @@ fs.writeFileSync(out + '/savings.csv', savings);
     await page.getByRole('heading', { name: 'Minne', exact: true }).waitFor({ timeout: 10000 });
     await page.getByRole('heading', { name: 'Automatiska kategorier', exact: true }).waitFor({ timeout: 10000 });
     await page.getByPlaceholder('Till exempel: svara i hela kronor').waitFor();
+    // The starter categories follow too, with nothing reloaded: they are stored once, in English,
+    // and the browser names them in the reader's language.
+    await page.click('.sidebar >> text=Pengar');
+    await page.click('.section-nav >> text=Konton');
+    await page.locator('.row-title', { hasText: /^Mat & hushåll$/ }).first().waitFor({ timeout: 10000 });
+    assert.equal(await page.locator('.row-title', { hasText: /^Groceries$/ }).count(), 0, 'no starter category left in English');
+    await page.keyboard.press('Control+k');
+    await page.waitForFunction(() => document.activeElement && document.activeElement.matches('.palette input'));
+    await page.keyboard.type('Inkorg');
+    await page.keyboard.press('Enter');
+    await page.locator('.list .row', { hasText: 'SPOTIFY' }).waitFor({ timeout: 10000 });
+    await page.keyboard.press('c');
+    await page.waitForFunction(() => document.activeElement && document.activeElement.matches('.palette input'));
+    await page.keyboard.type('Mat');
+    const groceriesOption = page.locator('.palette .row', { hasText: /^Mat & hushåll/ });
+    await groceriesOption.waitFor({ timeout: 10000 });
+    assert.equal(await groceriesOption.locator('.row-sub').textContent(), 'Utgiftskategori', 'its kind in Swedish too');
+    await page.screenshot({ path: out + '/16-inbox-picker-sv.png' });
+    await page.keyboard.press('Escape');
     await page.click('.sidebar >> text=Översikt');
     await page.waitForTimeout(800);
     await page.screenshot({ path: out + '/12-home-sv.png', fullPage: true });

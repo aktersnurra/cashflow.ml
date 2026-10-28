@@ -4,10 +4,12 @@ module Inbox = Cashflow_io.Inbox
 module Insights = Cashflow_io.Insights
 module Ledger = Cashflow_io.Ledger
 module Service = Cashflow_io.Service
+module Starter = Cashflow_io.Starter
 module Store_sqlite = Cashflow_io.Store_sqlite
 module Transfer_query = Cashflow_io.Transfer_query
 module Account_id = Cashflow_core.Account_id
 module Analytics = Cashflow_core.Analytics
+module Chart = Cashflow_core.Chart
 module Household = Cashflow_core.Household
 module Owner = Cashflow_core.Owner
 module Transfer_id = Cashflow_core.Transfer_id
@@ -214,6 +216,26 @@ let test tc =
 
 let%hegel_test books_stay_consistent tc = test tc [@@settings Settings.create ~test_cases:150 ()]
 
+(* A starter category shows each viewer's language while it bears its starter name in any locale,
+   and shows what was stored once someone renamed it. *)
+let template = lazy (let service = make_service () in List.hd (Service.accounts service (sign_in service "alice")))
+
+let%hegel_test starter_names_follow_the_viewer tc =
+  let pick xs = List.nth xs (draw tc (integers ~min_value:0 ~max_value:(List.length xs - 1) ())) in
+  let entry = pick Chart.entries and currency = pick [ None; Some "EUR"; Some "USD" ] and viewer = pick Msg.locales in
+  let starter : Starter.t = { entry; currency } in
+  let key = "seed:" ^ entry.slug ^ Option.fold ~none:"" ~some:(fun c -> "-" ^ c) currency in
+  let stored =
+    if draw tc (booleans ()) then Starter.name ~locale:(pick Msg.locales) starter
+    else pick [ "Misc"; "Diverse"; Starter.name ~locale:"en" { entry; currency = Some "SEK" }; Starter.name ~locale:"sv" { starter with entry = pick Chart.entries } ]
+  in
+  let info = Lazy.force template in
+  let info = { info with account = { info.account with key = Result.get_ok (Idempotency_key.of_string key); name = stored } } in
+  let expected = if List.exists (fun locale -> Starter.name ~locale starter = stored) Msg.locales then Starter.name ~locale:viewer starter else stored in
+  if Starter.of_key info.account.key <> Some starter then failwith ("key does not lead back: " ^ key);
+  if Starter.display_name ~locale:viewer info <> expected then failwith (Printf.sprintf "%s stored as %S shows %S to %s" key stored (Starter.display_name ~locale:viewer info) viewer)
+
 let () =
   Alcotest.run "service properties"
-    [ ("books", [ Alcotest.test_case "imports, triage, undo and retries keep every scope's books consistent" `Slow books_stay_consistent ]) ]
+    [ ("books", [ Alcotest.test_case "imports, triage, undo and retries keep every scope's books consistent" `Slow books_stay_consistent ]);
+      ("starters", [ Alcotest.test_case "starter categories show each viewer's language until renamed" `Quick starter_names_follow_the_viewer ]) ]

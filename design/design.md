@@ -543,11 +543,11 @@ A translation bug becomes a type error instead of a blank label in production.
 - `sv`: `1 240,50 kr`, `25 okt.`
 - `en`: `SEK 1,240.50`, `Oct 25`
 
-The generator writes plain OCaml with no runtime dependencies, so the same code works on the server and in the js_of_ocaml client.
+The generator writes plain OCaml with no runtime dependencies, so the same code works on the server and in the js_of_ocaml client. Both use it: the browser for the UI, the server for starter category names (below).
 
 **Choosing the language:** from the user's `locale` setting, falling back to `Accept-Language` and then to `en`. MCP replies stay in English with machine-readable fields, because the agent translates for the user anyway.
 
-**Names are data:** account and category names are stored as entered, not translated. The seeded chart of accounts is created in the creator's language.
+**Names are data, except untouched starter categories.** Names people type are stored and shown as entered. The starter chart is seeded in English. While a starter category still has its starter name (in any locale), each viewer sees it in their own language: the browser from the `category.<slug>` messages (`locales/category_name.ml`), the server's LLM prompts from the same messages. Changing language writes nothing, so household members who read different languages each see their own. The API marks such a category with `starter` (`{slug, currency}`) and names it in English, so MCP stays English.
 
 **Tooling:** the `.mf2` files are plain text with one message per ID, so an LLM can draft new locales, and `mf2c --check` validates them in CI.
 

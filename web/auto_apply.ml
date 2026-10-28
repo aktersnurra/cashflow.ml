@@ -9,7 +9,7 @@ let component ~(ctx : Ctx.t) graph =
   let settings = Remote.load ~name:"list_auto_apply" ~ctx graph in
   let%arr accounts and settings and locale = ctx.locale and changed = ctx.changed and notify = ctx.notify in
   let levels = [ ("off", Msg.settings_autoapply_off locale); ("90", Msg.settings_autoapply_90 locale); ("80", Msg.settings_autoapply_80 locale); ("70", Msg.settings_autoapply_70 locale) ] in
-  let banks = match accounts with Remote.Loaded json -> List.filter (Accounts_data.of_list json) ~f:(fun a -> a.statement_backed && not a.closed) | _ -> [] in
+  let banks = match accounts with Remote.Loaded json -> List.filter (Accounts_data.of_list ~locale json) ~f:(fun a -> a.statement_backed && not a.closed) | _ -> [] in
   let current id =
     match settings with
     | Remote.Loaded json ->

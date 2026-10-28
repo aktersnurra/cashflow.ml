@@ -39,9 +39,9 @@ type t = {
 let value json = Fmt.to_float json
 let point json = { date = J.str (J.field "date" json); cash = J.field "cash" json; earmarked = J.field "earmarked" json }
 
-let item json =
+let item ~locale json =
   { id = J.str (J.field "id" json); date = J.str (J.field "date" json); kind = J.str (J.field "kind" json); name = J.str (J.field "name" json);
-    amount = J.field "amount" json; account_id = J.str (J.path [ "account"; "id" ] json); account_name = J.str (J.path [ "account"; "name" ] json);
+    amount = J.field "amount" json; account_id = J.str (J.path [ "account"; "id" ] json); account_name = Accounts_data.name ~locale (J.field "account" json);
     category_id = J.str_opt (J.path [ "category"; "id" ] json);
     basis =
       (match J.field "basis" json with
@@ -51,11 +51,11 @@ let item json =
             { cadence = J.str (J.field "cadence" b); typical = J.field "typical" b; last = J.field "last" b; occurrences = J.int (J.field "occurrences" b);
               since = J.str (J.field "since" b) }) }
 
-let outlook json : outlook =
-  { account_id = J.str (J.path [ "account"; "id" ] json); account_name = J.str (J.path [ "account"; "name" ] json);
+let outlook ~locale json : outlook =
+  { account_id = J.str (J.path [ "account"; "id" ] json); account_name = Accounts_data.name ~locale (J.field "account" json);
     lowest_date = J.str (J.path [ "lowest"; "date" ] json); lowest = J.path [ "lowest"; "balance" ] json; overdraw = J.str_opt (J.field "overdraw" json) }
 
-let of_json json =
+let of_json ~locale json =
   { currency = J.str ~default:"SEK" (J.field "currency" json); today = J.str (J.field "today" json); imported_through = J.str_opt (J.field "imported_through" json);
     horizon_end = J.str (J.field "horizon_end" json); history = List.map (J.list (J.field "history" json)) ~f:point;
     baseline = List.map (J.list (J.field "baseline" json)) ~f:point;
@@ -63,5 +63,5 @@ let of_json json =
     lowest_date = J.str (J.path [ "lowest"; "date" ] json); lowest = J.path [ "lowest"; "cash" ] json;
     range = List.map (J.list (J.field "range" json)) ~f:(fun r -> (J.str (J.field "date" r), J.field "low" r, J.field "high" r));
     chance_positive = (match J.field "chance_positive" json with `Int p -> Some p | _ -> None);
-    accounts = List.map (J.list (J.field "accounts" json)) ~f:outlook; items = List.map (J.list (J.field "items" json)) ~f:item;
+    accounts = List.map (J.list (J.field "accounts" json)) ~f:(outlook ~locale); items = List.map (J.list (J.field "items" json)) ~f:(item ~locale);
     assumptions = J.list (J.field "assumptions" json) }

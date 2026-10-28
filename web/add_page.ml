@@ -11,7 +11,7 @@ let page ~(ctx : Ctx.t) graph =
   let accounts = Remote.load ~name:"list_accounts" ~ctx graph in
   let draft, set_draft = Bonsai.state None graph in
   let%arr accounts and draft and set_draft and locale = ctx.locale and navigate = ctx.navigate and notify = ctx.notify and changed = ctx.changed in
-  let accounts = match accounts with Loaded json -> List.filter (Accounts_data.of_list json) ~f:(fun a -> not a.closed && Option.is_none a.role) | _ -> [] in
+  let accounts = match accounts with Loaded json -> List.filter (Accounts_data.of_list ~locale json) ~f:(fun a -> not a.closed && Option.is_none a.role) | _ -> [] in
   let sources = List.filter accounts ~f:(fun a -> Accounts_data.is_bank a || String.equal a.kind "income") in
   let destinations = List.filter accounts ~f:(fun a -> Accounts_data.is_bank a || String.equal a.kind "expense") in
   let first l = match l with (a : Accounts_data.account) :: _ -> a.id | [] -> "" in

@@ -1,5 +1,8 @@
+module Json = Cashflow_io.Json
 module Service = Cashflow_io.Service
+module Starter = Cashflow_io.Starter
 module Transfer_query = Cashflow_io.Transfer_query
+module Chart = Cashflow_core.Chart
 module Cycle = Cashflow_core.Cycle
 module Holidays = Cashflow_core.Holidays
 module Household = Cashflow_core.Household
@@ -18,28 +21,88 @@ let test_sign_in_seeds_the_chart_once () =
   let alice = sign_in service "alice" in
   Alcotest.(check int) "not seeded twice" count (List.length (Service.accounts service alice))
 
-(* Starter categories follow the language until someone renames them, the household's too. *)
-let test_starter_categories_follow_the_language () =
+(* Changing language is a display setting: it writes nothing to anyone's accounts, the household's
+   included, and a renamed category keeps its name. *)
+let test_changing_language_writes_no_accounts () =
   let service = make_service () in
   let alice = sign_in service ~admin:true "alice" in
   ignore (ok (Service.create_household service alice ~name:"Home" ~default_currency:"SEK"));
   let alice = Service.access_for service (Access.user alice) in
   let other = account_named service alice "Other" in
   ignore (ok (Service.update_account service alice other ~name:(Some "Misc") ~details:Account_info.no_details));
+  let before = Service.accounts service alice in
+  Alcotest.(check bool) "the household's accounts are there" true
+    (List.exists (fun (i : Account_info.t) -> match i.account.owner with Owner.Household _ -> true | User _ -> false) before);
   let user = Access.user alice in
   let alice =
     ok (Service.update_settings service alice { User.locale = "sv"; timezone = user.timezone; default_currency = user.default_currency; pay_cycle = user.pay_cycle })
   in
-  let names owner =
-    List.filter_map (fun (i : Account_info.t) -> if Owner.equal i.account.owner owner then Some i.account.name else None) (Service.accounts service alice)
+  Alcotest.(check string) "the language changed" "sv" (Access.user alice).locale;
+  Alcotest.(check bool) "every account as it was" true (Service.accounts service alice = before)
+
+(* Books are seeded in English whoever creates them; viewers see them in their own language. *)
+let test_new_books_are_seeded_in_english () =
+  let service = make_service () in
+  let alice =
+    Service.sign_in service
+      { issuer = "https://id.example"; subject = "alice"; display_name = Some "alice"; email = None; is_admin = Some true; locale = Some "sv" }
   in
-  let personal = names (Access.personal alice) and shared = names (Owner.Household (Option.get (Access.household alice)).id) in
+  Alcotest.(check string) "a Swedish user" "sv" (Access.user alice).locale;
+  ignore (account_named service alice "Groceries");
+  ignore (account_named service alice "Uncategorized");
+  let household = ok (Service.create_household service alice ~name:"Hem" ~default_currency:"SEK") in
+  let alice = Service.access_for service (Access.user alice) in
+  Alcotest.(check bool) "the household's too" true
+    (List.exists (fun (i : Account_info.t) -> i.account.name = "Groceries" && Owner.equal i.account.owner (Household household.id)) (Service.accounts service alice))
+
+(* Every starter category has a name in every locale, and a key leads back to its category. *)
+let test_starter_keys_and_names () =
   List.iter
-    (fun (label, names) ->
-      Alcotest.(check bool) (label ^ ": translated") true (List.mem "Mat & hushåll" names && List.mem "Okategoriserat" names);
-      Alcotest.(check bool) (label ^ ": no English left") false (List.mem "Groceries" names))
-    [ ("personal", personal); ("household", shared) ];
-  Alcotest.(check bool) "a renamed one keeps its name" true (List.mem "Misc" personal && not (List.mem "Övrigt" personal))
+    (fun (entry : Chart.entry) -> List.iter (fun locale -> ignore (Category_name.name ~slug:entry.slug ~currency:None locale)) Msg.locales)
+    Chart.entries;
+  let starter k = Option.map (fun (s : Starter.t) -> (s.entry.slug, s.currency)) (Starter.of_key (key k)) in
+  let check = Alcotest.(check (option (pair string (option string)))) in
+  check "a slug of its own" (Some ("other-income", None)) (starter "seed:other-income");
+  check "the base form" (Some ("other", None)) (starter "seed:other");
+  check "another currency" (Some ("groceries", Some "EUR")) (starter "seed:groceries-EUR");
+  check "a slug with a dash, in a currency" (Some ("other-income", Some "EUR")) (starter "seed:other-income-EUR");
+  check "not a currency" None (starter "seed:groceries-eur");
+  check "not a starter" None (starter "open:Alice checking")
+
+(* The API marks an untouched starter category and names it in English, whatever was stored, so
+   the browser can show it in the viewer's language and MCP reads English. *)
+let test_account_json_marks_starters () =
+  let service = make_service () in
+  let alice = sign_in service "alice" in
+  let open_category ~key:k name =
+    match
+      Service.open_account service alice ~key:(key k) ~owner:(Access.personal alice) ~kind:Expense ~name ~currency:"EUR" ~flags:Account.no_flags
+        ~details:Account_info.no_details
+    with
+    | Ok (`Created info | `Exists info) -> info.account.id
+    | Error error -> Alcotest.fail (Service.error_to_string error)
+  in
+  ignore (open_category ~key:"open:pets" "Pets");
+  ignore (open_category ~key:"seed:groceries-EUR" "Groceries (EUR)");
+  ignore (ok (Service.update_account service alice (account_named service alice "Other") ~name:(Some "Misc") ~details:Account_info.no_details));
+  let groceries = List.find (fun (i : Account_info.t) -> i.account.name = "Groceries") (Service.accounts service alice) in
+  Store_sqlite.save_account service.db { groceries.account with name = "Mat & hushåll" };
+  let json name =
+    let info = List.find (fun (i : Account_info.t) -> i.account.name = name) (Service.accounts service alice) in
+    let field f = function `Assoc fields -> Option.value (List.assoc_opt f fields) ~default:`Null | _ -> `Null in
+    let pick json = Yojson.Safe.to_string (`List [ field "name" json; field "starter" json ]) in
+    (pick (Json.account info), pick (Json.account_ref info))
+  in
+  let check label name expected =
+    let account, account_ref = json name in
+    Alcotest.(check string) label expected account;
+    Alcotest.(check string) (label ^ ", as a reference") expected account_ref
+  in
+  check "a starter stored in Swedish" "Mat & hushåll" {|["Groceries",{"slug":"groceries","currency":null}]|};
+  check "a starter" "Uncategorized" {|["Uncategorized",{"slug":"uncategorized-expense","currency":null}]|};
+  check "in another currency" "Groceries (EUR)" {|["Groceries (EUR)",{"slug":"groceries","currency":"EUR"}]|};
+  check "renamed" "Misc" {|["Misc",null]|};
+  check "someone's own" "Pets" {|["Pets",null]|}
 
 let test_users_are_isolated () =
   let service = make_service () in
@@ -165,7 +228,10 @@ let () =
   Alcotest.run "service"
     [ ( "access",
         [ Alcotest.test_case "sign-in seeds the chart once" `Quick test_sign_in_seeds_the_chart_once;
-          Alcotest.test_case "starter categories follow the language" `Quick test_starter_categories_follow_the_language;
+          Alcotest.test_case "changing language writes no accounts" `Quick test_changing_language_writes_no_accounts;
+          Alcotest.test_case "new books are seeded in english" `Quick test_new_books_are_seeded_in_english;
+          Alcotest.test_case "starter keys and names" `Quick test_starter_keys_and_names;
+          Alcotest.test_case "account json marks starters" `Quick test_account_json_marks_starters;
           Alcotest.test_case "users are isolated" `Quick test_users_are_isolated;
           Alcotest.test_case "household sharing and masking" `Quick test_household_sharing_and_masking;
           Alcotest.test_case "only admins add household bank accounts" `Quick test_only_admins_add_household_bank_accounts ] );

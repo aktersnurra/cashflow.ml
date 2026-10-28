@@ -74,26 +74,17 @@ let scoped service access = { Scoped.db = service.db; access }
 
 let access_for service (user : User.t) = Access.make ~user ~household:(Directory.active_household service.db user.id)
 
-let seed_chart service access owner ~locale ~currency =
+let seed_chart service access owner ~currency =
   let scope = match owner with Owner.User _ -> `Personal | Household _ -> `Shared in
   List.iter
     (fun (entry : Chart.entry) ->
       if Chart.applies scope entry then
-        let spec : Account.spec = { owner; kind = entry.kind; currency; name = Chart.name locale entry; flags = Account.no_flags } in
+        let spec : Account.spec = { owner; kind = entry.kind; currency; name = Starter.name ~locale:"en" { entry; currency = None }; flags = Account.no_flags } in
         match L.open_account (scoped service access) (env service) (Chart.key entry) spec with
         | Ok (Created account) -> Account_store.save_details service.db account.id { Account_info.no_details with role = entry.role }
         | Ok (Exists _) -> ()
         | Error error -> invalid_arg (Ledger_error.account_to_string error))
     Chart.entries
-
-(* Starter accounts that still have their starter name, renamed into [locale]. *)
-let localize_chart service owner ~locale =
-  List.iter
-    (fun (info : Account_info.t) ->
-      match Chart.localized_name ~locale ~key:(Idempotency_key.to_string info.account.key) ~name:info.account.name with
-      | Some name when name <> info.account.name -> Store_sqlite.save_account service.db { info.account with name }
-      | _ -> ())
-    (Account_store.for_owner service.db owner)
 
 let currency service code =
   match Sql.(run service.db (stmt "SELECT scale FROM currencies WHERE code = ?" (text @-> nil) (opt (row (int @-> nil) Fun.id)))) code with
@@ -106,7 +97,7 @@ let sign_in service (claims : Directory.claims) =
       let access = access_for service user in
       (if status = `Created then
          match currency service user.default_currency with
-         | Ok currency -> seed_chart service access (Access.personal access) ~locale:user.locale ~currency
+         | Ok currency -> seed_chart service access (Access.personal access) ~currency
          | Error _ -> ());
       access)
 
@@ -115,11 +106,7 @@ let update_settings service access (settings : User.settings) =
   let* _ = Result.map_error (fun _ -> `Invalid ("unsupported timezone " ^ settings.timezone)) (Time.parse_zone settings.timezone) in
   if not (List.mem settings.locale I18n_locale.supported) then Error (`Invalid ("unsupported locale " ^ settings.locale))
   else (
-    Sql.transaction service.db (fun () ->
-        Directory.save_settings service.db (Access.user access) settings;
-        (* A household's starter categories follow whoever last chose a language. *)
-        localize_chart service (Access.personal access) ~locale:settings.locale;
-        Option.iter (fun (h : Household.t) -> localize_chart service (Owner.Household h.id) ~locale:settings.locale) (Access.household access));
+    Sql.transaction service.db (fun () -> Directory.save_settings service.db (Access.user access) settings);
     Ok (access_for service (Option.get (Directory.find_user service.db (Access.user access).id))))
 
 let require_admin access = if Access.is_admin access then Ok () else Error (`Forbidden "only an admin can do this")
@@ -135,7 +122,7 @@ let create_household service access ~name ~default_currency =
         let user = Access.user access in
         let household = Directory.create_household service.db ~now:(service.now ()) ~creator:user ~name ~default_currency in
         let access = access_for service user in
-        seed_chart service access (Owner.Household household.id) ~locale:user.locale ~currency;
+        seed_chart service access (Owner.Household household.id) ~currency;
         Ok household)
 
 let own_household access = Option.to_result ~none:(`Invalid "you don't belong to a household") (Access.household access)

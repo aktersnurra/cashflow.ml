@@ -12,7 +12,7 @@ let nodes ~locale ~code ?(categories = 5) (cycle : J.t) (spending : J.t) =
   let rows =
     List.filter_map (J.list (J.field "categories" spending)) ~f:(fun r ->
         let v = Fmt.to_float (J.field "total" r) in
-        if Float.(v > 0.) then Some (J.str (J.path [ "category"; "name" ] r), v, J.str_opt (J.path [ "category"; "id" ] r)) else None)
+        if Float.(v > 0.) then Some (Accounts_data.name ~locale (J.field "category" r), v, J.str_opt (J.path [ "category"; "id" ] r)) else None)
   in
   let top = List.take rows categories and other = List.sum (module Float) (List.drop rows categories) ~f:(fun (_, v, _) -> v) in
   let left_values =

@@ -82,7 +82,7 @@ let page ~(ctx : Ctx.t) graph =
               [ Ui.span [ Ui.text (Msg.budgets_col_category locale) ]; Ui.span ~cls:"num" [ Ui.text (Msg.cashflow_col_amount locale) ];
                 Ui.span ~cls:"num" [ Ui.text (Msg.cashflow_col_share locale) ]; Ui.span ~cls:"num" [ Ui.text (Msg.cashflow_col_change locale) ] ]
            :: List.mapi rows ~f:(fun i r ->
-                  let total = Fmt.to_float (J.field "total" r) and name = J.str (J.path [ "category"; "name" ] r) in
+                  let total = Fmt.to_float (J.field "total" r) and name = Accounts_data.name ~locale (J.field "category" r) in
                   row ?id:(J.str_opt (J.path [ "category"; "id" ] r))
                     ~tile:(Ui.span ~cls:(if i < 5 then sprintf "tile c%d" (i + 1) else "tile") [ Ui.text (Ui.initial name) ])
                     ~name ~amount:total ~share:(total /. income)

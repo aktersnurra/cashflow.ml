@@ -16,7 +16,7 @@ let component ~(ctx : Ctx.t) ~(ask : (string -> unit Effect.t) Bonsai.t) ~(open_
     let accounts =
       match accounts with
       | Loaded json ->
-          List.filter_map (Accounts_data.of_list json) ~f:(fun a ->
+          List.filter_map (Accounts_data.of_list ~locale json) ~f:(fun a ->
               if Accounts_data.is_bank a then Some (Msg.palette_account ~account:a.name locale, navigate (Route.Account a.id)) else None)
       | _ -> []
     in
