@@ -518,13 +518,13 @@ let runtime_reserve_admission () =
       let runtime = R.create ~sw ~service ~provider ~clock in
       let a = ok (R.submit runtime ~principal:p (submit "reserve")) in
       drain ();
-      if context_tokens = 16384 then
+      if context_tokens = 32768 then
         check "small completion independent of local byte cap" (!calls = 1 && state db owner a = A.Completed)
       else
         check "insufficient input plus completion context refuses without sending"
           (!calls = 0 && match state db owner a with
             A.Failed { context = A.Limit A.Context_bytes; _ } -> true | _ -> false)))
-    [16384; 2048]
+    [32768; 2048]
 
 let orphan_sweep () =
   let callback = ref (fun (_ : string) -> ()) and calls = ref 0 in

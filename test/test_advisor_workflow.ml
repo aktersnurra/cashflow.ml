@@ -617,12 +617,14 @@ let proposal_outcomes () =
         card "propose_add_rule" [ text "Pattern" "spotify"; text "Category" "Subscriptions" ] A.Applied;
         card "propose_save_goal" [ text "Name" "Sofa" ] A.Declined;
         card "propose_new_category" [ text "Name" "Coffee" ] A.Reverted;
+        card "propose_entry" [ text "Description" "ICA lunch" ] A.Declined;
         card "propose_categorize" [ text "Transaction" "a"; text "Transaction" "b" ] A.Out_of_date ]
   in
   has "budget" told "[Budget proposal for Groceries: declined by the user.]";
   has "rule" told "[Rule proposal \"spotify\" suggesting Subscriptions: applied by the user.]";
   has "goal" told "[Savings goal proposal \"Sofa\": declined by the user.]";
   has "category" told "[New category proposal \"Coffee\": applied, then undone by the user.]";
+  has "entry" told "[Manual entry proposal \"ICA lunch\": declined by the user.]";
   has "categorize" told "[Proposal to categorize 2 transactions: not applied: it was out of date.]"
 
 let commands () =

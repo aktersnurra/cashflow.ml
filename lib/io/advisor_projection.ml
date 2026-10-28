@@ -49,6 +49,8 @@ let parse_call ~name ~arguments =
     | "inbox_rows" | "categories" -> Some []
     | "propose_categorize" -> Some [ "rows" ]
     | "propose_add_rule" -> Some [ "pattern"; "category"; "direction" ]
+    | "bank_accounts" -> Some []
+    | "propose_entry" -> Some [ "from_account"; "to_account"; "amount"; "date"; "description" ]
     | "propose_save_goal" -> Some [ "name"; "target_amount"; "target_date"; "monthly_amount" ]
     | "propose_new_category" -> Some [ "name"; "kind" ]
     | _ -> None
@@ -77,6 +79,14 @@ let parse_call ~name ~arguments =
           | "goals" -> T.Goals c
           | "inbox_rows" -> T.Inbox_rows c
           | "categories" -> T.Categories c
+          | "bank_accounts" -> T.Bank_accounts c
+          | "propose_entry" ->
+              let text f k = match List.assoc_opt k f with Some `Null -> None | _ -> text f k in
+              let amount = require (text f "amount") in
+              if String.length amount > 30 then raise Invalid;
+              T.Propose_entry
+                { from_account = require (T.account_reference (require (text f "from_account"))); to_account = require (T.account_reference (require (text f "to_account")));
+                  amount; date = text f "date"; description = require (text f "description") }
           | "propose_add_rule" ->
               (* Models often send null for an optional field; that means the same as leaving it out. *)
               let text f k = match List.assoc_opt k f with Some `Null -> None | _ -> text f k in
@@ -212,6 +222,30 @@ let resolve_category service aliases ctx reference =
   | Some a when a.kind = Account.Expense || a.kind = Account.Income -> Ok a
   | _ -> error A.Not_found
 
+(* Any account in the pinned book that this conversation has been shown the alias of. *)
+let resolve_account service aliases ctx reference =
+  let* id =
+    Advisor_store.resolve_account_alias (store service) ~owner:aliases.owner ~conversation:aliases.conversation
+      ~alias:(T.account_reference_text reference)
+  in
+  match scoped_book ctx id with Some a -> Ok a | None -> error A.Not_found
+
+(* An account's name with every digit and asterisk taken out: enough for "my savings", never part of a number. *)
+let name_hint name =
+  let kept = String.concat "" (List.map (String.make 1) (List.filter (fun c -> not (Char.equal c '*' || (c >= '0' && c <= '9'))) (List.init (String.length name) (String.get name)))) in
+  let words = List.filter (fun w -> w <> "") (String.split_on_char ' ' kept) in
+  let hint = String.concat " " words in
+  if hint = "" then "account"
+  else if String.length hint <= 40 then hint
+  else (
+    let cut = ref 40 in
+    while !cut > 0 && Char.code hint.[!cut] land 0xC0 = 0x80 do decr cut done;
+    String.sub hint 0 !cut)
+
+(* What the user sees for an account: categories in their language, other accounts as they named them. *)
+let shown_name ~locale (i : Account_info.t) =
+  match i.account.kind with Account.Expense | Income -> Starter.display_name ~locale i | Asset | Liability | Equity -> i.account.name
+
 let period (T.Cycle_offset n) = Insights.Cycle_offset n
 
 (* A name or pattern the user will see and later search for: trimmed, short, one line. *)
@@ -247,6 +281,7 @@ let refs = function
   | T.Categories_result xs -> xs
   | T.Categorize_proposal_result rows -> List.map (fun (r : T.categorize_row) -> r.category) rows
   | T.Proposal_card_result c -> c.accounts
+  | T.Bank_accounts_result xs -> List.map (fun (b : T.bank_account) -> b.account) xs
   | T.Cycle_summary_result _ | T.Goals_result _ -> []
 
 let assumptions (f : Forecast.t) =
@@ -298,7 +333,7 @@ let read (service : Service.t) ~principal ~scope ~aliases ~currency:pinned reque
                 && s.input.leave_out = []
                 && List.length s.leave_out <= 20
                 && List.length s.input.one_off <= 10
-            | Recurring _ | Goals _ | Propose_budget _ | Inbox_rows _ | Categories _ | Propose_rule _ | Propose_goal _ | Propose_category _ -> true
+            | Recurring _ | Goals _ | Propose_budget _ | Inbox_rows _ | Categories _ | Propose_rule _ | Propose_goal _ | Propose_category _ | Bank_accounts _ | Propose_entry _ -> true
             | Propose_categorize { rows } ->
                 let n = List.length rows in
                 n >= 1 && n <= 20 && List.length (List.sort_uniq String.compare (List.map (fun (r, _) -> T.row_reference_text r) rows)) = n
@@ -393,6 +428,71 @@ let read (service : Service.t) ~principal ~scope ~aliases ~currency:pinned reque
                   in
                   let shown = take 60 all |> List.map (account ~locale:(Access.user ctx.access).locale) in
                   Ok (T.Categories_result shown, List.length all, List.length shown, [])
+              | Bank_accounts _ ->
+                  let all =
+                    Insights.accounts ctx
+                    |> List.filter (fun (i : Account_info.t) ->
+                        (i.account.kind = Account.Asset || i.account.kind = Account.Liability)
+                        && Option.is_none i.details.role && (not i.account.closed) && Option.is_some (scoped i.account.id))
+                    |> List.sort (fun (a : Account_info.t) (b : Account_info.t) -> String.compare a.account.name b.account.name)
+                  in
+                  let shown =
+                    take 30 all
+                    |> List.map (fun (i : Account_info.t) ->
+                        { T.account = account ~locale:(Access.user ctx.access).locale i; institution = Option.map name_hint i.details.institution; hint = name_hint i.account.name;
+                          statement_backed = i.details.statement_backed })
+                  in
+                  Ok (T.Bank_accounts_result shown, List.length all, List.length shown, [])
+              | Propose_entry { from_account; to_account; amount; date; description } ->
+                  let* from_ = resolve_account service aliases ctx from_account in
+                  let* to_ = resolve_account service aliases ctx to_account in
+                  let* description = match one_line ~min:1 ~max:80 description with Some d -> Ok d | None -> error A.Invalid_tool_arguments in
+                  let* minor =
+                    match Json.parse_decimal ~scale:(Currency.scale ctx.currency) amount with
+                    | Some n when Int64.compare n 0L > 0 -> Ok n
+                    | _ -> error A.Invalid_tool_arguments
+                  in
+                  let* on =
+                    match date with
+                    | None -> Ok ctx.today
+                    | Some d -> (
+                        (* Within the last year or the next month: an entry is something that just happened or is about to. *)
+                        match Date.of_string d with
+                        | Ok d when Date.compare d (Date.add_days ctx.today (-366)) >= 0 && Date.compare d (Date.add_days ctx.today 31) <= 0 -> Ok d
+                        | _ -> error A.Invalid_tool_arguments)
+                  in
+                  let* from_info = match Service.find_account service access from_.id with Ok i -> Ok i | Error _ -> error A.Not_found in
+                  let* to_info = match Service.find_account service access to_.id with Ok i -> Ok i | Error _ -> error A.Not_found in
+                  let balance_sheet (k : Account.kind) = k = Account.Asset || k = Account.Liability in
+                  (* A purchase, income, or a move between the user's own accounts; never a system account. *)
+                  let sensible =
+                    (balance_sheet from_.kind && to_.kind = Account.Expense) || (from_.kind = Account.Income && balance_sheet to_.kind)
+                    || (balance_sheet from_.kind && balance_sheet to_.kind)
+                  in
+                  if (not sensible) || Account_id.equal from_.id to_.id || Option.is_some from_info.details.role || Option.is_some to_info.details.role
+                     || from_info.account.closed || to_info.account.closed
+                  then error A.Invalid_tool_arguments
+                  else
+                    let pending = from_info.details.statement_backed || to_info.details.statement_backed in
+                    Ok
+                      ( T.Proposal_card_result
+                          { tool = "propose_entry"; kind = "entry";
+                            facts =
+                              [ { A.label = "From"; value = A.Text (shown_name ~locale:(Access.user ctx.access).locale from_info) }; { A.label = "To"; value = A.Text (shown_name ~locale:(Access.user ctx.access).locale to_info) };
+                                { A.label = "Amount"; value = A.Money { minor_units = minor; currency = ctx.currency } };
+                                { A.label = "Date"; value = A.Date on }; { A.label = "Description"; value = A.Text description };
+                                { A.label = "Status"; value = A.Text (if pending then "pending" else "posted") } ];
+                            model =
+                              [ ("from", T.Account_value from_); ("to", T.Account_value to_); ("amount", T.Number_value minor);
+                                ("date", T.Text_value (Date.to_string on)); ("description", T.Text_value description);
+                                ("posting", T.Text_value (if pending then "pending_until_statement_confirms" else "at_once")) ];
+                            accounts = [ from_; to_ ];
+                            arguments =
+                              Yojson.Safe.to_string
+                                (`Assoc [ ("from_account_id", `String (Account_id.to_string from_.id)); ("to_account_id", `String (Account_id.to_string to_.id));
+                                          ("amount", `String (Int64.to_string minor)); ("date", `String (Date.to_string on)); ("description", `String description) ]);
+                            precondition = Yojson.Safe.to_string (`Assoc [ ("pending", `Bool pending) ]) },
+                        1, 1, [] )
               | Propose_rule { pattern; category; direction } ->
                   let* pattern = match one_line ~min:3 ~max:60 pattern with Some p -> Ok p | None -> error A.Invalid_tool_arguments in
                   let* a = resolve_category service aliases ctx category in
@@ -956,6 +1056,14 @@ let model_json ~aliases (e : T.evidence) =
                     ])
                 rows
           | Categories_result xs -> arr acct xs
+          | Bank_accounts_result xs ->
+              arr
+                (fun (b : T.bank_account) ->
+                  obj
+                    [ ("reference", str (match acct b.account with `Assoc fs -> (match List.assoc_opt "reference" fs with Some (`String r) -> r | _ -> "") | _ -> ""));
+                      ("role", str (Account.kind_to_string b.account.kind)); ("hint", str b.hint);
+                      ("institution", opt str b.institution); ("statement_backed", `Bool b.statement_backed) ])
+                xs
           | Proposal_card_result card ->
               obj
                 (("status", str "awaiting_user_confirmation")

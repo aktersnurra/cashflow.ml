@@ -23,6 +23,9 @@ type request =
   | Forecast of common * int * scenario
   | Inbox_rows of common
   | Categories of common
+  | Bank_accounts of common
+  | Propose_entry of { from_account : account_reference; to_account : account_reference; amount : string; date : string option; description : string }
+      (** Money moving between two accounts the user has, entered by hand, for the user to confirm. *)
   | Propose_rule of { pattern : string; category : account_reference; direction : [ `In | `Out ] option }
       (** A merchant text that suggests a category on import (never applies it by itself). *)
   | Propose_goal of { name : string; target_amount : string; target_date : string option; monthly_amount : string option }
@@ -123,6 +126,13 @@ type categorize_row = {
   current : Account_id.t;  (** where the row sat when proposed *)
 }
 
+type bank_account = {
+  account : account;
+  institution : string option;
+  hint : string;  (** the account's name with every digit and asterisk removed: enough to match "my savings", never a number *)
+  statement_backed : bool;
+}
+
 type budget_proposal = {
   category : account;
   current : int64 option;  (** the monthly budget in force this cycle, if any *)
@@ -161,6 +171,7 @@ type result =
   | Categories_result of account list
   | Categorize_proposal_result of categorize_row list
   | Proposal_card_result of proposal_card
+  | Bank_accounts_result of bank_account list
 
 type evidence = {
   id : Advisor.Evidence_id.t;
@@ -201,8 +212,8 @@ let common = function
   | Goals c
   | Forecast (c, _, _) ->
       c
-  | Inbox_rows c | Categories c -> c
-  | Propose_budget _ | Propose_categorize _ | Propose_rule _ | Propose_goal _ | Propose_category _ -> { currency = None }
+  | Inbox_rows c | Categories c | Bank_accounts c -> c
+  | Propose_budget _ | Propose_categorize _ | Propose_rule _ | Propose_goal _ | Propose_category _ | Propose_entry _ -> { currency = None }
 
 let name = function
   | Cycle_summary_result _ -> "cycle_summary"
@@ -218,6 +229,7 @@ let name = function
   | Categories_result _ -> "categories"
   | Categorize_proposal_result _ -> "propose_categorize"
   | Proposal_card_result c -> c.tool
+  | Bank_accounts_result _ -> "bank_accounts"
 
 let currency_code s =
   if String.length s = 3 && String.for_all (function 'A' .. 'Z' -> true | _ -> false) s then Some s else None

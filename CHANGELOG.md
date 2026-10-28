@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### The advisor can propose a manual entry
+
+- Ask the advisor to add a purchase, some income, or a move between your own accounts. It appears as a card with the
+  accounts by the names you know, the exact amount, the date and whether it will post at once or wait for the bank
+  statement to confirm it. Nothing is entered until you click Apply, which enters it exactly as adding it by hand does.
+  Undo voids an entry still waiting for its statement or reverses a posted one, and leaves it alone once a statement has
+  confirmed it or you have reversed or corrected it. Dates must be within the last year or the next month.
+- To pick the right account the advisor is shown a name hint for each bank account: its name with every digit and
+  asterisk removed ("Lönekonto ****1234" becomes "Lönekonto"), never a number; the same goes for the institution. Account names are otherwise not shown to it.
+
 ### Closing the inbox's category picker
 
 - A tap or click outside the inbox's category, sharing and pairing pickers closes them without choosing anything. On a
