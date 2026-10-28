@@ -120,7 +120,12 @@ let net_worth ctx ~cycles =
   let cycles = recent_cycles ctx cycles in
   let dates = List.map (fun (c : Cycle.t) -> Date.min c.last ctx.today) cycles in
   let last = List.fold_left Date.max ctx.today dates in
-  Analytics.net_worth_series (book ctx) ~dates (Transfer_query.all_before ctx.service.db ctx.access (Date.add_days last 1))
+  let since = List.fold_left Date.min last dates in
+  let changes =
+    Transfer_query.balance_changes_before ctx.service.db ctx.access ~since ~before:(Date.add_days last 1)
+    |> List.map (fun (account_id, on, change) -> { Analytics.account_id; on; change })
+  in
+  Analytics.net_worth_of_changes (book ctx) ~dates changes
 
 let largest_expenses ctx ~period ~limit =
   let first, last = period_range ctx period in

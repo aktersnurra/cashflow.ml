@@ -389,10 +389,29 @@ let test_svg_logos () =
     (Printf.sprintf "UPDATE logos SET bytes = CAST('%s' AS BLOB) WHERE id = %d" (Str_compat.replace_all ~sub:"'" ~by:"''" svg) id);
   Alcotest.(check int) "an SVG stored without cleaning is not served" 404 (fetch id).status
 
+(* A browser that accepts gzip gets large text gzipped, and what it unpacks is the original; anything else is left alone. *)
+let test_gzip () =
+  let body = String.concat "," (List.init 500 (fun i -> Printf.sprintf {|{"n":%d}|} i)) in
+  let response : Http_server.response = { status = 200; headers = [ ("content-type", "application/json") ]; body } in
+  let ask value = Httpun.Request.create ~headers:(Httpun.Headers.of_list (match value with Some v -> [ ("accept-encoding", v) ] | None -> [])) `GET "/" in
+  let zipped = Http_server.compressed (ask (Some "br, gzip;q=0.8")) response in
+  Alcotest.(check (option string)) "labelled" (Some "gzip") (header zipped "content-encoding");
+  Alcotest.(check bool) "smaller" true (String.length zipped.body < String.length body);
+  let n = String.length zipped.body in
+  Alcotest.(check string) "gzip header" "\x1f\x8b" (String.sub zipped.body 0 2);
+  (match Zipc_deflate.inflate ~start:10 ~len:(n - 18) zipped.body with
+  | Ok plain -> Alcotest.(check string) "round trip" body plain
+  | Error e -> Alcotest.fail e);
+  Alcotest.(check (option string)) "not asked" None (header (Http_server.compressed (ask None) response) "content-encoding");
+  Alcotest.(check (option string)) "small bodies" None
+    (header (Http_server.compressed (ask (Some "gzip")) { response with body = "{}" }) "content-encoding");
+  Alcotest.(check (option string)) "images" None
+    (header (Http_server.compressed (ask (Some "gzip")) { response with headers = [ ("content-type", "image/png") ] }) "content-encoding")
+
 let () =
   Alcotest.run "http"
     [ ( "routes",
-        [ Alcotest.test_case "reporting envelopes" `Quick test_reporting_envelopes;
+        [ Alcotest.test_case "gzip" `Quick test_gzip; Alcotest.test_case "reporting envelopes" `Quick test_reporting_envelopes;
           Alcotest.test_case "unversioned assets revalidate" `Quick test_unversioned_assets_revalidate;
           Alcotest.test_case "private logos" `Quick test_private_logos;
           Alcotest.test_case "SVG logos" `Quick test_svg_logos;

@@ -9,6 +9,13 @@
   you have changed it since. A change is refused when the goal is no longer as it was proposed against.
 - To say which goal, the advisor is now shown your goals' names (one line each) with a reference. Until now it saw only
   their figures.
+  
+### A faster Accounts page
+
+- The Accounts page no longer reads every transaction you have ever had to draw the net-worth figure: the database adds
+  up each account's movements per day and only those sums are loaded. The account's own page shows its latest 50
+  transactions, with a button for older ones, instead of 200 at once.
+- Answers from the server are sent gzipped to browsers that accept it.
 
 ### The advisor no longer proposes a category you already have under another name
 
