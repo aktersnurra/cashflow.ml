@@ -9,6 +9,8 @@
 - On a phone the picker has a Cancel button, opens without raising the keyboard over the list, and lists every
   category in a list that scrolls (it stopped at twelve). Rows no longer all say "Expense category"; the kind shows
   only where the options differ, as for money coming in.
+- The selected inbox row's actions run under it at full width, so on a phone they fit on one line instead of
+  wrapping beside the amount.
 
 ### Logos from more websites
 

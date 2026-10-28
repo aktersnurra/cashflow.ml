@@ -198,6 +198,9 @@ fs.writeFileSync(out + '/savings.csv', savings);
     const rows = page.locator('.page:visible .list .row');
     await rows.first().waitFor({ timeout: 10000 });
     const pending = await rows.count();
+    // The selected row's actions fit on one line under it, not squeezed beside the amount.
+    const actionTops = await page.locator('.page:visible .row.selected .actions .button').evaluateAll(bs => bs.map(b => b.getBoundingClientRect().top));
+    assert.ok(actionTops.length >= 3 && actionTops.every(t => t === actionTops[0]), 'the actions share one line: ' + actionTops);
     await page.locator('.page:visible .row.selected .button', { hasText: 'Välj kategori' }).tap();
     await page.waitForSelector('.overlay .palette', { timeout: 10000 });
     assert.ok((await page.locator('.overlay .palette').boundingBox()).y > 40, 'the sheet leaves room above it to tap');

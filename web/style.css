@@ -347,6 +347,8 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
 .row:first-child { border-top: 0; }
 .row.clickable { cursor: pointer; } .row.clickable:hover, .row.selected { background: var(--surface); }
 .row.selected { box-shadow: inset 2px 0 0 var(--accent); }
+.inbox-row > .actions { grid-column: 1 / -1; margin-top: -4px; }
+.inbox-row > .actions > .button:first-child:not(.primary) { margin-left: -12px; }
 .row-title { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row-sub { font-size: 13px; line-height: 16px; margin-top: 2px; color: var(--text-2); }
 .section-title { font-size: 16px; line-height: 22px; font-weight: 600; color: var(--text); margin: 28px 0 12px; }

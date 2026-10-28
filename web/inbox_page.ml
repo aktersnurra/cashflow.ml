@@ -100,22 +100,24 @@ let page ?(embedded = false) ~(ctx : Ctx.t) graph =
     let signed = if outflow item then { amount with minor = Int64.neg amount.minor } else amount in
     let suggestion = (match J.field "suggested_category" item with `Null -> None | c -> Some (Accounts_data.name ~locale c)) in
     let is_selected = index = selected in
+    (* The actions take the row's full width under it, so on a phone they sit on one line instead of squeezing beside
+       the amount. *)
     Vdom.Node.div
-      ~attrs:[ Vdom.Attr.class_ ("row clickable" ^ if is_selected then " selected" else ""); Vdom.Attr.on_click (fun _ -> set_selected index) ]
+      ~attrs:[ Vdom.Attr.class_ ("row clickable inbox-row" ^ if is_selected then " selected" else ""); Vdom.Attr.on_click (fun _ -> set_selected index) ]
       [ Ui.div
           [ Ui.div ~cls:"row-title" [ Ui.text (J.str (J.field "description" t)) ];
             Ui.div ~cls:"row-sub"
               [ Ui.text
                   (Fmt.format_date locale (J.field "date" t) ^ " · " ^ Option.value_map (bank item) ~default:"" ~f:(fun a -> a.name)
-                  ^ match suggestion with Some c -> " · " ^ Msg.label_suggested ~category:c locale | None -> "") ];
-            (if is_selected then
-               Ui.div ~cls:"actions"
-                 ([ (match suggestion with Some c -> Ui.button ~kind:"primary" ~key_hint:"↵" c (accept item) | None -> Vdom.Node.none);
-                    Ui.button ~key_hint:"c" (Msg.action_categorize locale) (set_picker (Category "")) ]
-                 @ (if Ctx.has_household session && outflow item then [ Ui.button ~key_hint:"s" (Msg.action_share locale) (set_picker (Share "")) ] else [])
-                 @ [ Ui.button ~key_hint:"p" (Msg.action_pair locale) (open_pairs item); Ui.button ~key_hint:"x" (Msg.action_skip locale) (dismiss item) ])
-             else Vdom.Node.none) ];
-        Ui.div ~cls:("amount " ^ if outflow item then "" else "positive") [ Ui.text (Mf2_runtime.format_money locale signed) ] ]
+                  ^ match suggestion with Some c -> " · " ^ Msg.label_suggested ~category:c locale | None -> "") ] ];
+        Ui.div ~cls:("amount " ^ if outflow item then "" else "positive") [ Ui.text (Mf2_runtime.format_money locale signed) ];
+        (if is_selected then
+           Ui.div ~cls:"actions"
+             ([ (match suggestion with Some c -> Ui.button ~kind:"primary" ~key_hint:"↵" c (accept item) | None -> Vdom.Node.none);
+                Ui.button ~key_hint:"c" (Msg.action_categorize locale) (set_picker (Category "")) ]
+             @ (if Ctx.has_household session && outflow item then [ Ui.button ~key_hint:"s" (Msg.action_share locale) (set_picker (Share "")) ] else [])
+             @ [ Ui.button ~key_hint:"p" (Msg.action_pair locale) (open_pairs item); Ui.button ~key_hint:"x" (Msg.action_skip locale) (dismiss item) ])
+         else Vdom.Node.none) ]
   in
   let category_picker ~title ~query ~set_query ~options ~choose =
     let all_options = options in
