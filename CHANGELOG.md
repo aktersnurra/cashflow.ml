@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### A weekly brief on Home
+
+- Home opens with last week (Monday to Sunday) in figures: income, spending, the week before and the three categories
+  that took the most, with two or three sentences that a model writes from those figures alone. Whether there is a brief,
+  and every number in it, is computed by code; a week with no income or spending has none. The sentences are written once
+  for a given set of figures (an import that changes them writes them again) and never per transaction, and nothing is
+  sent outside the app. Without a configured model the figures show on their own.
+
 ### OpenRouter
 
 - Requests to OpenRouter now carry the app's public URL as `HTTP-Referer` next to the `cashflow` title, so usage shows

@@ -103,6 +103,66 @@ let test_month_review_in_the_readers_language () =
   Alcotest.(check bool) "in Swedish" true (Str_compat.contains ~sub:"Mat & hushåll" prompt);
   Alcotest.(check bool) "not in English" false (Str_compat.contains ~sub:"Groceries" prompt)
 
+(* The weekly brief: the last full week (Monday to Sunday), its figures computed by code, the sentences written from those
+   figures once per set of figures and never when nothing asks for them. *)
+let test_weekly_brief () =
+  let asked = ref [] in
+  let writer : Llm.t = { fake with complete = (fun ?schema:_ ~system:_ ~user () -> asked := user :: !asked; Ok "A quiet week.") } in
+  let service = Service.make ~now:(fun () -> now) ~assistant:writer (Store_sqlite.open_memory ()) in
+  let alice = sign_in service "alice" in
+  let checking = open_checking service alice "Checking" in
+  let spend name day minor =
+    let e = entry name ~from_account:checking ~to_account:(account_named service alice "Groceries") minor in
+    ignore (ok (Service.add_entry service alice { e with value_date = date day }))
+  in
+  Alcotest.(check bool) "an empty week has no brief" true (Option.is_none (Cashflow_io.Weekly_brief.compute service alice ~write:true));
+  Alcotest.(check int) "and asks no one" 0 (List.length !asked);
+  spend "this week" "2026-10-15" 250_00;
+  spend "the week before" "2026-10-08" 100_00;
+  spend "too recent to count" "2026-10-20" 999_00;
+  let brief = Option.get (Cashflow_io.Weekly_brief.compute service alice ~write:false) in
+  Alcotest.(check string) "Monday to Sunday" "2026-10-12 to 2026-10-18" (Cashflow_core.Date.to_string brief.first ^ " to " ^ Cashflow_core.Date.to_string brief.last);
+  Alcotest.(check int64) "the week's spending" 250_00L brief.spending;
+  Alcotest.(check int64) "the week before" 100_00L brief.previous_spending;
+  Alcotest.(check (option string)) "no text until it is asked for" None brief.text;
+  Alcotest.(check bool) "and it can be written" true brief.can_write;
+  Alcotest.(check int) "reading asked no one" 0 (List.length !asked);
+  let written = Option.get (Cashflow_io.Weekly_brief.compute service alice ~write:true) in
+  Alcotest.(check (option string)) "the text" (Some "A quiet week.") written.text;
+  ignore (Cashflow_io.Weekly_brief.compute service alice ~write:true);
+  Alcotest.(check int) "written once for these figures" 1 (List.length !asked);
+  Alcotest.(check bool) "read back without asking" true ((Option.get (Cashflow_io.Weekly_brief.compute service alice ~write:false)).text = Some "A quiet week.");
+  spend "late" "2026-10-16" 50_00;
+  ignore (Cashflow_io.Weekly_brief.compute service alice ~write:true);
+  Alcotest.(check int) "new figures, new text" 2 (List.length !asked);
+  Alcotest.(check bool) "only figures reach the model" true (not (Str_compat.contains ~sub:"late" (List.hd !asked)))
+
+let test_weekly_brief_edges () =
+  let week today = let f, l = Cashflow_io.Weekly_brief.last_full_week (date today) in Cashflow_core.Date.to_string f ^ " " ^ Cashflow_core.Date.to_string l in
+  Alcotest.(check string) "Monday" "2026-10-12 2026-10-18" (week "2026-10-19");
+  Alcotest.(check string) "Sunday" "2026-10-12 2026-10-18" (week "2026-10-25");
+  Alcotest.(check string) "the year turn" "2026-12-21 2026-12-27" (week "2027-01-03");
+  Alcotest.(check string) "the first Monday of a year" "2026-12-28 2027-01-03" (week "2027-01-04");
+  let asked = ref 0 in
+  let failing : Llm.t = { fake with complete = (fun ?schema:_ ~system:_ ~user:_ () -> incr asked; Error "provider down") } in
+  let service = Service.make ~now:(fun () -> now) ~assistant:failing (Store_sqlite.open_memory ()) in
+  let alice = sign_in service "alice" in
+  let checking = open_checking service alice "Checking" in
+  let e = entry "lunch" ~from_account:checking ~to_account:(account_named service alice "Groceries") 250_00 in
+  ignore (ok (Service.add_entry service alice { e with value_date = date "2026-10-15" }));
+  let brief write = Option.get (Cashflow_io.Weekly_brief.compute service alice ~write) in
+  Alcotest.(check bool) "can be written before the attempt" true (brief false).can_write;
+  Alcotest.(check (option string)) "a failure leaves no text" None (brief true).text;
+  ignore (brief true); ignore (brief true);
+  Alcotest.(check int) "and is not asked again for the same figures" 1 !asked;
+  Alcotest.(check bool) "nor offered" false (brief false).can_write;
+  let plain = Service.make ~now:(fun () -> now) (Store_sqlite.open_memory ()) in
+  let bob = sign_in plain "bob" in
+  let e = entry "lunch" ~from_account:(open_checking plain bob "Checking") ~to_account:(account_named plain bob "Groceries") 250_00 in
+  ignore (ok (Service.add_entry plain bob { e with value_date = date "2026-10-15" }));
+  let without = Option.get (Cashflow_io.Weekly_brief.compute plain bob ~write:true) in
+  Alcotest.(check bool) "without a model the figures stand alone" true (without.text = None && not without.can_write && without.spending = 250_00L)
+
 (* Confirming an import asks the model before it takes the database, never inside the transaction,
    and still applies the suggestion. *)
 let test_no_network_inside_the_import_transaction () =
@@ -269,6 +329,8 @@ let () =
         [ Alcotest.test_case "suggestions and privacy" `Quick test_suggestions_and_privacy;
           Alcotest.test_case "prompts name categories in the viewer's language" `Quick test_prompts_name_categories_in_the_viewers_language;
           Alcotest.test_case "month review in the reader's language" `Quick test_month_review_in_the_readers_language;
+          Alcotest.test_case "weekly brief" `Quick test_weekly_brief;
+          Alcotest.test_case "weekly brief edges" `Quick test_weekly_brief_edges;
           Alcotest.test_case "no network inside the import transaction" `Quick test_no_network_inside_the_import_transaction;
           Alcotest.test_case "an unknown format read by the assistant" `Quick test_unknown_format_read_by_the_assistant;
           Alcotest.test_case "layout cells outside the file" `Quick test_layout_cells_outside_the_file ] );
