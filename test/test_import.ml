@@ -400,6 +400,69 @@ let test_pair_all_moves_retroactively () =
   ignore (imported (Import.confirm ctx (request shared ("Datum;Text;Belopp\n" ^ rows "" "FRÅN ALICE"))));
   Alcotest.(check int) "a long history pairs completely" 0 (Inbox.count service alice)
 
+(* Undoing an import reverses its rows in the ledger, but a bank account's list shows what the statement
+   says: after undoing and uploading the same file again, each row once. *)
+let test_list_after_undo_and_reupload () =
+  let service, alice, _, checking, _ = household_setup () in
+  let ctx = Import.context service alice in
+  let csv = "Datum;Text;Belopp\n2026-10-03;COOP;-300,00\n2026-10-04;ICA;-100,00\n" in
+  let listed () =
+    let result = ok_import (Commands.execute service alice ~scopes:[ "ledger:read" ] Commands.query_transactions
+      (`Assoc [ ("account_id", `String (Account_id.to_string checking)); ("fold_triage", `Bool true) ])) in
+    List.map (fun t -> field [ "description" ] t |> Yojson.Safe.Util.to_string) (Yojson.Safe.Util.to_list (field [ "transactions" ] result))
+  in
+  let first = imported (Import.confirm ctx (request checking csv)) in
+  ignore (ok_import (Import.undo ctx ~batch_id:first.batch.batch_id));
+  Alcotest.(check (list string)) "nothing left after the undo" [] (listed ());
+  ignore (imported (Import.confirm ctx (request checking csv)));
+  Alcotest.(check (list string)) "each row once" [ "ICA"; "COOP" ] (listed ());
+  Alcotest.(check int64) "and the balance counts them once" (-400_00L) (balance service alice checking)
+
+(* Differential: a ledger that imported a file, undid it and imported it again must report what one that
+   imported it once reports. *)
+let test_reports_after_undo_and_reupload () =
+  let month i = let m = 5 + i in Printf.sprintf "2026-%02d" m in
+  let rows =
+    String.concat ""
+      (List.concat_map
+         (fun i -> [ Printf.sprintf "%s-15;SPOTIFY;-119,00\n" (month i); Printf.sprintf "%s-%02d;ICA NARA;-%d,00\n" (month i) (3 + i) (200 + (37 * i));
+                     Printf.sprintf "%s-25;LÖN;30000,00\n" (month i); Printf.sprintf "%s-26;TILL HUSHÅLL;-5000,00\n" (month i) ])
+         [ 0; 1; 2; 3; 4; 5 ])
+  in
+  let csv = "Datum;Text;Belopp\n" ^ rows in
+  let shared_csv = "Datum;Text;Belopp\n" ^ String.concat "" (List.init 6 (fun i -> Printf.sprintf "%s-26;FRÅN ALICE;5000,00\n" (month i))) in
+  let build ~churn =
+    let service, alice, _, checking, shared = household_setup () in
+    let ctx = Import.context service alice in
+    let both () =
+      let a = imported (Import.confirm ctx (request checking csv)) in
+      let b = imported (Import.confirm ctx (request shared shared_csv)) in
+      (a, b)
+    in
+    if churn then begin
+      let a, b = both () in
+      (* The newest first, as the page requires. *)
+      ignore (ok_import (Import.undo ctx ~batch_id:b.batch.batch_id));
+      ignore (ok_import (Import.undo ctx ~batch_id:a.batch.batch_id))
+    end;
+    ignore (both ());
+    (service, alice)
+  in
+  let clean = build ~churn:false and churned = build ~churn:true in
+  let report (service, alice) name args =
+    match Query.execute service alice (Option.get (Query.find name)) args with
+    | Ok json -> Str.global_replace (Str.regexp "[0-9a-f]+-[0-9a-f]+-[0-9a-f]+-[0-9a-f]+-[0-9a-f]+") "ID" (Yojson.Safe.pretty_to_string json)
+    | Error e -> "ERROR " ^ Service.error_to_string e
+  in
+  let differing = ref [] in
+  List.iter
+    (fun (name, args) ->
+      let a = report clean name args and b = report churned name args in
+      if not (String.equal a b) then differing := Printf.sprintf "%s\nclean:\n%s\nafter undo and reupload:\n%s" name a b :: !differing)
+    [ ("cashflow_summary", [ ("cycles", `Int 6) ]); ("spending_by_category", []); ("net_worth_series", [ ("cycles", `Int 6) ]);
+      ("largest_transactions", []); ("runway", []); ("recurring_payments", []); ("forecast", []) ];
+  Alcotest.(check (list string)) "reports that differ" [] (List.rev !differing)
+
 let sum_of service alice owner =
   List.fold_left (fun acc (i : Account_info.t) -> if Owner.equal i.account.owner owner then acc @ [ (i.account.name, Account.posted_balance i.account) ] else acc) [] (Service.accounts service alice)
   |> List.filter (fun (_, b) -> not (Int64.equal b 0L))
@@ -474,8 +537,8 @@ let test_pairing_a_contribution () =
   ignore (ok_import (Import.undo ctx ~batch_id:in_batch.batch.batch_id));
   Alcotest.(check bool) "the other side is back in the inbox" true
     (List.exists (fun (v : Inbox.item_view) -> Transfer_id.equal v.item.transfer_id out_id) (Inbox.list service alice ~limit:50));
-  (* Gross flows keep both moves, as for any reversed contribution; what she saved is as after the import. *)
-  Alcotest.(check (list string)) "and alice's books net out" [ "2000.00"; "0.00"; "1000.00"; "1000.00" ] (flows "me");
+  (* The contribution and its reversal cancel out: a move that was undone is not a move out and back. *)
+  Alcotest.(check (list string)) "and alice's books net out" [ "2000.00"; "0.00"; "0.00"; "0.00" ] (flows "me");
   Alcotest.(check string) "undo takes back the contribution" {|"0.00"|} (Yojson.Safe.to_string (contributed ()))
 
 (* A move entered by hand between two accounts whose statements are both imported: the first
@@ -793,7 +856,7 @@ let () =
           Alcotest.test_case "auto-apply threshold" `Quick test_auto_apply_threshold;
           Alcotest.test_case "auto-apply respects owner and currency" `Quick test_auto_apply_respects_owner_and_currency ] );
       ( "inbox",
-        [ Alcotest.test_case "pair and share" `Quick test_pair_and_share; Alcotest.test_case "undo after share" `Quick test_undo_after_share;
+        [ Alcotest.test_case "reports after undo and reupload" `Quick test_reports_after_undo_and_reupload; Alcotest.test_case "list after undo and reupload" `Quick test_list_after_undo_and_reupload; Alcotest.test_case "pair and share" `Quick test_pair_and_share; Alcotest.test_case "undo after share" `Quick test_undo_after_share;
           Alcotest.test_case "pairing a contribution" `Quick test_pairing_a_contribution;
           Alcotest.test_case "llm pairs unsure moves" `Quick test_llm_pairs_unsure_moves;
           Alcotest.test_case "pair all moves retroactively" `Quick test_pair_all_moves_retroactively;

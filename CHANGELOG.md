@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### An undone import leaves no trace
+
+- Undoing an import reverses its rows in the ledger, and the account's list showed the original row, the reversal and,
+  after uploading the file again, the new row: every transaction three times, though the balance was right. The list
+  now shows an imported row once: a row that was undone, and the entry that undid it, are left out.
+- The reports that look at single transactions saw them too. After an undo and a new upload, the forecast lost its bills
+  and salary, recurring payments found none, and the largest transactions listed rows twice. A transfer reversed the same
+  day, and its reversal, now cancel out before any report reads them. Totals (cash flow, spending by category, net
+  worth) were right and are unchanged.
+
 ### The weekly brief covers households and what is coming
 
 - Home's weekly brief follows the personal, household and family switch: the household's brief is about the household's
