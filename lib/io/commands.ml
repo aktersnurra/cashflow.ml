@@ -958,7 +958,7 @@ let allowed ~scopes access c =
   match c.scope with
   | Read -> List.mem "ledger:read" scopes || List.mem "ledger:write" scopes
   | Write -> List.mem "ledger:write" scopes
-  | Admin -> List.mem "ledger:admin" scopes && Access.is_admin access
+  | Admin -> List.mem "ledger:admin" scopes
 
 let execute service access ~scopes c (args : Yojson.Safe.t) =
   if not (allowed ~scopes access c) then Error (`Forbidden ("this needs the " ^ scope_name c.scope ^ " scope"))

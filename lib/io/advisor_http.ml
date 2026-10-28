@@ -200,7 +200,7 @@ let route t req p path query parsed =
                 | Some h ->
                     let* enabled = Advisor_store.consent store (Household h.id) in
                     Ok (`Assoc [ ("household_id", `String (Household_id.to_string h.id));
-                      ("enabled", `Bool enabled); ("can_manage", `Bool (Cashflow_core.Access.is_admin access)) ])
+                      ("enabled", `Bool enabled); ("can_manage", `Bool (Cashflow_core.Access.is_owner access)) ])
               in
               Ok (json 200 (`Assoc [ ("available", `Bool t.available); ("consent", `Bool consent); ("household", household) ]))))
   | POST, [ "consent" ] ->

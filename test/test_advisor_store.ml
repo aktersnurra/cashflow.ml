@@ -293,7 +293,7 @@ let consent_metadata_aliases () =
   ignore (ok (Advisor_store.set_consent store (User owner) ~enabled:true));
   Alcotest.(check bool) "user consent enabled" true (ok (Advisor_store.consent store (User owner)));
   let service = Service.make db in
-  let access = Test_service_support.sign_in service ~admin:true "advisor-fixture" in
+  let access = Test_service_support.sign_in service "advisor-fixture" in
   let household =
     Test_service_support.ok
       (Service.create_household service access ~name:"Synthetic household" ~default_currency:"SEK")

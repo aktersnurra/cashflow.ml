@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### A household belongs to its creator; no more global admin
+
+- Anyone can create a household, and whoever does owns it. The owner invites members, renames the household, changes
+  its pay cycle, adds or closes its shared bank accounts and turns on its Advisor. A member uses it (categories,
+  entries, uploads) but doesn't run it. Before, a deployment-wide admin flag from the identity provider's
+  `cashflow-admin` group decided all of that, so nobody else could even start a household.
+- The `is_admin` column is dropped, and the app no longer asks the identity provider for the `groups` claim. An
+  `admin_group` still in a config file is ignored. `create-session --admin` is gone.
+- Everyone can now close their own accounts; that used to need the admin scope.
+
 ### Only what you need to see
 
 - Insights names a price change from the charge before it, as Overview does: it compared the latest charge with the

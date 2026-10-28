@@ -62,7 +62,7 @@ let bearer_access deps (request : request) =
           let access =
             Service.sign_in deps.service
               { issuer = claims.issuer; subject = claims.subject; display_name = claims.name; email = claims.email;
-                is_admin = Option.map (List.mem deps.config.admin_group) claims.groups; locale = None }
+                locale = None }
           in
           Some (access, claims.scopes))
 
@@ -89,7 +89,7 @@ let protected_resource_metadata deps =
 
 (* Web sessions *)
 
-let web_scopes access = [ "ledger:read"; "ledger:write" ] @ if Access.is_admin access then [ "ledger:admin" ] else []
+let web_scopes = [ "ledger:read"; "ledger:write"; "ledger:admin" ]
 
 let session deps (request : request) =
   match Web_auth.cookie_value request.headers Web_auth.session_cookie with
@@ -159,7 +159,7 @@ let api_command deps (request : request) name =
         | None, _ -> error_json 404 ("unknown command " ^ name)
         | _, Error _ -> error_json 400 "malformed JSON"
         | Some command, Ok args -> (
-            match Commands.execute deps.service access ~scopes:(web_scopes access) command args with
+            match Commands.execute deps.service access ~scopes:(web_scopes) command args with
             | Ok value -> json 200 value
             | Error (`Storage_unavailable _) -> error_json 500 "internal error"
             | Error (`Logo (code, message)) -> json (api_status (`Logo (code, message))) (`Assoc ["error", `String message; "code", `String code])
@@ -180,7 +180,7 @@ let api_commands deps (request : request) =
   match session deps request with
   | None -> error_json 401 "not signed in"
   | Some (access, _) ->
-      let scopes = web_scopes access in
+      let scopes = web_scopes in
       json 200
         (`Assoc
            [ ( "commands",

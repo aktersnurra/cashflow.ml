@@ -1068,7 +1068,7 @@ let memory_notes_in_prompt () =
       on_chunk "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
       Ok ())
     (fun _ db service runtime f ->
-      let admin_access = Test_service_support.sign_in service ~admin:true "memory-admin" in
+      let admin_access = Test_service_support.sign_in service "memory-admin" in
       let household = Test_service_support.ok (Service.create_household service admin_access ~name:"synthetic" ~default_currency:"SEK") in
       let token = Web_auth.create_session service.Service.db ~now:(service.now ()) (Access.user admin_access) in
       let principal = ok (Advisor_access.authenticate service ~now:(service.now ()) ~token) in

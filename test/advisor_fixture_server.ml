@@ -91,7 +91,6 @@ let () =
                 subject = "advisor-fixture";
                 display_name = None;
                 email = None;
-                is_admin = Some product;
                 locale = None;
               }
           in

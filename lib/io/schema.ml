@@ -341,6 +341,12 @@ CREATE INDEX advisor_proposals_conversation ON advisor_proposals(conversation_id
 -- An applied proposal the user later undid. The state stays 'applied' (that is what happened); this says it was taken back.
 ALTER TABLE advisor_proposals ADD COLUMN undone_at TEXT;
 |}
+    );
+    ( 12,
+      {|
+-- A household belongs to the person who created it; there is no deployment-wide admin any more.
+ALTER TABLE users DROP COLUMN is_admin;
+|}
     ) ]
 
 let latest_version = List.fold_left (fun latest (version, _) -> max latest version) 0 migrations

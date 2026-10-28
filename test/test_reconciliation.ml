@@ -8,7 +8,7 @@ open Test_service_support
 let test_filter_and_minimum () =
   let service = make_service () in
   Fun.protect ~finally:(fun () -> Sql.close service.db) @@ fun () ->
-  let access = sign_in service ~admin:true "alice" in
+  let access = sign_in service "alice" in
   let household = ok (Service.create_household service access ~name:"Home" ~default_currency:"SEK") in
   let access = Service.access_for service (Access.user access) in
   let early = open_checking service access ~statement_backed:true "Early" in

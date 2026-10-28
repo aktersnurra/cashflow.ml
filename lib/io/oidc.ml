@@ -1,5 +1,5 @@
 (* copied from kcal: lib/oidc.ml; adds the claims and endpoints the web login needs (name, email,
-   groups, nonce; authorization and token endpoints; a form POST). *)
+   nonce; authorization and token endpoints; a form POST). *)
 let log_src = Logs.Src.create "cashflow.oidc" ~doc:"OIDC discovery and bearer token verification"
 module Log = (val Logs.src_log log_src : Logs.LOG)
 
@@ -11,7 +11,6 @@ type claims = {
   scopes : string list;
   name : string option;
   email : string option;
-  groups : string list option;  (** [None] when the token has no groups claim at all *)
   nonce : string option;
 }
 
@@ -90,14 +89,6 @@ let string_claim name = function
   | `Assoc fields -> (match List.assoc_opt name fields with Some (`String value) when value <> "" -> Some value | _ -> None)
   | _ -> None
 
-let groups_of_payload = function
-  | `Assoc fields -> (
-      match List.assoc_opt "groups" fields with
-      | Some (`List groups) -> Some (List.filter_map (function `String g -> Some g | _ -> None) groups)
-      | Some (`String group) -> Some [ group ]
-      | _ -> None)
-  | _ -> None
-
 let claims_of_jwt ~issuer ~audience ~now jwt =
   match
     ( Jose.Jwt.get_string_claim jwt "iss",
@@ -119,7 +110,6 @@ let claims_of_jwt ~issuer ~audience ~now jwt =
           scopes = scopes_of_payload jwt.Jose.Jwt.payload;
           name = (match string_claim "name" jwt.Jose.Jwt.payload with Some _ as n -> n | None -> string_claim "preferred_username" jwt.Jose.Jwt.payload);
           email = string_claim "email" jwt.Jose.Jwt.payload;
-          groups = groups_of_payload jwt.Jose.Jwt.payload;
           nonce = string_claim "nonce" jwt.Jose.Jwt.payload;
         }
   | Some token_issuer, _, _, _ when token_issuer <> issuer ->
