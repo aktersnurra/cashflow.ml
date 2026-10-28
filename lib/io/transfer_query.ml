@@ -16,7 +16,7 @@ type filter = {
   text : string option;  (** matched against description and counterparty *)
   tag : string option;
   code : Transfer.code option;
-  without_triage : bool;  (** leave out the transfers inbox triage posted, before the limit counts *)
+  without_triage : bool;  (** leave out the transfers inbox triage posted, and imported rows that were reversed with their reversals, before the limit counts *)
   limit : int;
 }
 
@@ -41,6 +41,8 @@ let filtered =
       AND (?7 IS NULL OR EXISTS (SELECT 1 FROM transfer_tags g WHERE g.transfer_id = t.id AND g.tag = ?7)) \
       AND (?8 IS NULL OR t.code = ?8) \
       AND (?9 = 0 OR NOT EXISTS (SELECT 1 FROM triage_transfers x WHERE x.transfer_id = t.id)) \
+      AND (?9 = 0 OR NOT EXISTS (SELECT 1 FROM transfers r JOIN inbox_items i ON i.transfer_id = t.id WHERE r.reverses = t.id)) \
+      AND (?9 = 0 OR t.reverses IS NULL OR NOT EXISTS (SELECT 1 FROM inbox_items i WHERE i.transfer_id = t.reverses)) \
       ORDER BY t.value_date DESC, t.seq DESC LIMIT ?10")
     Codec.(text @-> text @-> nullable date @-> nullable date @-> nullable account_id @-> nullable text @-> nullable text
            @-> nullable transfer_code @-> bool @-> int @-> nil)
@@ -55,12 +57,18 @@ let run_filter db access filter =
   run db filtered user_id household_id filter.from_date filter.to_date filter.account_id filter.text filter.tag filter.code
     filter.without_triage (max 1 (min max_limit filter.limit))
 
-(* Every visible posted or pending transfer in a date range, oldest first, for analytics. *)
+(* Every visible posted or pending transfer in a date range, oldest first, for analytics. A transfer reversed the
+   same day, and its reversal (what undoing an import does), cancel out: left in, a reader that looks at single
+   transfers (recurring payments, the forecast, the largest) sees the same payment twice, or sees it at all. Sums are
+   the same with or without them. A reversal dated another day is a refund in its own right and stays. *)
 let in_range =
   stmt
     ("SELECT " ^ Store_sqlite.transfer_columns
    ^ " FROM transfers t JOIN accounts da ON da.id = t.debit_account_id JOIN accounts ca ON ca.id = t.credit_account_id \
-      WHERE (" ^ visible "da" ^ " OR " ^ visible "ca" ^ ") AND t.value_date >= ?3 AND t.value_date <= ?4 ORDER BY t.value_date, t.seq")
+      WHERE (" ^ visible "da" ^ " OR " ^ visible "ca" ^ ") AND t.value_date >= ?3 AND t.value_date <= ?4 \
+      AND NOT EXISTS (SELECT 1 FROM transfers r WHERE r.reverses = t.id AND r.value_date = t.value_date) \
+      AND NOT EXISTS (SELECT 1 FROM transfers o WHERE o.id = t.reverses AND o.value_date = t.value_date) \
+      ORDER BY t.value_date, t.seq")
     Codec.(text @-> text @-> date @-> date @-> nil)
     (many Store_sqlite.transfer_row)
 
