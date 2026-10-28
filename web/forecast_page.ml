@@ -33,8 +33,9 @@ let amount_of_text ~out value =
   | Some v when Float.(v > 0.) -> Some ((if out then "-" else "") ^ text)
   | _ -> None
 
-let page ~(ctx : Ctx.t) graph =
-  let scope, set_scope = Bonsai.state "me" graph in
+let page ?(embedded = false) ?scope ~(ctx : Ctx.t) graph =
+  let local_scope, set_scope = Bonsai.state "me" graph in
+  let scope = Option.value scope ~default:local_scope in
   let months, set_months = Bonsai.state 3 graph in
   let what_if, set_what_if = Bonsai.state ~equal:equal_what_if no_what_if graph in
   (* The one-off being typed: one state per field, so a quick edit to one never writes back a
@@ -52,9 +53,9 @@ let page ~(ctx : Ctx.t) graph =
   let segmented options ~active ~set = Ui.div ~cls:"segmented" (List.map options ~f:(fun (value, label) -> Ui.button ~kind:(if active value then "active" else "") label (set value))) in
   let head =
     Ui.div ~cls:"page-head"
-      [ Vdom.Node.h1 [ Ui.text (Msg.nav_forecast locale) ];
+      [ (if embedded then Vdom.Node.h2 [ Ui.text (Msg.nav_forecast locale) ] else Vdom.Node.h1 [ Ui.text (Msg.nav_forecast locale) ]);
         Ui.div ~cls:"page-controls"
-          [ (if List.is_empty scopes then Vdom.Node.none else segmented scopes ~active:(String.equal scope) ~set:set_scope);
+          [ (if embedded || List.is_empty scopes then Vdom.Node.none else segmented scopes ~active:(String.equal scope) ~set:set_scope);
             segmented (List.map [ 1; 3; 6 ] ~f:(fun n -> (n, Msg.forecast_months ~count:n locale))) ~active:(Int.equal months) ~set:set_months ] ]
   in
   let view (f : D.t) =
@@ -324,4 +325,5 @@ let page ~(ctx : Ctx.t) graph =
     | Remote.Failed _ -> Remote.view ~locale forecast ~f:(fun _ -> Vdom.Node.none)
     | Remote.Loaded json -> view (D.of_json ~locale json)
   in
-  Vdom.Node.main ~attrs:[ Vdom.Attr.class_ "page" ] [ head; body ]
+  if embedded then Vdom.Node.section ~attrs:[Vdom.Attr.class_ "plan-section"; Vdom.Attr.id "forecast"] [head; body]
+  else Vdom.Node.main ~attrs:[ Vdom.Attr.class_ "page" ] [ head; body ]

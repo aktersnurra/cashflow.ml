@@ -20,6 +20,8 @@ const output=process.env.ADVISOR_EVIDENCE_DIR||'/tmp/weekly-brief';fs.mkdirSync(
   const panel=page.locator('.weekly-brief');
   await page.goto(base+'/');
   await panel.waitFor({timeout:15000});
+  assert.equal(await panel.evaluate(el=>el.open),false,'weekly detail starts collapsed');
+  await panel.locator('summary').click();
   const first=await panel.innerText();
   for (const expected of ['Last week','Spending','250','Most spent on','Groceries']) assert.ok(first.includes(expected),'the brief shows '+expected+': '+first);
   assert.ok(!first.includes('A quiet week'),'the sentences are not there yet: '+first);
@@ -28,6 +30,7 @@ const output=process.env.ADVISOR_EVIDENCE_DIR||'/tmp/weekly-brief';fs.mkdirSync(
   assert.equal(await calls()-before,1,'written once');
   await page.screenshot({path:output+'/weekly-brief.png',fullPage:true});
   await page.reload();
+  await panel.locator('summary').click();
   await panel.getByText('A quiet week with groceries.',{exact:true}).waitFor({timeout:20000});
   await page.waitForTimeout(8000);
   assert.equal(await calls()-before,1,'a reload does not ask again');

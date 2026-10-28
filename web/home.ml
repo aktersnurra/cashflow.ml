@@ -191,6 +191,8 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
           set_armed (Some (scope, version))
       | _ -> Effect.Ignore)
     graph;
+  let upcoming = Remote.load ~active:visible ~name:"forecast"
+      ~args:(let%arr scope in `Assoc [("scope", `String scope); ("cycles", `Int 1)]) ~ctx graph in
   let feed = Remote.load ~active:visible ~name:"get_attention_feed" ~args:(Bonsai.return (`Assoc [("narrative", `Bool false)])) ~ctx graph in
   let cards =
     let%arr feed in
@@ -218,7 +220,7 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
       ([body] @ (if eligible then [Ui.div ~cls:"finding-reply" [Ui.button (Msg.advisor_ask locale)
         (Effect.Many [set_captured (Some (finding_key, cards)); on_ask ~finding_key ~scope])]] else [])
        @ if selected then [outlet] else [])) graph in
-  let%arr summary and categories and brief and views and offset and set_offset and scope and set_scope and locale = ctx.locale and session = ctx.session
+  let%arr summary and categories and brief and upcoming and views and offset and set_offset and scope and set_scope and locale = ctx.locale and session = ctx.session
   and navigate = ctx.navigate and outlet and selected_finding and visible_cards and advisor_route in
   let cycles = match summary with Loaded json -> J.list (J.field "cycles" json) | Loading | Failed _ -> [] in
   let code = match summary with Loaded json -> J.str ~default:"SEK" (J.field "currency" json) | Loading | Failed _ -> "SEK" in
@@ -231,9 +233,6 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
   let head =
     Ui.div ~cls:"page-head"
       [ Vdom.Node.h1 [ Ui.text (Msg.nav_home locale) ];
-        Vdom.Node.a ~attrs:([Vdom.Attr.class_ "advisor-mobile-link button"; Vdom.Attr.href "/advisor";
-          Vdom.Attr.on_click (fun _ -> Effect.Many [Effect.Prevent_default; navigate (Route.Advisor None)])]
-          @ if advisor_route then [Vdom.Attr.create "aria-current" "page"] else []) [Ui.text (Msg.nav_advisor locale)];
         Ui.div ~cls:"page-controls"
           [ (if List.is_empty scopes then Vdom.Node.none
              else Ui.div ~cls:"segmented" (List.map scopes ~f:(fun (value, label) -> Ui.button ~kind:(if String.equal value scope then "active" else "") label (set_scope value))));
@@ -293,8 +292,8 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
         let code = J.str ~default:code (J.field "currency" b) in
         let money field = Fmt.format_money locale ~code (J.field field b) in
         let top = J.list (J.field "top" b) in
-        Ui.div ~cls:"panel weekly-brief"
-          [ Vdom.Node.h2 [ Ui.text (Msg.brief_title ~first:(Fmt.date_json (J.field "first" b)) ~last:(Fmt.date_json (J.field "last" b)) locale) ];
+        Vdom.Node.create "details" ~attrs:[Vdom.Attr.class_ "weekly-brief overview-detail"]
+          [ Vdom.Node.create "summary" [ Ui.text (Msg.brief_title ~first:(Fmt.date_json (J.field "first" b)) ~last:(Fmt.date_json (J.field "last" b)) locale) ];
             (match J.str_opt (J.field "text" b) with
              | Some text -> Ui.p text
              | None -> if J.bool (J.field "can_write" b) then Ui.muted (Msg.brief_writing locale) else Vdom.Node.none);
@@ -320,6 +319,33 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
           [ Ui.div ~cls:"section-head" [ Vdom.Node.h2 [ Ui.text (Msg.overview_attention locale) ]; Ui.span ~cls:"count" [ Ui.text (Int.to_string (List.length items)) ] ];
             Ui.div ~cls:"attention-list" items ]
   in
+  let coming_up =
+    Ui.div ~cls:"upcoming-summary"
+      [ Ui.div ~cls:"section-head"
+          [ Vdom.Node.h2 [Ui.text (Msg.forecast_upcoming locale)];
+            Vdom.Node.a ~attrs:[Vdom.Attr.class_ "insight-link"; Vdom.Attr.href (Route.to_path Route.Budgets);
+              Vdom.Attr.on_click (fun _ -> Effect.Many [Effect.Prevent_default; navigate Route.Budgets])]
+              [Ui.text (Msg.overview_view_plan locale)] ];
+        Ui.muted (Msg.advisor_bills_estimate locale);
+        Remote.view ~locale upcoming ~f:(fun json ->
+          let f = Forecast_data.of_json ~locale json in
+          let items = List.filter f.items ~f:(fun (i : Forecast_data.item) -> String.( >= ) i.date f.today && Float.(Forecast_data.value i.amount < 0.))
+            |> List.sort ~compare:(fun (a : Forecast_data.item) (b : Forecast_data.item) -> String.compare a.date b.date)
+            |> Fn.flip List.take 5 in
+          Ui.div
+            [ (match List.find_map f.assumptions ~f:(fun a ->
+                 if String.equal (J.str (J.field "kind" a)) "stale_import" then J.str_opt (J.field "date" a) else None) with
+               | Some date -> Ui.muted (Msg.forecast_a_stale ~date:(Fmt.date date) locale)
+               | None -> Vdom.Node.none);
+              if List.is_empty items then Ui.empty (Msg.overview_no_upcoming locale)
+              else Ui.div ~cls:"table"
+                (List.map items ~f:(fun (i : Forecast_data.item) ->
+                   Vdom.Node.a ~attrs:[Vdom.Attr.class_ "row upcoming-row"; Vdom.Attr.href (Route.to_path (Route.Account i.account_id));
+                     Vdom.Attr.on_click (fun _ -> Effect.Many [Effect.Prevent_default; navigate (Route.Account i.account_id)])]
+                     [ Ui.span ~cls:"muted" [Ui.text (Fmt.format_date locale (`String i.date))];
+                       Ui.div [Ui.div ~cls:"row-title" [Ui.text i.name]; Ui.div ~cls:"row-sub" [Ui.text i.account_name]];
+                       Ui.span ~cls:"amount" [Ui.text (Fmt.format_money locale ~code:f.currency i.amount)] ])) ]) ]
+  in
   let hosted = Map.exists visible_cards ~f:(fun card -> Option.equal String.equal selected_finding (Some (J.str (J.field "key" card)))) in
   let standalone = advisor_route && not hosted in
   Vdom.Node.main ~attrs:[Vdom.Attr.class_ (if standalone then "page advisor-page" else "page")]
@@ -328,5 +354,5 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
         Advisor conversation is not a second dashboard above the chat. *)
      Vdom.Node.div ~attrs:(if standalone then [Vdom.Attr.create "hidden" ""] else [])
        (let urgent = Map.exists visible_cards ~f:(fun card -> List.mem urgent_kinds (J.str (J.field "kind" card)) ~equal:String.equal) in
-        if urgent then [head; attention; body; weekly] else [head; body; weekly; attention]);
+        if urgent then [head; attention; body; coming_up; weekly] else [head; body; coming_up; attention; weekly]);
      (if standalone then outlet else Vdom.Node.none)]

@@ -661,3 +661,6 @@ advisor.evidence.label_description = Beskrivning
 advisor.evidence.label_status = Status
 advisor.evidence.status_pending = Väntar på att kontoutdraget bekräftar den
 advisor.evidence.status_posted = Bokförs direkt
+
+overview.view_plan = Visa planering
+overview.no_upcoming = Inga utbetalningar beräknas under den kommande månaden.
