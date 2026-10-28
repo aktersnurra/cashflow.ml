@@ -1105,10 +1105,10 @@ let simple_proposal_endpoints () =
       ignore (ok (Advisor_store.transition store ~run:accepted.ids.run_id (Advisor.Fail { code = Provider_unavailable; context = No_context })));
       let conversation_id = accepted.ids.conversation_id in
       let counter = ref 0 in
-      let propose kind arguments =
+      let propose ?(precondition = []) kind arguments =
         incr counter;
         let id = Printf.sprintf "00000000-0000-4000-8000-%012d" (400 + !counter) in
-        ok (Advisor_store.add_proposal store ~owner ~conversation_id ~id ~kind ~arguments:(`Assoc arguments) ~precondition:(`Assoc [])
+        ok (Advisor_store.add_proposal store ~owner ~conversation_id ~id ~kind ~arguments:(`Assoc arguments) ~precondition:(`Assoc precondition)
               ~now ~expires:(Option.get (Ptime.add_span now (Ptime.Span.of_int_s 3600))));
         id
       in
@@ -1145,6 +1145,36 @@ let simple_proposal_endpoints () =
       ignore (Test_service_support.ok (Insights.save_goal (ctx ()) ~goal_id:again ~name:"Sofa" ~target_amount:1000000L ~target_date:None ~monthly_amount:None ()));
       Alcotest.(check int) "a goal the user changed is theirs" 409 (status (post again "undo"));
       Alcotest.(check bool) "and is kept" true (List.mem again (goals ()));
+      (* Changing a goal that exists: on top of what it was when proposed; undo puts that back; a goal that has moved on is left alone. *)
+      let goal_now () = Option.get (Planning_store.find_goal service.db again) in
+      let before = [ ("name", `String "Sofa"); ("target_amount", `String "1000000"); ("target_date", `Null); ("monthly_amount", `Null) ] in
+      let change =
+        propose ~precondition:before "update_goal"
+          [ ("goal_id", `String again); ("name", `Null); ("target_amount", `String "1200000"); ("target_date", `String "2027-09-01"); ("monthly_amount", `Null) ]
+      in
+      Alcotest.(check string) "apply a change" "applied" (state (post change "apply"));
+      Alcotest.(check bool) "the goal changed" true ((goal_now ()).target_amount = 1200000L && (goal_now ()).target_date = Some (Test_service_support.date "2027-09-01"));
+      Alcotest.(check string) "undo it" "reverted" (state (post change "undo"));
+      Alcotest.(check bool) "the goal is as it was" true ((goal_now ()).target_amount = 1000000L && (goal_now ()).target_date = None && (goal_now ()).name = "Sofa");
+      let stale = propose ~precondition:(("target_amount", `String "999") :: List.remove_assoc "target_amount" before) "update_goal" [ ("goal_id", `String again); ("target_amount", `String "1300000") ] in
+      Alcotest.(check string) "a goal that is not as it was proposed against is out of date" "out_of_date" (state (post stale "apply"));
+      let second = propose ~precondition:before "update_goal" [ ("goal_id", `String again); ("monthly_amount", `String "50000") ] in
+      ignore (post second "apply");
+      ignore (Test_service_support.ok (Insights.save_goal (ctx ()) ~goal_id:again ~name:"Sofa" ~target_amount:1500000L ~target_date:None ~monthly_amount:(Some 50000L) ()));
+      Alcotest.(check int) "a goal the user changed since is theirs" 409 (status (post second "undo"));
+      Alcotest.(check bool) "and is kept" true ((goal_now ()).target_amount = 1500000L);
+      let rename = propose ~precondition:[ ("name", `String "Sofa"); ("target_amount", `String "1500000"); ("target_date", `Null); ("monthly_amount", `String "50000") ] "update_goal" [ ("goal_id", `String again); ("name", `String "Couch") ] in
+      Alcotest.(check string) "a rename" "applied" (state (post rename "apply"));
+      Alcotest.(check string) "named" "Couch" (goal_now ()).name;
+      ignore (Test_service_support.ok (Insights.save_goal (ctx ()) ~name:"Sofa" ~target_amount:300000L ~target_date:None ~monthly_amount:None ()));
+      Alcotest.(check int) "a rename cannot be undone into another goal's name" 409 (status (post rename "undo"));
+      ignore (Test_service_support.ok (Insights.save_goal (ctx ()) ~name:"couch" ~target_amount:300000L ~target_date:None ~monthly_amount:None ()));
+      let couch = [ ("name", `String "Couch"); ("target_amount", `String "1500000"); ("target_date", `Null); ("monthly_amount", `String "50000") ] in
+      let same_name = propose ~precondition:couch "update_goal" [ ("goal_id", `String again); ("target_amount", `String "1600000") ] in
+      Alcotest.(check string) "a change that does not rename works even when names repeat" "applied" (state (post same_name "apply"));
+      let archived = propose ~precondition:[ ("name", `String "Sofa"); ("target_amount", `String "900000"); ("target_date", `String "2027-06-01"); ("monthly_amount", `String "75000") ]
+          "update_goal" [ ("goal_id", `String goal); ("target_amount", `String "1000000") ] in
+      Alcotest.(check string) "a goal that is archived cannot be changed" "out_of_date" (state (post archived "apply"));
       (* A category: closed again, unless it has been used. *)
       let exists name = List.exists (fun (i : Account_info.t) -> i.account.name = name && not i.account.closed) (Service.accounts service access) in
       let coffee = propose "new_category" [ ("name", `String "Coffee"); ("kind", `String "expense") ] in
