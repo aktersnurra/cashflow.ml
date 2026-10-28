@@ -28,7 +28,7 @@
  ;; CASHFLOW_LOG_LEVEL overrides it for a single run.
  (log_level Info)
 
- ;; Advisor supports model anthropic/claude-sonnet-4.6 with provider_only (amazon-bedrock).
+ ;; Advisor supports model anthropic/claude-sonnet-5.5 (or claude-sonnet-4.6) with provider_only (amazon-bedrock).
  ;; This profile needs no attestation fields: context policy 200000, completion 8192.
  ;; Optional stricter override: (advisor_limits ((context_tokens 100000) (completion_tokens 2048)))
  ;; Input tokens are estimated, not a guarantee about provider framing/tokenization.
@@ -43,5 +43,7 @@
  #;(openrouter
     ((api_key (Env OPENROUTER_API_KEY))
      (model anthropic/claude-haiku-5.5)
+     ;; The advisor can run on a bigger model than the cheap calls (categorising, pairing, summaries):
+     ;; (advisor_model anthropic/claude-sonnet-5.5)
      (provider_only (google-vertex amazon-bedrock azure))))
  )

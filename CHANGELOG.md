@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### OpenRouter
+
+- Requests to OpenRouter now carry the app's public URL as `HTTP-Referer` next to the `cashflow` title, so usage shows
+  up under the app in the OpenRouter dashboard.
+- The advisor now runs on `anthropic/claude-sonnet-5.5` via Amazon Bedrock. `claude-sonnet-4.6` on the same route is
+  still accepted.
+- New `openrouter.advisor_model` setting: keep `model` on Haiku for categorising, pairing and summaries, and run only
+  the advisor on Sonnet. Without it the advisor follows `model`, as before.
+
 ### The advisor can propose a manual entry
 
 - Ask the advisor to add a purchase, some income, or a move between your own accounts. It appears as a card with the

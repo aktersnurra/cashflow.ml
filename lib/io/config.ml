@@ -15,7 +15,8 @@ type t = {
   admin_group : string;
   static_dir : string;
   openrouter_api_key : string option;
-  openrouter_model : string;
+  openrouter_model : string;  (** categorising, pairing and summaries *)
+  advisor_model : string;  (** the advisor; the same as [openrouter_model] unless set apart *)
   openrouter_provider_only : string list;
   advisor_limits : Advisor_provider.generation_limits option;
   log_level : Logs.level option;  (** [None] silences logging *)
@@ -50,6 +51,7 @@ module File = struct
     api_key : secret;
     advisor_limits : advisor_limits option; [@sexp.option]
     model : string; [@default "anthropic/claude-haiku-5.5"]
+    advisor_model : string option; [@sexp.option]
     provider_only : string list; [@default default_openrouter_provider_only]
   }
   [@@deriving sexp]
@@ -101,10 +103,10 @@ let resolve (file : File.t) =
     match file.openrouter with
     | None -> Ok None
     | Some o ->
-        let supported = Advisor_provider.supported_limits ~model:o.model ~provider_only:o.provider_only in
+        let supported = Advisor_provider.supported_limits ~model:(Option.value o.advisor_model ~default:o.model) ~provider_only:o.provider_only in
         match o.advisor_limits, supported with
         | None, limits -> Ok limits
-        | Some _, None -> Error "openrouter.advisor_limits requires supported Advisor profile: anthropic/claude-sonnet-4.6 with provider_only (amazon-bedrock)"
+        | Some _, None -> Error "openrouter.advisor_limits requires a supported Advisor model (openrouter.advisor_model, else openrouter.model): anthropic/claude-sonnet-5.5 (or claude-sonnet-4.6) with provider_only (amazon-bedrock)"
         | Some l, Some policy ->
             let* () = check
               (l.context_tokens > 0 && l.completion_tokens > 0 && l.completion_tokens <= l.context_tokens
@@ -120,6 +122,7 @@ let resolve (file : File.t) =
       web_client_id = Option.map (fun (w : File.web) -> w.client_id) file.web; web_client_secret; admin_group = file.oidc.admin_group;
       static_dir = file.static_dir; openrouter_api_key;
       openrouter_model = Option.fold ~none:"anthropic/claude-haiku-5.5" ~some:(fun (o : File.openrouter) -> o.model) file.openrouter;
+      advisor_model = Option.fold ~none:"anthropic/claude-haiku-5.5" ~some:(fun (o : File.openrouter) -> Option.value o.advisor_model ~default:o.model) file.openrouter;
       openrouter_provider_only = Option.fold ~none:default_openrouter_provider_only ~some:(fun (o : File.openrouter) -> o.provider_only) file.openrouter;
       advisor_limits;
       log_level = (match file.log_level with Quiet -> None | Error -> Some Logs.Error | Warning -> Some Warning | Info -> Some Info | Debug -> Some Debug) }

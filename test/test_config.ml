@@ -70,6 +70,17 @@ let test_openrouter_providers () =
   Alcotest.(check (option string)) "enabled with a restricted provider" (Some "test-key") custom.openrouter_api_key;
   Alcotest.(check (list string)) "custom allowlist" [ "amazon-bedrock" ] custom.openrouter_provider_only
 
+(* The advisor can run on a bigger model than the cheap calls (categorising, pairing, summaries). *)
+let test_advisor_model_apart () =
+  let c = ok (with_openrouter "(model anthropic/claude-haiku-5.5) (advisor_model anthropic/claude-sonnet-5.5) (provider_only (amazon-bedrock))") in
+  Alcotest.(check string) "cheap calls stay on haiku" "anthropic/claude-haiku-5.5" c.openrouter_model;
+  Alcotest.(check string) "advisor on sonnet" "anthropic/claude-sonnet-5.5" c.advisor_model;
+  Alcotest.(check bool) "advisor available" true (c.advisor_limits <> None);
+  let same = ok (with_openrouter "(model anthropic/claude-sonnet-4.6) (provider_only (amazon-bedrock))") in
+  Alcotest.(check string) "without advisor_model it follows model" "anthropic/claude-sonnet-4.6" same.advisor_model;
+  let haiku_only = ok (with_openrouter "(provider_only (amazon-bedrock))") in
+  Alcotest.(check bool) "haiku alone leaves the advisor unavailable" true (haiku_only.advisor_limits = None)
+
 let test_openrouter_requires_providers () =
   Alcotest.(check string) "empty allowlist rejected" "openrouter.provider_only must not be empty"
     (error (with_openrouter "(provider_only ())"))
@@ -113,4 +124,5 @@ let () =
           Alcotest.test_case "secrets" `Quick test_secrets; Alcotest.test_case "errors" `Quick test_errors;
           Alcotest.test_case "OpenRouter providers" `Quick test_openrouter_providers;
           Alcotest.test_case "OpenRouter requires providers" `Quick test_openrouter_requires_providers;
+          Alcotest.test_case "advisor model apart" `Quick test_advisor_model_apart;
           Alcotest.test_case "OpenRouter privacy is mandatory" `Quick test_openrouter_cannot_disable_privacy ] ) ]
