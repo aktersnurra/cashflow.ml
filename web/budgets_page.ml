@@ -12,8 +12,8 @@ let page ~(ctx : Ctx.t) graph =
   let goals = Remote.load ~name:"savings_goals" ~args ~ctx graph in
   let accounts = Remote.load ~name:"list_accounts" ~ctx graph in
   let editing, set_editing = Bonsai.state Not_editing graph in
-  let showing_goals, set_showing_goals = Bonsai.state false graph in
-  let%arr status and goals and accounts and scope and set_scope and editing and set_editing and showing_goals and set_showing_goals
+  let forecast = Forecast_page.page ~embedded:true ~scope ~ctx graph in
+  let%arr status and goals and accounts and scope and set_scope and editing and set_editing and forecast
   and locale = ctx.locale and changed = ctx.changed and notify = ctx.notify and session = ctx.session in
   let code json = J.str ~default:"SEK" (J.field "currency" json) in
   let save name args =
@@ -78,12 +78,9 @@ let page ~(ctx : Ctx.t) graph =
         Ui.div ~cls:(if J.bool (J.field "on_track" g) then "positive" else "warning") [ Ui.text (if J.bool (J.field "on_track" g) then "✓" else "!") ] ]
   in
   let scopes = [ ("me", Msg.label_personal locale) ] @ if Ctx.has_household session then [ ("household", Msg.label_household locale) ] else [] in
-  let tab_button active label effect =
-    Vdom.Node.button ~attrs:[ Vdom.Attr.class_ ("tab-button" ^ if active then " active" else ""); Vdom.Attr.type_ "button"; Vdom.Attr.on_click (fun _ -> effect) ] [ Ui.text label ]
-  in
   let head =
     Ui.div ~cls:"page-head"
-      [ Vdom.Node.h1 [ Ui.text (Msg.budgets_title locale) ];
+      [ Vdom.Node.h1 [ Ui.text (Msg.nav_plan locale) ];
         Ui.div ~cls:"page-controls"
           [ (if List.length scopes < 2 then Vdom.Node.none
              else Ui.div ~cls:"segmented" (List.map scopes ~f:(fun (value, label) -> Ui.button ~kind:(if String.equal value scope then "active" else "") label (set_scope value))));
@@ -91,7 +88,6 @@ let page ~(ctx : Ctx.t) graph =
             | Loaded json -> Ui.div ~cls:"period" [ Ui.span ~cls:"period-label" [ Ui.text (Fmt.month_label locale (J.str (J.path [ "cycle"; "cycle" ] json))) ] ]
             | _ -> Vdom.Node.none) ] ]
   in
-  let tabs = Ui.div ~cls:"tabs" [ tab_button (not showing_goals) (Msg.budgets_tab_categories locale) (set_showing_goals false); tab_button showing_goals (Msg.label_goals locale) (set_showing_goals true) ] in
   let categories =
     [ Remote.view ~locale status ~f:(fun json ->
           let lines = J.list (J.field "lines" json) in
@@ -136,4 +132,10 @@ let page ~(ctx : Ctx.t) graph =
                 Ui.button (Msg.action_cancel locale) (set_editing Not_editing) ] ()
       | _ -> Ui.div ~cls:"actions" [ Ui.button (Msg.action_new_goal locale) (set_editing (Goal { name = ""; target = ""; date = ""; monthly = "" } : editing)) ]) ]
   in
-  Vdom.Node.main ~attrs:[ Vdom.Attr.class_ "page" ] ([ head; tabs ] @ if showing_goals then goals_view else categories)
+  Vdom.Node.main ~attrs:[ Vdom.Attr.class_ "page plan-page" ]
+    [ head;
+      Vdom.Node.section ~attrs:[Vdom.Attr.class_ "plan-section"; Vdom.Attr.id "budgets"]
+        (Ui.div ~cls:"section-head" [Vdom.Node.h2 [Ui.text (Msg.budgets_title locale)]] :: categories);
+      forecast;
+      Vdom.Node.section ~attrs:[Vdom.Attr.class_ "plan-section"; Vdom.Attr.id "goals"]
+        (Ui.div ~cls:"section-head" [Vdom.Node.h2 [Ui.text (Msg.label_goals locale)]] :: goals_view) ]
