@@ -23,6 +23,10 @@ type request =
   | Forecast of common * int * scenario
   | Inbox_rows of common
   | Categories of common
+  | Propose_rule of { pattern : string; category : account_reference; direction : [ `In | `Out ] option }
+      (** A merchant text that suggests a category on import (never applies it by itself). *)
+  | Propose_goal of { name : string; target_amount : string; target_date : string option; monthly_amount : string option }
+  | Propose_category of { name : string; kind : [ `Expense | `Income ] }
   | Propose_categorize of { rows : (row_reference * account_reference) list }
       (** Up to 20 uncategorized rows, each with the category to file it under, for the user to confirm. *)
   | Propose_budget of { category : account_reference; monthly_amount : string; rollover : bool }
@@ -128,6 +132,21 @@ type budget_proposal = {
   from_cycle : string;  (** the cycle label it would apply from *)
 }
 
+(** What a proposal looks like to the user and the model, built once by the projection from checked values: the card's
+    facts, the fields the model is shown, the accounts those name (so they get aliases), and what is stored to apply or
+    undo it later (JSON text, typed by the proposal's [kind]). *)
+type model_value = Text_value of string | Number_value of int64 | Bool_value of bool | Account_value of account | Null_value
+
+type proposal_card = {
+  tool : string;
+  kind : string;
+  facts : Advisor.fact list;
+  model : (string * model_value) list;
+  accounts : account list;
+  arguments : string;
+  precondition : string;
+}
+
 type result =
   | Cycle_summary_result of Analytics.cycle_summary list
   | Category_spending_result of category list
@@ -141,6 +160,7 @@ type result =
   | Inbox_rows_result of inbox_row list
   | Categories_result of account list
   | Categorize_proposal_result of categorize_row list
+  | Proposal_card_result of proposal_card
 
 type evidence = {
   id : Advisor.Evidence_id.t;
@@ -182,7 +202,7 @@ let common = function
   | Forecast (c, _, _) ->
       c
   | Inbox_rows c | Categories c -> c
-  | Propose_budget _ | Propose_categorize _ -> { currency = None }
+  | Propose_budget _ | Propose_categorize _ | Propose_rule _ | Propose_goal _ | Propose_category _ -> { currency = None }
 
 let name = function
   | Cycle_summary_result _ -> "cycle_summary"
@@ -197,6 +217,7 @@ let name = function
   | Inbox_rows_result _ -> "inbox_rows"
   | Categories_result _ -> "categories"
   | Categorize_proposal_result _ -> "propose_categorize"
+  | Proposal_card_result c -> c.tool
 
 let currency_code s =
   if String.length s = 3 && String.for_all (function 'A' .. 'Z' -> true | _ -> false) s then Some s else None

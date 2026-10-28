@@ -91,6 +91,42 @@ let categorize (service : Service.t) access ~transfer_id ~category_id ?(tags = [
             Ok (Some result)
         | Error _ -> Ok (Some result))
 
+(* Takes a categorisation back: reverses the transfer it posted and puts the row back in the inbox where it was.
+   Only if the row is exactly as that categorisation left it (same revision, same category); anything done to it
+   since means this is no longer the change to undo. The revision moves on, so categorising it again posts a new
+   transfer rather than finding the reversed one by its key. *)
+let reopen (service : Service.t) access ~transfer_id ~revision ~category_id ~previous =
+  let* item, bank = find_open service access transfer_id in
+  if item.status <> "done" || item.revision <> revision || not (Account_id.equal item.current_account_id category_id) then
+    Error (`Invalid "the transaction has changed since, so this can't be undone")
+  else
+    let view = Store_sqlite.view service.db in
+    let key = key_for item item.revision in
+    let posted =
+      List.find_map
+        (fun id -> match view.transfer id with Some (t : Transfer.t) when String.equal (Idempotency_key.to_string t.key) (Idempotency_key.to_string key) -> Some t | _ -> None)
+        (Import_store.triage_transfers service.db transfer_id)
+    in
+    match posted with
+    | None -> Error (`Invalid "the categorisation can't be found, so it can't be undone")
+    | Some (t : Transfer.t) ->
+        let reverse : Ledger_event.t =
+          { key = Result.get_ok (Idempotency_key.of_string ("undo:" ^ Transfer_id.to_string t.id)); linked = false;
+            body = Reverse { transfer_id = t.id; value_date = None; memo = None } }
+        in
+        Sql.transaction service.db (fun () ->
+            match Service.submit service access ~scope:bank.account.owner [ reverse ] with
+            | Ok [ (Ok _ as result) ] ->
+                (* Recorded like every triage action, so reports that fold triage drop both the categorisation and its
+                   reversal and show the row against where it is again. *)
+                record service [ item ] [ result ];
+                Import_store.save_item service.db ~now:(service.now ())
+                  { item with current_account_id = previous; revision = item.revision + 1; status = "open" };
+                Ok ()
+            | Ok [ Error e ] -> Error (`Invalid ("undo failed: " ^ Ledger_error.transfer_to_string e))
+            | Ok _ -> Error (`Invalid "undo failed")
+            | Error e -> Error e)
+
 (* A shared cost paid from a personal account (§4.6): the household's books get the expense and
    owe the member for it; the member's books swap the expense for what they are owed. *)
 let role_account (service : Service.t) access owner role kind ~currency ~name ~member_id =
@@ -265,7 +301,7 @@ let reconcile (service : Service.t) access ~account_id ~on_date ~statement_balan
 
 (* Rules *)
 
-let add_rule (service : Service.t) access ~owner ~pattern ~direction ~min_amount ~max_amount ~bank_account_id ~category_id ~tags ~shared ~auto_apply =
+let add_rule_as (service : Service.t) access ~rule_id ~owner ~pattern ~direction ~min_amount ~max_amount ~bank_account_id ~category_id ~tags ~shared ~auto_apply =
   if not (Access.can_use access owner) then Error (`Forbidden "you can't add rules for that owner")
   else if String.trim pattern = "" then Error (`Invalid "a rule needs a pattern")
   else
@@ -273,11 +309,14 @@ let add_rule (service : Service.t) access ~owner ~pattern ~direction ~min_amount
     if not (Owner.equal category.account.owner owner) && not shared then Error (`Invalid "the category must belong to the rule's owner")
     else
       let rule : Suggest.rule =
-        { rule_id = Uuidm.to_string (Uuidm.v4_gen (Random.State.make_self_init ()) ()); owner; pattern = String.trim pattern; direction;
+        { rule_id = (match rule_id with Some id -> id | None -> Uuidm.to_string (Uuidm.v4_gen (Random.State.make_self_init ()) ())); owner; pattern = String.trim pattern; direction;
           min_amount; max_amount; bank_account_id; category_id; tags; shared; auto_apply }
       in
       Import_store.add_rule service.db ~now:(service.now ()) rule;
       Ok rule
+
+let add_rule service access ~owner ~pattern ~direction ~min_amount ~max_amount ~bank_account_id ~category_id ~tags ~shared ~auto_apply =
+  add_rule_as service access ~rule_id:None ~owner ~pattern ~direction ~min_amount ~max_amount ~bank_account_id ~category_id ~tags ~shared ~auto_apply
 
 let rules (service : Service.t) access = List.concat_map (Import_store.rules service.db) (Access.owners access)
 

@@ -466,6 +466,11 @@ let remember_proposal t r (run : A.run) (evidence : Cashflow_workflow.Advisor_to
               ("from_cycle", `String p.from_cycle);
             ])
         ~now ~expires:(Option.value (Ptime.add_span now (Ptime.Span.of_int_s 86400)) ~default:now)
+  | Proposal_card_result card ->
+      let now = t.clock.now () in
+      S.add_proposal t.store ~owner:r.owner ~conversation_id:run.ids.conversation_id ~id:(A.Evidence_id.to_string evidence.id) ~kind:card.kind
+        ~arguments:(Yojson.Safe.from_string card.arguments) ~precondition:(Yojson.Safe.from_string card.precondition) ~now
+        ~expires:(Option.value (Ptime.add_span now (Ptime.Span.of_int_s 86400)) ~default:now)
   | Categorize_proposal_result rows ->
       let now = t.clock.now () in
       let id = A.Evidence_id.to_string evidence.id in

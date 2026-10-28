@@ -39,7 +39,7 @@ let policy requests =
     Alcotest.(check (list string)) "allowlist unchanged" ["amazon-bedrock"] (member "only" p |> to_list |> List.map to_string);
     Alcotest.(check bool) "stream" true (member "stream" r = `Bool true);
     List.iter (fun key -> Alcotest.(check bool) ("no " ^ key) true (member key r = `Null)) ["plugins"; "reasoning"; "server_tools"];
-    Alcotest.(check int) "twelve schemas" 12 (member "tools" r |> to_list |> List.length)) requests
+    Alcotest.(check int) "fifteen schemas" 15 (member "tools" r |> to_list |> List.length)) requests
 let fragmented_provider_rounds () =
   let wire = ": keepalive\r\n\r\n" ^ text "Hej €雪" ^ finish "stop" ^ usage ^ usage ^ done_ in
   for i = 0 to String.length wire do
@@ -190,7 +190,7 @@ let schemas () =
     let result, _, requests = run [tools [full_call 0 "id" name args] ^ finish "tool_calls" ^ done_] in ok result; policy requests) examples;
   let open Yojson.Safe.Util in
   let name_of schema = member "function" schema |> member "name" |> to_string in
-  let reads = List.filter (fun schema -> not (List.mem (name_of schema) [ "propose_set_budget"; "propose_categorize" ])) P.tool_schemas in
+  let reads = List.filter (fun schema -> not (List.mem (name_of schema) [ "propose_set_budget"; "propose_categorize"; "propose_add_rule"; "propose_save_goal"; "propose_new_category" ])) P.tool_schemas in
   Alcotest.(check (list string)) "schema names" (List.map fst examples) (List.map name_of reads);
   (* The one proposing tool takes no currency: it acts in the conversation's own. *)
   let propose = List.find (fun schema -> name_of schema = "propose_set_budget") P.tool_schemas in
@@ -201,6 +201,25 @@ let schemas () =
   ok (Cashflow_io.Advisor_projection.parse_call ~name:"propose_set_budget" ~arguments:"{\"category\":\"account_1\",\"monthly_amount\":\"3500.50\",\"rollover\":true}");
   failed (Cashflow_io.Advisor_projection.parse_call ~name:"propose_set_budget" ~arguments:"{\"category\":\"account_1\",\"monthly_amount\":\"1\",\"currency\":\"SEK\"}");
   failed (Cashflow_io.Advisor_projection.parse_call ~name:"propose_set_budget" ~arguments:"{\"category\":\"account_1\"}");
+  let simple name fields required =
+    let params = List.find (fun schema -> name_of schema = name) P.tool_schemas |> member "function" |> member "parameters" in
+    Alcotest.(check (list string)) (name ^ " fields") fields (member "properties" params |> to_assoc |> List.map fst |> List.sort String.compare);
+    Alcotest.(check (list string)) (name ^ " requires") required (member "required" params |> to_list |> List.map to_string)
+  in
+  simple "propose_add_rule" [ "category"; "direction"; "pattern" ] [ "pattern"; "category" ];
+  simple "propose_save_goal" [ "monthly_amount"; "name"; "target_amount"; "target_date" ] [ "name"; "target_amount" ];
+  simple "propose_new_category" [ "kind"; "name" ] [ "name"; "kind" ];
+  ok (Cashflow_io.Advisor_projection.parse_call ~name:"propose_add_rule" ~arguments:"{\"pattern\":\"spotify\",\"category\":\"account_1\",\"direction\":\"out\"}");
+  ok (Cashflow_io.Advisor_projection.parse_call ~name:"propose_save_goal" ~arguments:"{\"name\":\"Sofa\",\"target_amount\":\"9000\",\"target_date\":\"2027-06-01\"}");
+  ok (Cashflow_io.Advisor_projection.parse_call ~name:"propose_new_category" ~arguments:"{\"name\":\"Coffee\",\"kind\":\"expense\"}");
+  List.iter
+    (fun (name, arguments) -> failed (Cashflow_io.Advisor_projection.parse_call ~name ~arguments))
+    [ ("propose_add_rule", "{\"pattern\":\"x\",\"category\":\"account_1\",\"currency\":\"SEK\"}");
+      ("propose_add_rule", "{\"pattern\":\"x\",\"category\":\"account_1\",\"direction\":\"sideways\"}");
+      ("propose_save_goal", "{\"name\":\"Sofa\"}");
+      ("propose_save_goal", "{\"name\":\"Sofa\",\"target_amount\":\"1\",\"currency\":\"SEK\"}");
+      ("propose_new_category", "{\"name\":\"Coffee\",\"kind\":\"asset\"}");
+      ("propose_new_category", "{\"name\":\"Coffee\"}") ];
   let categorize = List.find (fun schema -> name_of schema = "propose_categorize") P.tool_schemas |> member "function" |> member "parameters" in
   Alcotest.(check (list string)) "categorize fields" ["rows"] (member "properties" categorize |> to_assoc |> List.map fst);
   ok (Cashflow_io.Advisor_projection.parse_call ~name:"propose_categorize" ~arguments:"{\"rows\":[{\"row\":\"row_ab_1\",\"category\":\"account_1\"}]}");

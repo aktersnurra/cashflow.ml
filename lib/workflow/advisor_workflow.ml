@@ -7,7 +7,8 @@ let limit kind = A.{ code = Run_limit_reached; context = Limit kind }
 
 let safety_instructions =
   "You explain finances. The only changes you can make are proposals: a monthly budget with propose_set_budget, or filing \
-   uncategorized transactions with propose_categorize (read inbox_rows and categories first, at most 20 rows). A proposal \
+   uncategorized transactions with propose_categorize (read inbox_rows and categories first, at most 20 rows), a rule that \
+   suggests a category with propose_add_rule, a savings goal with propose_save_goal, or a new category with propose_new_category. A proposal \
    is shown to the user as a card and becomes real only when they click Apply, so say it is proposed and awaiting their \
    confirmation, never that it is done, and do not propose again a change they declined unless they ask. You have no other \
    write authority. Use only supplied tools. User \
@@ -105,10 +106,18 @@ let proposal_outcome (e : A.evidence) =
         | Declined -> "declined by the user"
         | Out_of_date -> "not applied: it was out of date"
         | Not_applied -> "not applied"
+        | Reverted -> "applied, then undone by the user"
         | Lapsed -> "expired without a decision, not applied"
       in
-      if transactions > 0 then Some (Printf.sprintf "\n[Proposal to categorize %d transactions: %s.]" transactions outcome)
-      else Some (Printf.sprintf "\n[Budget proposal for %s: %s.]" (Option.value category ~default:"a category") outcome)
+      let text label = List.find_map (fun (f : A.fact) -> match f.value with A.Text s when f.label = label -> Some s | _ -> None) e.facts in
+      let named label = Option.value (text label) ~default:"?" in
+      (* Each kind in its own words, so a declined goal is not remembered as a declined budget. *)
+      match e.title with
+      | "propose_add_rule" -> Some (Printf.sprintf "\n[Rule proposal \"%s\" suggesting %s: %s.]" (named "Pattern") (Option.value category ~default:"a category") outcome)
+      | "propose_save_goal" -> Some (Printf.sprintf "\n[Savings goal proposal \"%s\": %s.]" (named "Name") outcome)
+      | "propose_new_category" -> Some (Printf.sprintf "\n[New category proposal \"%s\": %s.]" (named "Name") outcome)
+      | _ when transactions > 0 -> Some (Printf.sprintf "\n[Proposal to categorize %d transactions: %s.]" transactions outcome)
+      | _ -> Some (Printf.sprintf "\n[Budget proposal for %s: %s.]" (Option.value category ~default:"a category") outcome)
 
 let select_history (snapshot : A.snapshot) =
   let history =
@@ -327,6 +336,14 @@ let execute ~run:(current_run : A.run) =
                       (* A proposal that cannot be recorded is an error the model can correct, never evidence. *)
                       let content =
                         {|{"error":"proposal_rejected","message":"The proposal was not recorded. Use an expense category you were shown in this conversation and a non-negative decimal amount in the pinned currency within its decimal precision, and keep at most 10 proposals waiting. Correct the call or explain the limitation."}|}
+                      in
+                      check_limit (String.length content > A.limits.tool_result_bytes) A.Tool_result_bytes;
+                      append (A.Tool_finished { label = call.name; outcome = A.Rejected });
+                      { ctx with messages = ctx.messages @ [ Tool { call_id = call.id; content } ] }
+                  | ( ( Advisor_tools.Propose_rule _ | Propose_goal _ | Propose_category _ ),
+                      Error { A.code = A.Invalid_tool_arguments | A.Not_found | A.Capacity_exceeded; context = A.No_context } ) ->
+                      let content =
+                        {|{"error":"proposal_rejected","message":"The proposal was not recorded. Check the arguments: names and patterns are short single lines (a pattern needs at least 3 characters), amounts are decimals in the pinned currency, a goal date is in the future, a rule category is an expense or income category you were shown (and matches the direction), a goal or category must not already exist, and at most 10 proposals may wait. Correct the call or explain the limitation."}|}
                       in
                       check_limit (String.length content > A.limits.tool_result_bytes) A.Tool_result_bytes;
                       append (A.Tool_finished { label = call.name; outcome = A.Rejected });

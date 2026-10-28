@@ -80,6 +80,84 @@ let ready_categorize service ~principal ~owner (p : S.proposal) =
     in
     if List.for_all unchanged (List.combine pairs recorded) then Ok (`Ready_rows (access, pairs)) else Ok `Out_of_date
 
+(* The simple kinds: each holds only typed values from the proposal, rechecked against the conversation's scope. *)
+let usable_category ctx category_id direction =
+  match (Insights.book ctx).inside category_id with
+  | Some info
+    when (info.account.kind = Account.Expense || info.account.kind = Account.Income)
+         && Option.is_none info.details.role && (not info.account.closed)
+         && (match (direction, info.account.kind) with Some "in", Account.Expense | Some "out", Account.Income -> false | _ -> true) ->
+      Some info
+  | _ -> None
+
+let plan_rule service ~principal ~owner ~id (p : S.proposal) =
+  let* access, ctx = scoped_context service ~principal ~owner p in
+  match (string_field p.arguments "pattern", Option.bind (string_field p.arguments "category_id") Account_id.of_string) with
+  | Some pattern, Some category_id -> (
+      let direction = string_field p.arguments "direction" in
+      match usable_category ctx category_id direction with
+      | None -> Ok `Out_of_date
+      | Some info ->
+          let direction = match direction with Some "in" -> Some `In | Some "out" -> Some `Out | _ -> None in
+          Ok
+            (`Do
+              (fun () ->
+                match
+                  Inbox.add_rule_as service access ~rule_id:(Some id) ~owner:info.account.owner ~pattern ~direction ~min_amount:None ~max_amount:None
+                    ~bank_account_id:None ~category_id ~tags:[] ~shared:false ~auto_apply:false
+                with
+                | Ok _ -> Ok ()
+                | Error _ -> Error ())))
+  | _ -> error A.Invalid_request
+
+let plan_goal service ~principal ~owner ~id (p : S.proposal) =
+  let* _, ctx = scoped_context service ~principal ~owner p in
+  let minor key = Option.bind (string_field p.arguments key) Int64.of_string_opt in
+  match (string_field p.arguments "name", minor "target_amount") with
+  | Some name, Some target_amount ->
+      let target_date = Option.bind (string_field p.arguments "target_date") (fun d -> Result.to_option (Date.of_string d)) in
+      let taken =
+        List.exists (fun (g : Planning_store.goal) -> String.equal (String.lowercase_ascii g.name) (String.lowercase_ascii name))
+          (Planning_store.goals service.Service.db (Insights.budget_owner ctx))
+      in
+      if taken || (match target_date with Some d -> Date.compare d ctx.today <= 0 | None -> false) then Ok `Out_of_date
+      else
+        Ok
+          (`Do
+            (fun () ->
+              match Insights.save_goal ctx ~create_with:id ~name ~target_amount ~target_date ~monthly_amount:(minor "monthly_amount") () with
+              | Ok _ -> Ok ()
+              | Error _ -> Error ()))
+  | _ -> error A.Invalid_request
+
+let category_key id = Result.get_ok (Idempotency_key.of_string ("proposal:" ^ id))
+
+let plan_category service ~principal ~owner ~id (p : S.proposal) =
+  let* access, ctx = scoped_context service ~principal ~owner p in
+  match (string_field p.arguments "name", string_field p.arguments "kind") with
+  | Some name, Some (("expense" | "income") as kind_text) ->
+      let kind = if kind_text = "expense" then Account.Expense else Account.Income in
+      let scope_owner = Insights.budget_owner ctx in
+      let taken =
+        List.exists
+          (fun (i : Account_info.t) ->
+            i.account.kind = kind && (not i.account.closed) && Owner.equal i.account.owner scope_owner
+            && String.equal (String.lowercase_ascii i.account.name) (String.lowercase_ascii name))
+          (Insights.accounts ctx)
+      in
+      if taken then Ok `Out_of_date
+      else
+        Ok
+          (`Do
+            (fun () ->
+              match
+                Service.open_account service access ~key:(category_key id) ~owner:scope_owner ~kind ~name ~currency:(Currency.code ctx.currency)
+                  ~flags:Account.no_flags ~details:Account_info.no_details
+              with
+              | Ok (`Created _ | `Exists _) -> Ok ()
+              | Error _ -> Error ()))
+  | _ -> error A.Invalid_request
+
 let decide service ~owner ~id state =
   let* decided = S.decide_proposal (store service) ~owner ~id state in
   if decided then Ok state else (S.proposal (store service) ~owner id |> Result.map (fun (p : S.proposal) -> p.state))
@@ -132,6 +210,9 @@ let apply service ~principal ~id =
                               | Ok (Some (Error _)) | Error _ -> Error ()
                               | Ok _ -> Ok ()))
                         (Ok ()) pairs))
+        | "add_rule" -> plan_rule service ~principal ~owner ~id p
+        | "save_goal" -> plan_goal service ~principal ~owner ~id p
+        | "new_category" -> plan_category service ~principal ~owner ~id p
         | _ -> error A.Invalid_request
       in
       match
@@ -151,3 +232,138 @@ let apply service ~principal ~id =
       | Error e -> Error e)
 
 let dismiss service ~principal ~id = with_proposal service ~principal ~id (fun owner _ -> decide service ~owner ~id A.Declined)
+
+(* Taking an applied proposal back, only if what it did is still exactly as it left it: a budget the user has since
+   changed, or a row they have since categorised again, is theirs now and is not touched. Claiming the undo and
+   reversing the change are one transaction. A change that no longer matches is [Version_conflict] and nothing moves. *)
+let undo_budget service ~principal ~owner (p : S.proposal) =
+  let* _, ctx = scoped_context service ~principal ~owner p in
+  match
+    ( Option.bind (string_field p.arguments "category_id") Account_id.of_string,
+      Option.bind (string_field p.arguments "monthly_amount") Int64.of_string_opt,
+      field p.arguments "rollover",
+      string_field p.precondition "from_cycle" )
+  with
+  | Some category_id, Some applied, Some (`Bool rollover), Some from_cycle -> (
+      let previous = Option.bind (string_field p.precondition "current_monthly") Int64.of_string_opt in
+      let previous_rollover = match field p.precondition "current_rollover" with Some (`Bool b) -> b | _ -> false in
+      let current = Insights.current_budget ctx category_id in
+      let unchanged =
+        String.equal (Insights.current_cycle_label ctx) from_cycle
+        && Option.equal Int64.equal (Option.map (fun (b : Analytics.budget) -> b.monthly_amount) current) (Some applied)
+        && Option.equal Bool.equal (Option.map (fun (b : Analytics.budget) -> b.rollover) current) (Some rollover)
+      in
+      if not unchanged then Ok `Changed
+      else
+        (* No budget before means a budget of nothing now. *)
+        match
+          Insights.set_budget ctx ~category_id ~monthly_amount:(Option.value previous ~default:0L) ~rollover:previous_rollover
+            ~effective_from:(Some from_cycle)
+        with
+        | Ok _ -> Ok `Undone
+        | Error (`Not_found _) -> Ok `Changed
+        | Error (`Invalid _) -> Ok `Changed
+        | Error (`Forbidden _) -> error A.Access_denied
+        | Error (`Storage_unavailable _) -> error A.Storage_unavailable)
+  | _ -> error A.Invalid_request
+
+let undo_categorize service ~principal ~owner (p : S.proposal) =
+  let* access, _ = scoped_context service ~principal ~owner p in
+  let list_of json name = match field json name with Some (`List xs) -> xs | _ -> [] in
+  let rows = list_of p.arguments "rows" and recorded = list_of p.precondition "rows" in
+  if rows = [] || List.length rows <> List.length recorded then error A.Invalid_request
+  else
+    (* Latest first, as the categorisations were made. *)
+    List.fold_left
+      (fun acc (row, before) ->
+        match acc with
+        | Ok `Undone -> (
+            let revision = match field before "revision" with Some (`Int n) -> Some n | _ -> None in
+            match
+              ( Option.bind (string_field row "transfer_id") Transfer_id.of_string, Option.bind (string_field row "category_id") Account_id.of_string,
+                Option.bind (string_field before "current") Account_id.of_string, revision )
+            with
+            | Some transfer_id, Some category_id, Some previous, Some revision -> (
+                match Inbox.reopen service access ~transfer_id ~revision:(revision + 1) ~category_id ~previous with
+                | Ok () -> Ok `Undone
+                | Error (`Invalid _ | `Not_found _) -> Ok `Changed
+                | Error (`Forbidden _) -> error A.Access_denied
+                | Error (`Storage_unavailable _) -> error A.Storage_unavailable)
+            | _ -> error A.Invalid_request)
+        | other -> other)
+      (Ok `Undone) (List.rev (List.combine rows recorded))
+
+(* The simple kinds undo by removing what was made, if the user has not changed it since. *)
+let undo_rule service ~principal ~owner ~id (p : S.proposal) =
+  let* access, _ = scoped_context service ~principal ~owner p in
+  match Inbox.remove_rule service access ~rule_id:id with
+  | Ok () -> Ok `Undone
+  | Error (`Not_found _) -> Ok `Changed
+  | Error (`Forbidden _) -> error A.Access_denied
+  | Error _ -> Ok `Changed
+
+let undo_goal service ~principal ~owner ~id (p : S.proposal) =
+  let* _, ctx = scoped_context service ~principal ~owner p in
+  match Planning_store.find_goal service.Service.db id with
+  | Some goal when Access.can_use ctx.access goal.goal_owner ->
+      let minor key = Option.bind (string_field p.arguments key) Int64.of_string_opt in
+      let target_date = Option.bind (string_field p.arguments "target_date") (fun d -> Result.to_option (Date.of_string d)) in
+      let unchanged =
+        Some goal.name = string_field p.arguments "name" && Some goal.target_amount = minor "target_amount"
+        && Option.equal Date.equal goal.target_date target_date && Option.equal Int64.equal goal.monthly_amount (minor "monthly_amount")
+        && goal.earmarks = []
+      in
+      if unchanged then (
+        Planning_store.archive_goal service.Service.db id;
+        Ok `Undone)
+      else Ok `Changed
+  | _ -> Ok `Changed
+
+let undo_category service ~principal ~owner ~id (p : S.proposal) =
+  let* access, ctx = scoped_context service ~principal ~owner p in
+  let view = Store_sqlite.view service.Service.db in
+  match view.account_by_key (Insights.budget_owner ctx) (category_key id) with
+  | Some account ->
+      (* In use: money moved through it, a budget, a rule or an inbox suggestion points at it. *)
+      let used =
+        Sql.(run service.db
+               (stmt
+                  "SELECT (SELECT count(*) FROM transfers WHERE debit_account_id = ?1 OR credit_account_id = ?1) \
+                   + (SELECT count(*) FROM budget_versions WHERE category_account_id = ?1) \
+                   + (SELECT count(*) FROM categorisation_rules WHERE category_account_id = ?1) \
+                   + (SELECT count(*) FROM inbox_items WHERE suggested_account_id = ?1 OR current_account_id = ?1)"
+                  (Codec.account_id @-> nil) (one (row (int @-> nil) Fun.id))))
+          account.id
+        > 0
+      in
+      if used || (not (Some account.name = string_field p.arguments "name")) || account.closed then Ok `Changed
+      else (match Service.close_account service access account.id with Ok _ -> Ok `Undone | Error _ -> Ok `Changed)
+  | None -> Ok `Changed
+
+let undo service ~principal ~id =
+  let* user = Sql.read_snapshot service.Service.db (fun () -> Advisor_access.user service principal) in
+  let owner = user.id in
+  let* p = S.proposal (store service) ~owner id in
+  match p.state with
+  | A.Reverted -> Ok A.Reverted
+  | A.Applied -> (
+      let conflict = { A.code = A.Version_conflict; context = A.No_context } in
+      match
+        Sql.transaction_result service.Service.db (fun () ->
+            let* claimed = S.undo_proposal (store service) ~owner ~id in
+            if not claimed then Ok ()
+            else
+              let* outcome =
+                match p.kind with
+                | "set_budget" -> undo_budget service ~principal ~owner p
+                | "categorize" -> undo_categorize service ~principal ~owner p
+                | "add_rule" -> undo_rule service ~principal ~owner ~id p
+                | "save_goal" -> undo_goal service ~principal ~owner ~id p
+                | "new_category" -> undo_category service ~principal ~owner ~id p
+                | _ -> error A.Invalid_request
+              in
+              match outcome with `Undone -> Ok () | `Changed -> Error conflict)
+      with
+      | Ok () -> Ok A.Reverted
+      | Error e -> Error e)
+  | _ -> error A.Invalid_request

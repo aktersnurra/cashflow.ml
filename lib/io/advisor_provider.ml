@@ -58,6 +58,17 @@ let tool_schemas =
     "name", str "propose_categorize";
     "description", str "Propose filing uncategorized transactions under categories, up to 20 rows. Use row references from inbox_rows and category references from categories (expense category for money out, income category for money in). Nothing changes until the user confirms it with Apply; you only see that it is awaiting confirmation.";
     "parameters", object_ ["rows"] ["rows", array 20 (object_ ["row"; "category"] ["row", reference "row_"; "category", reference "account_"])]]] in
+  let propose name description required properties =
+    `Assoc ["type", str "function"; "function", `Assoc ["name", str name; "description", str (description ^ " Nothing changes until the user confirms it with Apply; you only see that it is awaiting confirmation."); "parameters", object_ required properties]] in
+  let propose_rule = propose "propose_add_rule" "Propose a rule that suggests a category on import when a merchant's text contains a pattern. It only suggests; it never files anything by itself."
+    ["pattern"; "category"] ["pattern", string 60; category; "direction", `Assoc ["type", str "string"; "enum", `List [str "in"; str "out"]]] in
+  let propose_goal = propose "propose_save_goal" "Propose a new savings goal."
+    ["name"; "target_amount"] ["name", string 60;
+      "target_amount", `Assoc ["type", str "string"; "maxLength", `Int 30; "description", str "Positive decimal in the pinned currency (not minor units), no symbols or separators."];
+      "target_date", `Assoc ["type", str "string"; "format", str "date"; "maxLength", `Int 30; "description", str "ISO YYYY-MM-DD, in the future. Optional."];
+      "monthly_amount", `Assoc ["type", str "string"; "maxLength", `Int 30; "description", str "Planned monthly saving, non-negative decimal in the pinned currency. Optional."]] in
+  let propose_category = propose "propose_new_category" "Propose a new expense or income category, for the conversation's own scope."
+    ["name"; "kind"] ["name", string 40; "kind", `Assoc ["type", str "string"; "enum", `List [str "expense"; str "income"]]] in
   (* A proposal acts in the conversation's own scope and currency, so it takes no currency argument. *)
   let propose_budget = `Assoc ["type", str "function"; "function", `Assoc [
     "name", str "propose_set_budget";
@@ -74,7 +85,7 @@ let tool_schemas =
      "recurring", [], []; "budget_status", [], [offset]; "goals", [], [];
      "inbox_rows", [], []; "categories", [], [];
      "forecast", [], ["cycles", `Assoc ["type", str "integer"; "enum", `List [`Int 1; `Int 3; `Int 6];
-       "description", str "Forecast horizon in months from the current local date: 1, 3 or 6 (default 3). All one-off dates must fit this horizon."]; "scenario", scenario]] @ [propose_budget; propose_categorize]
+       "description", str "Forecast horizon in months from the current local date: 1, 3 or 6 (default 3). All one-off dates must fit this horizon."]; "scenario", scenario]] @ [propose_budget; propose_categorize; propose_rule; propose_goal; propose_category]
 
 let call_json (c : raw_call) = `Assoc ["id", str c.id; "type", str "function";
   "function", `Assoc ["name", str c.name; "arguments", str c.arguments]]

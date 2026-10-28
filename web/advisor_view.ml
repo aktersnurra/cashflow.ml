@@ -70,15 +70,22 @@ let render_turns ~locale ~(snapshot : W.snapshot option) ~dispatch ~(decided : s
                       [ Ui.button ~kind:"primary" (Msg.advisor_proposal_apply locale) (decide e.id "apply");
                         Ui.button (Msg.advisor_proposal_dismiss locale) (decide e.id "dismiss") ] ] ]
           | Some state ->
-              [ Vdom.Node.div ~attrs:[ Vdom.Attr.class_ "advisor-proposal"; Vdom.Attr.create "role" "status" ]
-                  [ text
-                      (match state with
-                      | W.Applied -> Msg.advisor_proposal_applied locale
-                      | Declined -> Msg.advisor_proposal_declined locale
-                      | Out_of_date -> Msg.advisor_proposal_out_of_date locale
-                      | Not_applied -> Msg.advisor_proposal_not_applied locale
-                      | Lapsed -> Msg.advisor_proposal_lapsed locale
-                      | Awaiting -> "") ] ]
+              [ Vdom.Node.div ~attrs:[ Vdom.Attr.class_ "advisor-proposal" ]
+                  ([ Vdom.Node.p ~attrs:[ Vdom.Attr.class_ "advisor-proposal-hint"; Vdom.Attr.create "role" "status" ]
+                       [ text
+                           (match state with
+                           | W.Applied -> Msg.advisor_proposal_applied locale
+                           | Declined -> Msg.advisor_proposal_declined locale
+                           | Out_of_date -> Msg.advisor_proposal_out_of_date locale
+                           | Not_applied -> Msg.advisor_proposal_not_applied locale
+                           | Lapsed -> Msg.advisor_proposal_lapsed locale
+                           | Reverted -> Msg.advisor_proposal_reverted locale
+                           | Awaiting -> "") ] ]
+                  @
+                  (* An applied change can be taken back for as long as what it did is still as it left it. *)
+                  match state with
+                  | W.Applied -> [ Vdom.Node.div ~attrs:(cls "actions") [ Ui.button (Msg.advisor_proposal_undo locale) (decide e.id "undo") ] ]
+                  | _ -> []) ]
         in
         Vdom.Node.details ~key:e.id
           ~attrs:([ Vdom.Attr.class_ "advisor-evidence"; Vdom.Attr.id ("advisor-evidence-" ^ e.id) ]

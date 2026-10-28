@@ -13,6 +13,23 @@
   SVG logos are accepted (Lidl, Willys). An SVG is cleaned before it is stored, keeping only the drawing (no scripts,
   event handlers or links to anything outside the file), and served so that it can load and run nothing.
 
+### The advisor can propose rules, goals and categories
+
+- Besides budgets and filing transactions, the advisor can now propose a rule (a merchant text that suggests a category on
+  import, never one that files by itself), a new savings goal, or a new expense or income category. Each appears as a card
+  with exactly what would be created, and nothing exists until you click Apply. Each can be undone while it is still as it was
+  made: a rule is removed, a goal is archived if you have not changed it, and a category is closed if nothing has used it yet.
+  A goal or category that already exists by that name is not created twice.
+- Not built yet: proposing a manual entry or editing an existing goal.
+
+### Undo for advisor proposals
+
+- A proposal you applied now has an Undo button. Undoing a budget puts back the budget that was there before (or
+  removes it if there was none). Undoing a categorization puts the rows back in the inbox as they were. Undo only
+  works while the change is still as the proposal left it: a budget you edited since, or a row you categorized
+  again, is yours and is left alone, and the card says it can't be undone here. Undoing twice does nothing more.
+- The advisor is told, on later turns, when a proposal it made was applied and then undone.
+
 ### Starter categories in each reader's language
 
 - The starter categories (Groceries, Housing, Uncategorized...) are shown in each person's own language, and changing

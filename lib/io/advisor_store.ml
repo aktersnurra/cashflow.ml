@@ -160,7 +160,8 @@ let evidence_in (e : W.evidence) : A.evidence =
           | Declined -> Declined
           | Out_of_date -> Out_of_date
           | Not_applied -> Not_applied
-          | Lapsed -> Lapsed)
+          | Lapsed -> Lapsed
+          | Reverted -> Reverted)
         e.proposal;
   }
 
@@ -805,6 +806,7 @@ let proposal_state_to_db : A.proposal_state -> string = function
   | Out_of_date -> "out_of_date"
   | Not_applied -> "not_applied"
   | Lapsed -> "lapsed"
+  | Reverted -> raise (Sql.Sql_error "reverted is derived from undone_at, never stored as a state")
 
 let proposal_state_of_db = function
   | "awaiting" -> A.Awaiting
@@ -816,13 +818,19 @@ let proposal_state_of_db = function
   | _ -> raise (Sql.Sql_error "invalid proposal state")
 
 (* An undecided proposal past its expiry reads as lapsed; nothing needs to sweep them. *)
-let effective_state t state expires_at = if state = A.Awaiting && Ptime.is_earlier (t.clock ()) ~than:expires_at then A.Awaiting else if state = A.Awaiting then A.Lapsed else state
+let effective_state t ?(undone = false) state expires_at =
+  match state with
+  | A.Awaiting -> if Ptime.is_earlier (t.clock ()) ~than:expires_at then A.Awaiting else A.Lapsed
+  | A.Applied when undone -> A.Reverted
+  | state -> state
 
 let proposal_states t id =
   Sql.(
     run t.db
-      (stmt "SELECT id,state,expires_at FROM advisor_proposals WHERE conversation_id=?" (text @-> nil)
-         (many (row (text @-> text @-> text @-> nil) (fun id state expires -> (id, effective_state t (proposal_state_of_db state) (time expires)))))))
+      (stmt "SELECT id,state,expires_at,undone_at FROM advisor_proposals WHERE conversation_id=?" (text @-> nil)
+         (many
+            (row (text @-> text @-> text @-> nullable text @-> nil) (fun id state expires undone ->
+                 (id, effective_state t ~undone:(Option.is_some undone) (proposal_state_of_db state) (time expires)))))))
     (cid id)
 
 let snapshot t ~owner id =
@@ -1206,7 +1214,7 @@ type proposal = {
 
 let proposal_row =
   Sql.(
-    row (text @-> text @-> text @-> text @-> text @-> text @-> text @-> nil) (fun id conversation kind arguments precondition state expires ->
+    row (text @-> text @-> text @-> text @-> text @-> text @-> text @-> nullable text @-> nil) (fun id conversation kind arguments precondition state expires undone ->
         {
           id;
           conversation_id = require (A.Conversation_id.of_string conversation);
@@ -1215,7 +1223,7 @@ let proposal_row =
           precondition = Yojson.Safe.from_string precondition;
           state = proposal_state_of_db state;
         }
-        |> fun p -> (p, time expires)))
+        |> fun p -> (p, time expires, Option.is_some undone)))
 
 let add_proposal t ~owner ~conversation_id ~id ~kind ~arguments ~precondition ~now ~expires =
   tx t (fun () ->
@@ -1238,13 +1246,13 @@ let proposal t ~owner id =
       match
         Sql.(run t.db
                (stmt
-                  "SELECT p.id,p.conversation_id,p.kind,p.arguments,p.precondition,p.state,p.expires_at FROM advisor_proposals p \
+                  "SELECT p.id,p.conversation_id,p.kind,p.arguments,p.precondition,p.state,p.expires_at,p.undone_at FROM advisor_proposals p \
                    JOIN advisor_conversations c ON c.id=p.conversation_id WHERE p.id=? AND c.owner_id=?"
                   (text @-> text @-> nil) (opt proposal_row)))
           id (uid owner)
       with
       | None -> reject A.Not_found
-      | Some (p, expires) -> { p with state = effective_state t p.state expires })
+      | Some (p, expires, undone) -> { p with state = effective_state t ~undone p.state expires })
 
 let decide_proposal t ~owner ~id state =
   tx t (fun () ->
@@ -1255,4 +1263,15 @@ let decide_proposal t ~owner ~id state =
                  (SELECT id FROM advisor_conversations WHERE owner_id=?) RETURNING id"
                 (text @-> text @-> text @-> text @-> nil) (opt (row (text @-> nil) Fun.id))))
         (proposal_state_to_db state) now id (uid owner)
+      |> Option.is_some)
+
+(* Marks an applied proposal as taken back, once. [Ok false] when it was never applied or is already undone. *)
+let undo_proposal t ~owner ~id =
+  tx t (fun () ->
+      Sql.(run t.db
+             (stmt
+                "UPDATE advisor_proposals SET undone_at=? WHERE id=? AND state='applied' AND undone_at IS NULL AND conversation_id IN \
+                 (SELECT id FROM advisor_conversations WHERE owner_id=?) RETURNING id"
+                (text @-> text @-> text @-> nil) (opt (row (text @-> nil) Fun.id))))
+        (stamp (t.clock ())) id (uid owner)
       |> Option.is_some)

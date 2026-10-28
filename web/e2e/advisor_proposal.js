@@ -44,11 +44,18 @@ const output=process.env.ADVISOR_EVIDENCE_DIR||'/tmp/advisor-proposal';fs.mkdirS
   await page.reload();
   await card.getByText('Applied.',{exact:true}).waitFor({timeout:10000});
   await page.screenshot({path:output+'/proposal-applied.png',fullPage:true});
+  // An applied change can be taken back while it is still as it was left.
+  await card.getByRole('button',{name:'Undo',exact:true}).click();
+  await card.getByText('Undone.',{exact:true}).waitFor({timeout:10000});
+  assert.equal(await card.getByRole('button',{name:'Undo',exact:true}).count(),0,'nothing left to undo');
+  assert.ok(!(await budgets()).includes('4000'),'undoing took the proposed budget away');
+  await page.reload();
+  await card.getByText('Undone.',{exact:true}).waitFor({timeout:10000});
   // Swedish labels come from the same card.
   const update=await context.request.post(base+'/api/commands/update_settings',{headers,data:{locale:'sv'}});
   assert.ok(update.ok(),'update_settings '+update.status());
   await page.reload();
-  await page.locator('.advisor-evidence',{hasText:'Föreslagen budgetändring'}).getByText('Tillämpad.',{exact:true}).waitFor({timeout:10000});
+  await page.locator('.advisor-evidence',{hasText:'Föreslagen budgetändring'}).getByText('Ångrad.',{exact:true}).waitFor({timeout:10000});
   assert.deepEqual(errors,[]);
   console.log('proposal: card, nothing written before Apply, reload keeps it, Apply sets the budget once, state survives reload, Swedish');
  } finally { await browser.close(); }

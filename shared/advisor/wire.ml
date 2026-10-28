@@ -57,7 +57,7 @@ type finding = { kind : string; key : string; scope : scope; title : string; sum
 type display_value = Text of string | Money of money | Date of string
 type fact = { label : string; value : display_value }
 type import_status = Current | Stale | Incomplete | Unknown
-type proposal_state = Awaiting | Applied | Declined | Out_of_date | Not_applied | Lapsed
+type proposal_state = Awaiting | Applied | Declined | Out_of_date | Not_applied | Lapsed | Reverted
 
 type evidence = {
   id : string;
@@ -507,11 +507,11 @@ let import_status_of_json j =
   | s -> raise (Decode (Unknown_variant s))
 
 let proposal_state_to_string = function
-  | Awaiting -> "awaiting" | Applied -> "applied" | Declined -> "declined" | Out_of_date -> "out_of_date" | Not_applied -> "not_applied" | Lapsed -> "lapsed"
+  | Awaiting -> "awaiting" | Applied -> "applied" | Declined -> "declined" | Out_of_date -> "out_of_date" | Not_applied -> "not_applied" | Lapsed -> "lapsed" | Reverted -> "reverted"
 
 let proposal_state_of_string = function
   | "awaiting" -> Some Awaiting | "applied" -> Some Applied | "declined" -> Some Declined
-  | "out_of_date" -> Some Out_of_date | "not_applied" -> Some Not_applied | "lapsed" -> Some Lapsed | _ -> None
+  | "out_of_date" -> Some Out_of_date | "not_applied" -> Some Not_applied | "lapsed" -> Some Lapsed | "reverted" -> Some Reverted | _ -> None
 
 let proposal_state_to_json s = `String (proposal_state_to_string s)
 
