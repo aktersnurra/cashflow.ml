@@ -212,8 +212,8 @@ let read_file path = try Some (In_channel.with_open_bin path In_channel.input_al
 let compressible file = List.mem (Filename.extension file) [ ".js"; ".css"; ".html"; ".svg"; ".webmanifest"; ".json" ]
 let gzip_cache : (string, string option) Hashtbl.t = Hashtbl.create 8
 
-let gzip body =
-  match Zipc_deflate.crc_32_and_deflate ~level:`Best body with
+let gzip ?(level = `Best) body =
+  match Zipc_deflate.crc_32_and_deflate ~level body with
   | Error _ -> None
   | Ok (crc, deflated) ->
       let le32 n = String.init 4 (fun i -> Char.chr (Int32.to_int (Int32.logand (Int32.shift_right_logical n (8 * i)) 0xffl))) in
@@ -359,7 +359,25 @@ let split_address value =
 
 let status_of_int code = Httpun.Status.of_code code
 
+(* API answers are text too, and a list of transactions is several times smaller gzipped. They differ on every
+   request, so they are compressed quickly and not kept. *)
+let compressed (request : Httpun.Request.t) response =
+  let accepts =
+    match Httpun.Headers.get request.headers "accept-encoding" with
+    | Some value -> Cashflow_core.Str_compat.contains ~sub:"gzip" (String.lowercase_ascii value)
+    | None -> false
+  in
+  if request.meth = `HEAD || response.status <> 200 || String.length response.body < 1024 || not accepts
+     || List.assoc_opt "content-type" response.headers <> Some "application/json"
+     || List.mem_assoc "content-encoding" response.headers || List.mem_assoc "content-length" response.headers
+  then response
+  else
+    match gzip ~level:`Fast response.body with
+    | Some body -> { response with body; headers = ("content-encoding", "gzip") :: ("vary", "accept-encoding") :: response.headers }
+    | None -> response
+
 let respond_with reqd response =
+  let response = compressed (Httpun.Reqd.request reqd) response in
   let headers =
     List.fold_left (fun headers (key, value) -> Httpun.Headers.add_multi headers [ (key, [ value ]) ]) Httpun.Headers.empty response.headers
   in

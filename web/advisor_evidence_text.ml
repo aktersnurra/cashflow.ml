@@ -15,6 +15,7 @@ let title locale = function
   | "propose_categorize" -> Msg.advisor_evidence_propose_categorize locale
   | "propose_add_rule" -> Msg.advisor_evidence_propose_rule locale
   | "propose_save_goal" -> Msg.advisor_evidence_propose_goal locale
+  | "propose_update_goal" -> Msg.advisor_evidence_propose_update_goal locale
   | "propose_new_category" -> Msg.advisor_evidence_propose_category locale
   | "propose_entry" -> Msg.advisor_evidence_propose_entry locale
   | "bank_accounts" -> Msg.advisor_evidence_bank_accounts locale
@@ -53,6 +54,11 @@ let label locale = function
   | "Target date" -> Msg.advisor_evidence_label_target_date locale
   | "Monthly saving" -> Msg.advisor_evidence_label_monthly_saving locale
   | "Name" -> Msg.advisor_evidence_label_name locale
+  | "Goal" -> Msg.advisor_evidence_label_goal locale
+  | "Name was" -> Msg.advisor_evidence_label_name_was locale
+  | "Target was" -> Msg.advisor_evidence_label_target_was locale
+  | "Target date was" -> Msg.advisor_evidence_label_target_date_was locale
+  | "Monthly saving was" -> Msg.advisor_evidence_label_monthly_saving_was locale
   | "Kind" -> Msg.advisor_evidence_label_kind locale
   | "Owner" -> Msg.advisor_evidence_label_owner locale
   | "Amount" -> Msg.advisor_evidence_label_amount locale
@@ -67,7 +73,7 @@ let value locale (f : Cashflow_advisor_protocol.Wire.fact) =
   | "Carry over", W.Text "true" -> Msg.advisor_evidence_yes locale
   | "Carry over", W.Text "false" -> Msg.advisor_evidence_no locale
   | "Current budget", W.Text "none" -> Msg.advisor_evidence_none locale
-  | ("Target date" | "Monthly saving"), W.Text "none" -> Msg.advisor_evidence_none locale
+  | ("Target date" | "Monthly saving" | "Target date was" | "Monthly saving was"), W.Text "none" -> Msg.advisor_evidence_none locale
   | "Status", W.Text "pending" -> Msg.advisor_evidence_status_pending locale
   | "Status", W.Text "posted" -> Msg.advisor_evidence_status_posted locale
   | "Direction", W.Text "any" -> Msg.advisor_evidence_dir_any locale

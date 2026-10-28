@@ -68,6 +68,23 @@ let between db access ~first ~last =
   let user_id, household_id = scope_params access in
   run db in_range user_id household_id first last
 
+(* What each account's balance moved by on each day, for every visible posted transfer before ?4.
+   Days before ?3 count as ?3, so a long history is one row per account. *)
+let changes_before =
+  let side account sign =
+    "SELECT t." ^ account ^ " AS account, MAX(t.value_date, ?3) AS day, " ^ sign
+    ^ "t.amount AS change FROM transfers t JOIN accounts da ON da.id = t.debit_account_id JOIN accounts ca ON ca.id = t.credit_account_id \
+       WHERE (" ^ visible "da" ^ " OR " ^ visible "ca" ^ ") AND t.kind IN ('single', 'post_pending') AND t.value_date < ?4"
+  in
+  stmt
+    ("SELECT account, day, SUM(change) FROM (" ^ side "debit_account_id" "" ^ " UNION ALL " ^ side "credit_account_id" "-" ^ ") GROUP BY account, day")
+    Codec.(text @-> text @-> date @-> date @-> nil)
+    (many (row Codec.(account_id @-> date @-> int64 @-> nil) (fun account day change -> (account, day, change))))
+
+let balance_changes_before db access ~since ~before =
+  let user_id, household_id = scope_params access in
+  run db changes_before user_id household_id since before
+
 let before =
   stmt
     ("SELECT " ^ Store_sqlite.transfer_columns

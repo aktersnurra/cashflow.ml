@@ -216,6 +216,23 @@ let () =
                       let category = List.find (fun c -> member "name" c = `String "Groceries") (data cats) |> member "reference" |> to_string in
                       calls [ call 0 "entry" "propose_entry"
                         (Yojson.Safe.to_string (`Assoc [("from_account", `String bank); ("to_account", `String category); ("amount", `String "123.45"); ("description", `String "Fixture lunch")])) ])
+                else if privacy_mode = "propose-update-goal" then (
+                  (* Read the goals, then raise the target of the one called Sofa to 12000. *)
+                  let open Yojson.Safe.Util in
+                  let tools = Yojson.Safe.from_string body |> member "messages" |> to_list
+                    |> List.filter (fun m -> member "role" m = `String "tool") in
+                  let result id = List.find_opt (fun m -> member "tool_call_id" m = `String id) tools in
+                  let call id name arguments = `Assoc [("index", `Int 0); ("id", `String id); ("type", `String "function");
+                    ("function", `Assoc [("name", `String name); ("arguments", `String arguments)])] in
+                  let calls list = on_chunk ("data: " ^ Yojson.Safe.to_string (`Assoc [("choices", `List [`Assoc [
+                    ("index", `Int 0); ("delta", `Assoc [("tool_calls", `List list)]); ("finish_reason", `String "tool_calls")]])]) ^ "\n\ndata: [DONE]\n\n") in
+                  match result "goals", result "change" with
+                  | None, _ -> calls [ call "goals" "goals" "{}" ]
+                  | Some _, Some _ -> on_chunk (text "I have proposed the change; it is waiting for your confirmation."); finish ()
+                  | Some goals, None ->
+                      let data = member "content" goals |> to_string |> Yojson.Safe.from_string |> member "data" |> to_list in
+                      let sofa = List.find (fun g -> member "name" g = `String "Sofa") data |> member "reference" |> to_string in
+                      calls [ call "change" "propose_update_goal" (Yojson.Safe.to_string (`Assoc [("goal", `String sofa); ("target_amount", `String "12000")])) ])
                 else if privacy_mode = "propose-goal" then (
                   (* One round: propose a savings goal, then answer. *)
                   let open Yojson.Safe.Util in
