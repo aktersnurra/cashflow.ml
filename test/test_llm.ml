@@ -194,14 +194,18 @@ let openrouter_config fields =
 (* Privacy restrictions belong in the HTTP request, not just the configuration. *)
 let test_openrouter_privacy_policy () =
   let requests = ref [] in
-  let post ~uri:_ ~headers:_ ~body =
+  let sent_headers = ref [] in
+  let post ~uri:_ ~headers ~body =
+    sent_headers := headers;
     requests := Yojson.Safe.from_string body :: !requests;
     Ok {|{"choices":[{"message":{"content":"Groceries"}}]}|}
   in
   let config = openrouter_config "" in
-  let assistant = Llm.openrouter ~post ~api_key:"test-key" ~model:config.openrouter_model ~provider_only:config.openrouter_provider_only in
+  let assistant = Llm.openrouter ~app_url:"https://cashflow.example" ~post ~api_key:"test-key" ~model:config.openrouter_model ~provider_only:config.openrouter_provider_only () in
   Alcotest.(check (result string string)) "completion" (Ok "Groceries") (assistant.complete ~system:"Classify" ~user:"ICA" ());
   Alcotest.(check int) "one request" 1 (List.length !requests);
+  Alcotest.(check (option string)) "OpenRouter learns which app calls" (Some "https://cashflow.example") (List.assoc_opt "http-referer" !sent_headers);
+  Alcotest.(check (option string)) "and its name" (Some "cashflow") (List.assoc_opt "x-title" !sent_headers);
   let open Yojson.Safe.Util in
   let request = List.hd !requests in
   Alcotest.(check string) "model" "test-model" (member "model" request |> to_string);
@@ -211,11 +215,19 @@ let test_openrouter_privacy_policy () =
   Alcotest.(check (list string)) "only approved providers"
     [ "google-vertex"; "amazon-bedrock"; "azure" ] (member "only" provider |> to_list |> List.map to_string)
 
+(* The advisor runs on Sonnet 5.5, and 4.6 on the same route still works; any other model or route does not. *)
+let test_advisor_models () =
+  let supported model provider_only = Option.is_some (Cashflow_io.Advisor_provider.supported_limits ~model ~provider_only) in
+  Alcotest.(check bool) "5.5 on bedrock" true (supported "anthropic/claude-sonnet-5.5" [ "amazon-bedrock" ]);
+  Alcotest.(check bool) "4.6 on bedrock" true (supported "anthropic/claude-sonnet-4.6" [ "amazon-bedrock" ]);
+  Alcotest.(check bool) "5.5 elsewhere" false (supported "anthropic/claude-sonnet-5.5" [ "azure" ]);
+  Alcotest.(check bool) "another model" false (supported "anthropic/claude-haiku-5.5" [ "amazon-bedrock" ])
+
 (* With a schema the request asks for structured output, and only from endpoints that honour it. *)
 let test_openrouter_structured_output () =
   let requests = ref [] in
   let post ~uri:_ ~headers:_ ~body = requests := Yojson.Safe.from_string body :: !requests; Ok {|{"choices":[{"message":{"content":"{}"}}]}|} in
-  let assistant = Llm.openrouter ~post ~api_key:"test-key" ~model:"test-model" ~provider_only:[ "amazon-bedrock" ] in
+  let assistant = Llm.openrouter ~post ~api_key:"test-key" ~model:"test-model" ~provider_only:[ "amazon-bedrock" ] () in
   let schema = `Assoc [ ("type", `String "object") ] in
   Alcotest.(check (result string string)) "reply" (Ok "{}") (assistant.complete ~schema:("shape", schema) ~system:"Read" ~user:"rows" ());
   let open Yojson.Safe.Util in
@@ -232,7 +244,7 @@ let test_openrouter_does_not_relax_policy () =
   let requests = ref [] in
   let post ~uri:_ ~headers:_ ~body = requests := Yojson.Safe.from_string body :: !requests; Error "HTTP 404 Not Found" in
   let config = openrouter_config "(provider_only (amazon-bedrock))" in
-  let assistant = Llm.openrouter ~post ~api_key:"test-key" ~model:config.openrouter_model ~provider_only:config.openrouter_provider_only in
+  let assistant = Llm.openrouter ~post ~api_key:"test-key" ~model:config.openrouter_model ~provider_only:config.openrouter_provider_only () in
   Alcotest.(check (result string string)) "no eligible endpoint is an error" (Error "HTTP 404 Not Found")
     (assistant.complete ~system:"Classify" ~user:"ICA" ());
   Alcotest.(check int) "no relaxed-policy retry" 1 (List.length !requests);
@@ -246,7 +258,7 @@ let test_openrouter_does_not_relax_policy () =
 let test_openrouter_empty_allowlist_sends_nothing () =
   let sent = ref false in
   let post ~uri:_ ~headers:_ ~body:_ = sent := true; Error "request was sent" in
-  let assistant = Llm.openrouter ~post ~api_key:"test-key" ~model:"test-model" ~provider_only:[] in
+  let assistant = Llm.openrouter ~post ~api_key:"test-key" ~model:"test-model" ~provider_only:[] () in
   Alcotest.(check (result string string)) "empty allowlist refused"
     (Error "OpenRouter provider allowlist must not be empty") (assistant.complete ~system:"Classify" ~user:"ICA" ());
   Alcotest.(check bool) "financial data never sent" false !sent
@@ -262,6 +274,7 @@ let () =
           Alcotest.test_case "layout cells outside the file" `Quick test_layout_cells_outside_the_file ] );
       ( "openrouter",
         [ Alcotest.test_case "privacy policy in requests" `Quick test_openrouter_privacy_policy;
+          Alcotest.test_case "advisor models" `Quick test_advisor_models;
           Alcotest.test_case "never relax the policy" `Quick test_openrouter_does_not_relax_policy;
           Alcotest.test_case "structured output" `Quick test_openrouter_structured_output;
           Alcotest.test_case "empty allowlist sends nothing" `Quick test_openrouter_empty_allowlist_sends_nothing ] ) ]
