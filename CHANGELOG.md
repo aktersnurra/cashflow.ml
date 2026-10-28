@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Only what you need to see
+
+- Insights names a price change from the charge before it, as Overview does: it compared the latest charge with the
+  typical one, so it could say "went from SEK 849 to SEK 849". `recurring_payments` now includes `previous_amount`.
+- "Your balance is growing" counts from the first month with money in an account, not from the empty months before
+  it, which counted the whole balance as growth.
+- Forecast shows the lowest point once when it falls on the day before salary, instead of the same number twice.
+
 ### The advisor can propose a manual entry
 
 - Ask the advisor to add a purchase, some income, or a move between your own accounts. It appears as a card with the

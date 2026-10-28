@@ -90,7 +90,10 @@ fs.writeFileSync(out + '/savings.csv', savings);
     await page.locator('.sidebar .nav-link.active', { hasText: 'Plan' }).waitFor({ timeout: 10000 });
     await page.waitForSelector('svg.projection >> visible=true', { timeout: 10000 });
     const kpis = await page.locator('.forecast-kpis .kpi').count();
-    if (kpis !== 4) throw new Error(`forecast: ${kpis} key numbers`);
+    if (kpis !== 4 && kpis !== 3) throw new Error(`forecast: ${kpis} key numbers`);
+    // No key number repeats another: the lowest point and the day before salary show once when they are one day.
+    const kpiTexts = await page.locator('.forecast-kpis .kpi').evaluateAll(ks => ks.map(k => k.querySelector('.kpi-value').textContent + ' ' + k.querySelector('.kpi-sub').textContent));
+    assert.equal(new Set(kpiTexts).size, kpiTexts.length, 'no repeated key number: ' + kpiTexts);
     await page.waitForSelector('text=No regular payments found yet');
     const today = await page.getAttribute('.what-if input[type=date]', 'min');
     await page.fill('.what-if input[type=date]', today);

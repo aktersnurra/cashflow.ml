@@ -317,7 +317,7 @@ let recurring =
   { name = "recurring_payments";
     description =
       "Subscriptions and fixed bills detected from the last 400 days: merchant, cadence, typical and latest amount, and the next \
-       expected date. price_changed marks a latest charge that differs from the one before by more than 2%.";
+       expected date. price_changed marks a latest charge that differs from the one before (previous_amount) by more than 2%.";
     properties = common_props;
     parse = (fun f -> let* c = Args.common f in Ok (Recurring c));
     encode =
@@ -330,6 +330,7 @@ let recurring =
                      `Assoc
                        [ ("merchant", `String r.merchant_name); ("cadence", `String (Analytics.cadence_to_string r.cadence));
                          ("typical_amount", money ctx r.typical_amount); ("last_amount", money ctx r.last_amount);
+                         ("previous_amount", money ctx r.previous_amount);
                          ("price_changed", `Bool (Analytics.price_changed r)); ("last_date", Json.date r.last_date);
                          ("next_expected", Json.date r.next_expected); ("occurrences", `Int r.occurrences);
                          ("category", Json.option Json.account_ref r.category) ])

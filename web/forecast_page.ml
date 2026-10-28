@@ -74,12 +74,14 @@ let page ~(ctx : Ctx.t) graph =
     let kpi ?(tone = "") label value sub =
       Ui.div ~cls:("kpi " ^ tone) [ Ui.div ~cls:"kpi-label" [ Ui.text label ]; Ui.div ~cls:"kpi-value" [ Ui.text value ]; Ui.div ~cls:"kpi-sub" [ Ui.text sub ] ]
     in
+    (* Left out when the lowest point is that same day: one number, not the same one twice. *)
     let before_salary =
       match salary with
       | Some s ->
           let before = List.filter f.baseline ~f:(fun p -> String.( < ) p.date s.date) in
           let p = Option.value (List.last before) ~default:(List.hd_exn f.baseline) in
-          kpi (Msg.forecast_before_salary locale) (whole p.cash) (Msg.forecast_on ~date:(date p.date) locale)
+          if String.equal p.date f.lowest_date then Vdom.Node.none
+          else kpi (Msg.forecast_before_salary locale) (whole p.cash) (Msg.forecast_on ~date:(date p.date) locale)
       | None -> kpi (Msg.forecast_before_salary locale) "–" (Msg.forecast_no_salary locale)
     in
     let due =

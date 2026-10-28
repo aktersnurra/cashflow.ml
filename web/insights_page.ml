@@ -99,6 +99,9 @@ let page ~(ctx : Ctx.t) graph =
     match worth with
     | Remote.Loaded json -> (
         let values = List.map (J.list (J.field "points" json)) ~f:(fun p -> Fmt.to_float (J.field "net_worth" p)) in
+        (* Points from before the first account had money in it are zero; counting from them would call the whole
+           balance growth. *)
+        let values = List.drop_while values ~f:(Float.equal 0.) in
         match values, List.last values with
         | first :: _ :: _, Some last ->
             let grew = Float.(last >= first) in
@@ -116,7 +119,9 @@ let page ~(ctx : Ctx.t) graph =
     List.filter_map payments ~f:(fun p ->
         if not (J.bool (J.field "price_changed" p)) then None
         else
-          let before = Float.abs (field "typical_amount" p) and now = Float.abs (field "last_amount" p) in
+          (* The change is from the charge before, which is what price_changed compares; the typical amount can
+             already be the new price. *)
+          let before = Float.abs (field "previous_amount" p) and now = Float.abs (field "last_amount" p) in
           let merchant = J.str (J.field "merchant" p) in
           Some
             { subject = Subscriptions; tone = (if Float.(now > before) then "red" else "green");
