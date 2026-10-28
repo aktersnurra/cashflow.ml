@@ -39,7 +39,7 @@ let policy requests =
     Alcotest.(check (list string)) "allowlist unchanged" ["amazon-bedrock"] (member "only" p |> to_list |> List.map to_string);
     Alcotest.(check bool) "stream" true (member "stream" r = `Bool true);
     List.iter (fun key -> Alcotest.(check bool) ("no " ^ key) true (member key r = `Null)) ["plugins"; "reasoning"; "server_tools"];
-    Alcotest.(check int) "eighteen schemas" 18 (member "tools" r |> to_list |> List.length)) requests
+    Alcotest.(check int) "nineteen schemas" 19 (member "tools" r |> to_list |> List.length)) requests
 let fragmented_provider_rounds () =
   let wire = ": keepalive\r\n\r\n" ^ text "Hej €雪" ^ finish "stop" ^ usage ^ usage ^ done_ in
   for i = 0 to String.length wire do
@@ -190,8 +190,14 @@ let schemas () =
     let result, _, requests = run [tools [full_call 0 "id" name args] ^ finish "tool_calls" ^ done_] in ok result; policy requests) examples;
   let open Yojson.Safe.Util in
   let name_of schema = member "function" schema |> member "name" |> to_string in
-  let reads = List.filter (fun schema -> not (List.mem (name_of schema) [ "propose_set_budget"; "propose_categorize"; "propose_add_rule"; "propose_save_goal"; "propose_update_goal"; "propose_new_category"; "propose_entry" ])) P.tool_schemas in
+  let reads = List.filter (fun schema -> not (List.mem (name_of schema) [ "propose_set_budget"; "propose_categorize"; "propose_add_rule"; "propose_save_goal"; "propose_update_goal"; "propose_new_category"; "propose_entry"; "file_inbox" ])) P.tool_schemas in
   Alcotest.(check (list string)) "schema names" (List.map fst examples) (List.map name_of reads);
+  (* The one tool that writes by itself takes no currency, and only whether to keep filing later imports. *)
+  let file_inbox = List.find (fun schema -> name_of schema = "file_inbox") P.tool_schemas |> member "function" |> member "parameters" in
+  Alcotest.(check (list string)) "file_inbox fields" [ "keep_on" ] (member "properties" file_inbox |> to_assoc |> List.map fst);
+  Alcotest.(check (list string)) "file_inbox requires nothing" [] (member "required" file_inbox |> to_list |> List.map to_string);
+  ok (Cashflow_io.Advisor_projection.parse_call ~name:"file_inbox" ~arguments:"{\"keep_on\":true}");
+  failed (Cashflow_io.Advisor_projection.parse_call ~name:"file_inbox" ~arguments:"{\"currency\":\"SEK\"}");
   (* The one proposing tool takes no currency: it acts in the conversation's own. *)
   let propose = List.find (fun schema -> name_of schema = "propose_set_budget") P.tool_schemas in
   let propose_params = member "function" propose |> member "parameters" in

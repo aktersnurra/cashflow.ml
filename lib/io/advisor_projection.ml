@@ -54,6 +54,7 @@ let parse_call ~name ~arguments =
     | "propose_save_goal" -> Some [ "name"; "target_amount"; "target_date"; "monthly_amount" ]
     | "propose_update_goal" -> Some [ "goal"; "name"; "target_amount"; "target_date"; "monthly_amount" ]
     | "propose_new_category" -> Some [ "name"; "kind" ]
+    | "file_inbox" -> Some [ "keep_on" ]
     | _ -> None
   in
   match allowed with
@@ -61,8 +62,8 @@ let parse_call ~name ~arguments =
   | Some allowed -> (
       try
         if String.length arguments > 8192 then raise Invalid;
-        (* A proposal never takes a currency: it acts in the conversation's own. *)
-        let proposing = String.starts_with ~prefix:"propose_" name in
+        (* A proposal, or filing, never takes a currency: it acts in the conversation's own. *)
+        let proposing = String.starts_with ~prefix:"propose_" name || name = "file_inbox" in
         let f = fields ((if proposing then [] else [ "currency" ]) @ allowed) (Yojson.Safe.from_string arguments) in
         let currency = Option.map (fun s -> require (T.currency_code s)) (text f "currency") in
         let c = { T.currency } in
@@ -79,6 +80,7 @@ let parse_call ~name ~arguments =
           | "budget_status" -> T.Budget_status (c, integer f "cycle_offset" 0 (-5) 0)
           | "goals" -> T.Goals c
           | "inbox_rows" -> T.Inbox_rows c
+          | "file_inbox" -> T.File_inbox { keep_on = boolean f "keep_on" }
           | "categories" -> T.Categories c
           | "bank_accounts" -> T.Bank_accounts c
           | "propose_entry" ->
@@ -291,6 +293,8 @@ let refs = function
   | T.Categorize_proposal_result rows -> List.map (fun (r : T.categorize_row) -> r.category) rows
   | T.Proposal_card_result c -> c.accounts
   | T.Bank_accounts_result xs -> List.map (fun (b : T.bank_account) -> b.account) xs
+  | T.Filed_inbox_result { filed; unsure; _ } ->
+      List.filter_map (fun (r : T.inbox_row) -> Option.map (fun (a, _, _) -> a) r.suggestion) (filed @ unsure)
   | T.Cycle_summary_result _ | T.Goals_result _ -> []
 
 let assumptions (f : Forecast.t) =
@@ -310,7 +314,8 @@ let assumptions (f : Forecast.t) =
       | Seasonal { month; year; percent } -> Printf.sprintf "seasonal: %d-%02d %d percent" year month percent)
     f.assumptions
 
-let read (service : Service.t) ~principal ~scope ~aliases ~currency:pinned request =
+(* [filed] is what file_inbox already did (Autofile.file, in the caller's transaction): read only reports it. *)
+let read ?filed (service : Service.t) ~principal ~scope ~aliases ~currency:pinned request =
   try
     let* detached =
       Sql.read_snapshot service.db (fun () ->
@@ -342,7 +347,7 @@ let read (service : Service.t) ~principal ~scope ~aliases ~currency:pinned reque
                 && s.input.leave_out = []
                 && List.length s.leave_out <= 20
                 && List.length s.input.one_off <= 10
-            | Recurring _ | Goals _ | Propose_budget _ | Inbox_rows _ | Categories _ | Propose_rule _ | Propose_goal _ | Propose_update_goal _ | Propose_category _ | Bank_accounts _ | Propose_entry _ -> true
+            | Recurring _ | Goals _ | Propose_budget _ | Inbox_rows _ | Categories _ | Propose_rule _ | Propose_goal _ | Propose_update_goal _ | Propose_category _ | Bank_accounts _ | Propose_entry _ | File_inbox _ -> true
             | Propose_categorize { rows } ->
                 let n = List.length rows in
                 n >= 1 && n <= 20 && List.length (List.sort_uniq String.compare (List.map (fun (r, _) -> T.row_reference_text r) rows)) = n
@@ -427,6 +432,38 @@ let read (service : Service.t) ~principal ~scope ~aliases ~currency:pinned reque
                           outflow = Inbox.outflow v.item t; description = t.memo.description; suggestion })
                   in
                   Ok (T.Inbox_rows_result shown, List.length open_rows, List.length shown, [])
+              | File_inbox _ -> (
+                  match (filed : Autofile.report option) with
+                  | None -> error A.Invalid_request
+                  | Some report ->
+                      let alias_for id =
+                        match Hashtbl.fold (fun a t found -> if Transfer_id.equal t id then Some a else found) aliases.rows None with
+                        | Some a -> a
+                        | None ->
+                            let a = Printf.sprintf "row_%s_%d" aliases.nonce (Hashtbl.length aliases.rows + 1) in
+                            Hashtbl.add aliases.rows a id;
+                            a
+                      in
+                      let row (r : Autofile.row) =
+                        let t = r.transfer in
+                        let suggestion =
+                          Option.bind r.guess (fun ((c : Account_info.t), confidence, source) ->
+                              match scoped c.account.id with
+                              | Some a when a.kind = Account.Expense || a.kind = Account.Income -> Some (a, confidence, source)
+                              | _ -> None)
+                        in
+                        { T.reference = require (T.row_reference (alias_for t.id)); date = t.value_date; amount = Amount.to_int64 t.amount;
+                          outflow = r.outflow; description = t.memo.description; suggestion }
+                      in
+                      (* Every filed row is reported (the model must say what changed); unsure ones up to twenty, the
+                         rest wait in the inbox where the user sees them all. *)
+                      let unsure = List.map row report.unsure in
+                      let shown = take 20 unsure in
+                      Ok
+                        ( T.Filed_inbox_result { filed = List.map row report.filed; unsure = shown; kept_on = report.kept_on },
+                          List.length report.filed + List.length unsure,
+                          List.length report.filed + List.length shown,
+                          [ Printf.sprintf "filed without asking at %d percent confidence or more; each can be recategorised" Autofile.threshold ] ))
               | Categories _ ->
                   let all =
                     Insights.accounts ctx
@@ -964,6 +1001,14 @@ let display (e : T.evidence) : A.evidence =
           money "Forecast lowest cash" (snd f.lowest);
           { A.label = "Forecast lowest date"; value = A.Date (fst f.lowest) };
         ]
+    | Filed_inbox_result { filed; unsure; kept_on } ->
+        let line (r : T.inbox_row) =
+          Date.to_string r.date ^ " · " ^ shorten r.description 60
+          ^ match r.suggestion with Some (a, confidence, _) -> Printf.sprintf " → %s (%d%%)" (Option.value a.name ~default:"") confidence | None -> ""
+        in
+        List.map (fun r -> { A.label = "Filed"; value = A.Text (line r) }) filed
+        @ List.map (fun r -> { A.label = "Needs review"; value = A.Text (line r) }) unsure
+        @ [ { A.label = "Future imports filed automatically"; value = A.Text (string_of_bool kept_on) } ]
     | _ -> []
   in
   let proposal_facts =
@@ -1157,6 +1202,26 @@ let model_json ~aliases (e : T.evidence) =
                           r.suggestion );
                     ])
                 rows
+          | Filed_inbox_result { filed; unsure; kept_on } ->
+              let row (r : T.inbox_row) =
+                obj
+                  [
+                    ("reference", str (T.row_reference_text r.reference));
+                    ("date", date r.date);
+                    ("amount", num r.amount);
+                    ("direction", str (if r.outflow then "out" else "in"));
+                    ("description", str (shorten r.description 200));
+                    ( "category",
+                      opt (fun ((a : T.account), confidence, source) -> obj [ ("category", acct a); ("confidence", `Int confidence); ("source", str source) ]) r.suggestion );
+                  ]
+              in
+              obj
+                [
+                  ("filed", arr row filed);
+                  ("needs_review", arr row unsure);
+                  ("future_imports_filed_automatically", `Bool kept_on);
+                  ("threshold_percent", `Int Autofile.threshold);
+                ]
           | Categories_result xs -> arr acct xs
           | Bank_accounts_result xs ->
               arr

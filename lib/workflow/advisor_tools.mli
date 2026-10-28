@@ -50,6 +50,9 @@ type request =
       (** Up to 20 uncategorized rows, each with the category to file it under, for the user to confirm. *)
   | Propose_budget of { category : account_reference; monthly_amount : string; rollover : bool }
       (** A change for the user to confirm. Currency and scope are the conversation's. *)
+  | File_inbox of { keep_on : bool }
+      (** Files, without asking, every uncategorized row cashflow is sure enough of, when the user asked for it;
+          [keep_on] files later imports the same way. The one tool that writes by itself. *)
 
 val common : request -> common
 
@@ -192,6 +195,8 @@ type result =
   | Categorize_proposal_result of categorize_row list
   | Proposal_card_result of proposal_card
   | Bank_accounts_result of bank_account list
+  | Filed_inbox_result of { filed : inbox_row list; unsure : inbox_row list; kept_on : bool }
+      (** [suggestion] is where a filed row went, or the best guess for one left for the user. *)
 
 type evidence = {
   id : Advisor.Evidence_id.t;

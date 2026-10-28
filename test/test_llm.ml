@@ -1,6 +1,7 @@
 module Config = Cashflow_io.Config
 module Import = Cashflow_io.Import
 module Inbox = Cashflow_io.Inbox
+module Import_store = Cashflow_io.Import_store
 module Llm = Cashflow_io.Llm
 module Decisions = Cashflow_io.Decisions
 module Llm_features = Cashflow_io.Llm_features
@@ -369,6 +370,37 @@ let test_decisions_classifier () =
   | Some { source = Llm; confidence = 75; _ } -> ()
   | _ -> Alcotest.fail "a failed classifier should fall back to the chat model"
 
+(* Asked to file the inbox, cashflow files what it is at least 80% sure of, leaves the rest with its best
+   guess, can keep filing later imports, and learns nothing from what it filed itself. *)
+let test_autofile () =
+  let classifier : Decisions.t =
+    { model = "typesafe/jev-1.14";
+      choose =
+        (fun ~state:_ questions ->
+          Ok
+            (List.map
+               (fun (q : Decisions.question) ->
+                 (q.id, { Decisions.choice = "Groceries"; probability = (if Str_compat.contains ~sub:"WILLYS" q.instructions then 0.93 else 0.41) }))
+               questions)) }
+  in
+  let service = Service.make ~now:(fun () -> now) ~classifier (Store_sqlite.open_memory ()) in
+  let alice = sign_in service "alice" in
+  let checking = open_checking service alice ~statement_backed:true "Checking" in
+  let csv = "Datum;Text;Belopp;Saldo\n2026-10-20;WILLYS HEMMA;-412,00;1 000,00\n2026-10-21;MYSTERY AB;-99,00;901,00\n" in
+  ignore (ok_import (Import.confirm (Import.context service alice) { target = Import.Existing checking; file_name = None; content = csv; decisions = [] }));
+  Alcotest.(check int) "both wait" 2 (Inbox.count service alice);
+  let classified = Cashflow_io.Autofile.classify service alice ~owner:(Access.personal alice) in
+  let report = Sql.transaction service.db (fun () -> Cashflow_io.Autofile.file service alice ~keep_on:true classified) in
+  let described rows = List.map (fun (r : Cashflow_io.Autofile.row) -> (r.transfer.memo.description, Option.map (fun (_, c, _) -> c) r.guess)) rows in
+  Alcotest.(check (list (pair string (option int)))) "filed the sure one" [ ("WILLYS HEMMA", Some 93) ] (described report.filed);
+  Alcotest.(check (list (pair string (option int)))) "left the unsure one, with its guess" [ ("MYSTERY AB", Some 41) ] (described report.unsure);
+  Alcotest.(check int) "one still waits" 1 (Inbox.count service alice);
+  Alcotest.(check int64) "groceries" 412_00L (balance service alice (account_named service alice "Groceries"));
+  Alcotest.(check bool) "kept on for later imports" true report.kept_on;
+  Alcotest.(check (list int)) "at 80" [ 80 ] (List.map snd (Inbox.auto_apply_settings service alice));
+  let willys = (Option.get (Import_store.find_item service.db (List.hd report.filed).transfer.id)).merchant_key in
+  Alcotest.(check bool) "learned nothing from it" true (Option.is_none (Import_store.history service.db (Access.personal alice) willys))
+
 (* What goes over the wire, and how answers are read. *)
 let test_decisions_wire () =
   let q = { Decisions.id = "row_0"; instructions = "Which?"; options = [ ("Groceries", "Food"); ("None of these", "Nothing fits") ] } in
@@ -480,7 +512,8 @@ let () =
           Alcotest.test_case "an unknown format read by the assistant" `Quick test_unknown_format_read_by_the_assistant;
           Alcotest.test_case "layout cells outside the file" `Quick test_layout_cells_outside_the_file;
           Alcotest.test_case "decisions classifier" `Quick test_decisions_classifier;
-          Alcotest.test_case "decisions wire" `Quick test_decisions_wire ] );
+          Alcotest.test_case "decisions wire" `Quick test_decisions_wire;
+          Alcotest.test_case "file the inbox when asked" `Quick test_autofile ] );
       ( "openrouter",
         [ Alcotest.test_case "privacy policy in requests" `Quick test_openrouter_privacy_policy;
           Alcotest.test_case "advisor models" `Quick test_advisor_models;

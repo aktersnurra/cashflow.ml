@@ -36,6 +36,9 @@ type request =
       (** Up to 20 uncategorized rows, each with the category to file it under, for the user to confirm. *)
   | Propose_budget of { category : account_reference; monthly_amount : string; rollover : bool }
       (** A change for the user to confirm. Currency and scope are the conversation's. *)
+  | File_inbox of { keep_on : bool }
+      (** Files, without asking, every uncategorized row cashflow is sure enough of, when the user asked for it;
+          [keep_on] files later imports the same way. The one tool that writes by itself. *)
 
 type account = { id : Account_id.t; kind : Account.kind; name : string option }
 (* [name] is the user's own label for an income or expense category. Bank and other balance-sheet
@@ -176,6 +179,8 @@ type result =
   | Categorize_proposal_result of categorize_row list
   | Proposal_card_result of proposal_card
   | Bank_accounts_result of bank_account list
+  | Filed_inbox_result of { filed : inbox_row list; unsure : inbox_row list; kept_on : bool }
+      (** [suggestion] is where a filed row went, or the best guess for one left for the user. *)
 
 type evidence = {
   id : Advisor.Evidence_id.t;
@@ -219,7 +224,9 @@ let common = function
   | Forecast (c, _, _) ->
       c
   | Inbox_rows c | Categories c | Bank_accounts c -> c
-  | Propose_budget _ | Propose_categorize _ | Propose_rule _ | Propose_goal _ | Propose_update_goal _ | Propose_category _ | Propose_entry _ -> { currency = None }
+  | Propose_budget _ | Propose_categorize _ | Propose_rule _ | Propose_goal _ | Propose_update_goal _ | Propose_category _ | Propose_entry _
+  | File_inbox _ ->
+      { currency = None }
 
 let name = function
   | Cycle_summary_result _ -> "cycle_summary"
@@ -236,6 +243,7 @@ let name = function
   | Categorize_proposal_result _ -> "propose_categorize"
   | Proposal_card_result c -> c.tool
   | Bank_accounts_result _ -> "bank_accounts"
+  | Filed_inbox_result _ -> "file_inbox"
 
 let currency_code s =
   if String.length s = 3 && String.for_all (function 'A' .. 'Z' -> true | _ -> false) s then Some s else None

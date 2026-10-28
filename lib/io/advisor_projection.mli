@@ -15,6 +15,8 @@ val create_aliases :
 val parse_call : name:string -> arguments:string -> (T.request, A.error) result
 
 val read :
+  ?filed:Autofile.report ->
+  (** For [File_inbox]: what was filed, in the caller's transaction; the read only reports it. *)
   Service.t ->
   principal:Advisor_access.principal ->
   scope:A.scope ->
