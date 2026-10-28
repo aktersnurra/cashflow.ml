@@ -42,7 +42,7 @@ let merchants = [| "ICA NARA"; "COOP"; "SL"; "SPOTIFY"; "LÖN"; "SWISH" |]
 
 let test tc =
   let service = make_service () in
-  let alice = sign_in service ~admin:true "alice" and bob = sign_in service "bob" in
+  let alice = sign_in service "alice" and bob = sign_in service "bob" in
   let household = ok (Service.create_household service alice ~name:"Home" ~default_currency:"SEK") in
   let alice = Service.access_for service (Access.user alice) in
   ignore (ok (Service.invite_member service alice ~email:"bob@example.com"));

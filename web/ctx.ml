@@ -16,5 +16,7 @@ type t = {
   set_theme : (Theme.t -> unit Effect.t) Bonsai.t;  (** applies and remembers it on this device *)
 }
 
-let is_admin session = J.bool (J.path [ "user"; "is_admin" ] session)
+(* Whoever created the household runs it: invites, renames, adds its bank accounts. *)
+let is_owner session =
+  match J.str_opt (J.path [ "household"; "created_by" ] session) with Some creator -> String.equal creator (J.str (J.path [ "user"; "id" ] session)) | None -> false
 let has_household session = not (J.is_null (J.field "household" session))

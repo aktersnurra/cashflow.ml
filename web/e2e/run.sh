@@ -19,7 +19,7 @@ CONFIG
 export CASHFLOW_CONFIG=$WORK/cashflow.sexp CASHFLOW_ALLOW_DEV_SESSIONS=1
 BIN=./_build/default/bin/cashflow.exe
 $BIN migrate >/dev/null 2>&1
-TOKEN=$($BIN create-session alice --admin 2>/dev/null)
+TOKEN=$($BIN create-session alice 2>/dev/null)
 $BIN serve > $WORK/server.log 2>&1 &
 SERVER=$!
 trap 'kill "$SERVER" 2>/dev/null || true' EXIT
@@ -40,5 +40,5 @@ for i in $(seq 1 30); do curl -s -o /dev/null "$BASE_URL/health" && break; sleep
 OUT=$WORK TOKEN=$TOKEN node merchant_logos.js
 # Last: it imports a long queue of rows, which other tests' row counts must not see. The logo test signs out, so it
 # gets its own session.
-OUT=$WORK TOKEN=$(cd "$ROOT" && $BIN create-session alice --admin 2>/dev/null) node inbox_window.js
+OUT=$WORK TOKEN=$(cd "$ROOT" && $BIN create-session alice 2>/dev/null) node inbox_window.js
 echo "screenshots in $WORK"

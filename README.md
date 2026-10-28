@@ -13,7 +13,7 @@ It is a single OCaml binary serving MCP, a JSON API and the web UI over HTTP, ba
   - idempotency keys on every write;
   - `cashflow verify` recomputes every balance from its transfers.
 - **Households:**
-  - personal and shared accounts, invitations, an admin role from a Pocket ID group;
+  - personal and shared accounts, invitations, the household creator as its owner;
   - another member's personal side of a shared transfer is masked;
   - contributions split in proportion to income;
   - shared costs paid from a personal card are tracked until settled.
@@ -127,7 +127,7 @@ by this client.
 ### Deployment
 
 - **Web sign-in:** needs a confidential OIDC client in Pocket ID, with the callback `<public_url>/auth/callback`.
-- **Admin:** members of the `cashflow-admin` group are admins. They create the household and add its shared bank accounts.
+- **Household owner:** whoever creates a household owns it: they invite, rename it and add or close its shared bank accounts. Members use it. There is no deployment-wide admin; an `admin_group` left in an older config file is ignored.
 - **Static files:** `static_dir` points at the built UI.
 - **Reverse proxy:** as with kcal, Caddy owns public TLS. Let it compress responses (`encode zstd gzip`).
 

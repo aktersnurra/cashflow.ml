@@ -133,7 +133,7 @@ let set_user_consent service p ~enabled =
 let set_household_consent service p id ~enabled =
   tx service (fun () ->
       let* _, a = current service p in
-      if not (Access.is_admin a && Access.can_use a (Owner.Household id)) then denied
+      if not (Access.is_owner a && Access.can_use a (Owner.Household id)) then denied
       else
         let store = store service in
         let* () = Advisor_store.set_consent store (Household id) ~enabled in

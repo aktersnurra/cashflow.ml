@@ -15,8 +15,8 @@ let fixture f =
   let store = Advisor_store.create ~clock:(fun () -> !clock) db in
   Fun.protect ~finally:(fun () -> Sql.close db) (fun () -> f service store clock)
 
-let login ?(admin = false) service name =
-  let access = T.sign_in service ~admin name in
+let login service name =
+  let access = T.sign_in service name in
   let token = Web_auth.create_session service.Service.db ~now:(service.now ()) (Access.user access) in
   let principal = ok (X.authenticate service ~now:(service.now ()) ~token) in
   (access, token, principal)
@@ -136,17 +136,17 @@ let subscriber_expiry () =
 
 let household_and_consent () =
   fixture @@ fun service store _ ->
-  let admin = T.sign_in service ~admin:true "admin" in
+  let admin = T.sign_in service "admin" in
   let h = T.ok (Service.create_household service admin ~name:"synthetic" ~default_currency:"SEK") in
-  let _, _, ap = login ~admin:true service "admin" in
+  let _, _, ap = login service "admin" in
   let alice, _, a = login service "member" in
   ignore
     (T.ok
        (Service.invite_member service
-          (Service.access_for service (Access.user (T.sign_in service ~admin:true "admin")))
+          (Service.access_for service (Access.user (T.sign_in service "admin")))
           ~email:"member@example.com"));
   ignore (T.ok (Service.respond_to_invitation service alice ~household_id:h.id ~accept:true));
-  let other_admin = T.sign_in service ~admin:true "other-admin" in
+  let other_admin = T.sign_in service "other-admin" in
   let other = T.ok (Service.create_household service other_admin ~name:"unrelated" ~default_currency:"SEK") in
   ignore (ok (X.set_user_consent service a ~enabled:true));
   code A.Consent_required (X.authorize_scope service a (A.Household h.id));
@@ -189,8 +189,11 @@ let household_and_consent () =
   check "rejoin observed" (Result.is_ok (X.authorize_scope service a (A.Household h.id)));
   Directory.set_membership service.db ~now:(service.now ()) ~household_id:h.id ~user_id:owner Left;
   check "external loss observed" (denied (X.authorize_scope service a (A.Household h.id)));
-  ignore (T.sign_in service ~admin:false "admin");
-  check "stale admin cannot toggle" (denied (X.set_household_consent service ap h.id ~enabled:false))
+  (* The creator's session outlives a change of owner. *)
+  let successor = T.sign_in service "successor" in
+  Sql.(run service.Service.db (stmt "UPDATE households SET created_by = ? WHERE id = ?" Codec.(user_id @-> household_id @-> nil) exec))
+    (Access.user successor).id h.id;
+  check "a stale owner cannot toggle" (denied (X.set_household_consent service ap h.id ~enabled:false))
 
 let atomic_mutations () =
   fixture @@ fun service store clock ->
@@ -235,7 +238,7 @@ let atomic_mutations () =
   check "delete returns pending run for signaling" (ok (X.delete_conversation service a accepted.ids.conversation_id) = [ run ]);
   code A.Not_found (Advisor_store.find_run store ~owner run);
   check "late worker writes cannot resurrect deleted run" (denied (Advisor_store.transition store ~run A.Start));
-  let admin = T.sign_in service ~admin:true "leave-atomic" in
+  let admin = T.sign_in service "leave-atomic" in
   let h = T.ok (Service.create_household service admin ~name:"synthetic" ~default_currency:"SEK") in
   ignore (T.ok (Service.invite_member service (Service.access_for service (Access.user admin)) ~email:"atomic@example.com"));
   ignore (T.ok (Service.respond_to_invitation service alice ~household_id:h.id ~accept:true));

@@ -254,7 +254,7 @@ let household_wrappers () =
           ("content-type", "application/json");
         ]
       in
-      let admin = Test_service_support.sign_in service ~admin:true "http-admin" in
+      let admin = Test_service_support.sign_in service "http-admin" in
       let household = ok (Service.create_household service admin ~name:"synthetic" ~default_currency:"SEK") in
       let admin_token = Web_auth.create_session service.db ~now (Access.user admin) in
       let member =
@@ -650,21 +650,25 @@ let household_readiness () =
     let open Yojson.Safe.Util in
     let readiness () = member "household" (Yojson.Safe.from_string (body (req "/api/advisor/status"))) in
     Alcotest.(check bool) "no household" true (readiness () = `Null);
-    let admin = Test_service_support.sign_in service ~admin:true "http" in
+    let admin = Test_service_support.sign_in service "http" in
     let h = Test_service_support.ok (Service.create_household service admin ~name:"Synthetic" ~default_currency:"SEK") in
     let state = readiness () in
     Alcotest.(check string) "current membership only" (Household_id.to_string h.id) (state |> member "household_id" |> to_string);
     Alcotest.(check bool) "default household disabled" false (state |> member "enabled" |> to_bool);
-    Alcotest.(check bool) "admin can manage" true (state |> member "can_manage" |> to_bool);
+    Alcotest.(check bool) "the owner can manage" true (state |> member "can_manage" |> to_bool);
     ignore (req ~meth:POST ~body:(Printf.sprintf "{\"enabled\":true,\"household_id\":%S}" (Household_id.to_string h.id)) "/api/advisor/consent");
     Alcotest.(check bool) "explicit enable reflected" true (readiness () |> member "enabled" |> to_bool);
-    let member_access = Test_service_support.sign_in service ~admin:false "http" in
-    Alcotest.(check bool) "ordinary member cannot manage" false (readiness () |> member "can_manage" |> to_bool);
+    (* The household is now someone else's: its creator is the owner. *)
+    let member_access = Service.access_for service (Access.user admin) in
+    let creator = Test_service_support.sign_in service "http-creator" in
+    Cashflow_io.Sql.(run service.db (stmt "UPDATE households SET created_by = ? WHERE id = ?" Cashflow_io.Codec.(user_id @-> household_id @-> nil) exec))
+      (Access.user creator).id h.id;
+    Alcotest.(check bool) "a member cannot manage" false (readiness () |> member "can_manage" |> to_bool);
     Alcotest.(check int) "member cannot mutate" 403
       (status (req ~meth:POST ~body:(Printf.sprintf "{\"enabled\":false,\"household_id\":%S}" (Household_id.to_string h.id)) "/api/advisor/consent"));
     ignore (Test_service_support.ok (Service.leave_household service member_access));
     Alcotest.(check bool) "removed membership not exposed" true (readiness () = `Null);
-    let admin = Test_service_support.sign_in service ~admin:true "http" in
+    let admin = Test_service_support.sign_in service "http" in
     let next = Test_service_support.ok (Service.create_household service admin ~name:"Other synthetic" ~default_currency:"SEK") in
     let state = readiness () in
     Alcotest.(check string) "changed membership revalidated" (Household_id.to_string next.id) (state |> member "household_id" |> to_string);
@@ -673,7 +677,7 @@ let household_readiness () =
 
 let session_currency_metadata () =
   fixture (fun _ service _ _ _ ->
-    let admin = Test_service_support.sign_in service ~admin:true "http" in
+    let admin = Test_service_support.sign_in service "http" in
     Sql.exec_script service.db "UPDATE currencies SET scale=0 WHERE code='SEK'; UPDATE currencies SET scale=4 WHERE code='EUR'";
     let session () = Commands.session_json service (Service.access_for service (Access.user admin)) in
     let open Yojson.Safe.Util in
@@ -694,7 +698,7 @@ let history_titles () =
   fixture (fun _ service token calls req ->
       let open Yojson.Safe.Util in
       ignore (req ~meth:POST ~body:"{\"enabled\":true}" "/api/advisor/consent");
-      let admin = Test_service_support.sign_in service ~admin:true "http" in
+      let admin = Test_service_support.sign_in service "http" in
       let owner = (Access.user admin).id in
       let household = ok (Service.create_household service admin ~name:"Synthetic history" ~default_currency:"SEK") in
       let consent enabled = Printf.sprintf "{\"enabled\":%b,\"household_id\":%S}" enabled (Household_id.to_string household.id) in

@@ -123,7 +123,7 @@ let test_shortfall_before_payday () =
 (* Currency-filtered reports must not hide off-track goals in the owner's other currencies. *)
 let test_goal_cards_in_each_currency () =
   let service = make_service () in
-  let alice = sign_in service ~admin:true "alice" in
+  let alice = sign_in service "alice" in
   ignore (ok (Service.create_household service alice ~name:"Home" ~default_currency:"SEK"));
   let alice = Service.access_for service (Access.user alice) in
   let stranger = sign_in service "stranger" in

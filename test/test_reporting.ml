@@ -5,7 +5,7 @@ let date s = ok (Date.of_string s)
 let now = ok (Time.parse_offset_datetime "2026-10-21T23:30:00Z")
 let uid = Option.get (User_id.of_string "00000000-0000-4000-8000-000000000001")
 let hid = Option.get (Household_id.of_string "00000000-0000-4000-8000-000000000002")
-let user : User.t = { id=uid; oidc_issuer="test"; oidc_subject="alice"; display_name="Alice"; email=None; locale="sv"; timezone="Europe/Stockholm"; default_currency="SEK"; pay_cycle=Pay_cycle_setting.default; is_admin=false; created_at=now }
+let user : User.t = { id=uid; oidc_issuer="test"; oidc_subject="alice"; display_name="Alice"; email=None; locale="sv"; timezone="Europe/Stockholm"; default_currency="SEK"; pay_cycle=Pay_cycle_setting.default; created_at=now }
 let household : Household.t = { id=hid; name="Home"; default_currency="EUR"; report_split_bp=5000; pay_cycle=Pay_cycle_setting.default; created_by=uid; created_at=now }
 let access = Access.make ~user ~household:(Some household)
 let sek = ok (Currency.make ~code:"SEK" ~scale:2)

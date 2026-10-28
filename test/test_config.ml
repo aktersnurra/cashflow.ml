@@ -24,7 +24,6 @@ let test_example_file_parses () =
 
 let test_defaults () =
   let c = ok minimal in
-  Alcotest.(check string) "admin group" "cashflow-admin" c.admin_group;
   Alcotest.(check string) "static dir" "/usr/local/share/cashflow/web" c.static_dir;
   Alcotest.(check (option string)) "no web client" None c.web_client_id;
   Alcotest.(check (option string)) "no llm" None c.openrouter_api_key;

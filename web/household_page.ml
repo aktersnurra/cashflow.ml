@@ -17,7 +17,7 @@ and view ~(ctx : Ctx.t) ~(advisor : Advisor.controller Bonsai.t) ~plan ~owed gra
   let name, set_name = Bonsai.state "" graph in
   let%arr advisor and plan and owed and email and set_email and name and set_name and locale = ctx.locale and session = ctx.session and changed = ctx.changed
   and notify = ctx.notify and navigate = ctx.navigate in
-  let admin = Ctx.is_admin session in
+  let owner = Ctx.is_owner session in
   let run ?(after = Effect.Ignore) command args =
     match%bind.Effect Api.run command (`Assoc args) with Ok _ -> Effect.Many [ after; changed ] | Error message -> notify message
   in
@@ -26,12 +26,9 @@ and view ~(ctx : Ctx.t) ~(advisor : Advisor.controller Bonsai.t) ~plan ~owed gra
     Ui.page ~title:(Msg.household_title locale)
       [ Ui.div ~cls:"panel empty-panel"
           ([ Ui.p (Msg.household_none locale); Ui.muted (Msg.household_none_body locale) ]
-          @
-          if admin then
-            [ Ui.div ~cls:"inline-form"
+          @ [ Ui.div ~cls:"inline-form"
                 [ Ui.input ~placeholder:(Msg.label_name locale) ~value:name ~on_input:set_name ();
-                  Ui.button ~kind:"primary" ~disabled:(String.is_empty (String.strip name)) (Msg.action_create_household locale) (run "create_household" [ ("name", `String name) ]) ] ]
-          else []) ]
+                  Ui.button ~kind:"primary" ~disabled:(String.is_empty (String.strip name)) (Msg.action_create_household locale) (run "create_household" [ ("name", `String name) ]) ] ]) ]
   else
     let household = J.field "household" session in
     let code json = J.str ~default:(J.str ~default:"SEK" (J.field "default_currency" household)) (J.field "currency" json) in
@@ -80,10 +77,10 @@ and view ~(ctx : Ctx.t) ~(advisor : Advisor.controller Bonsai.t) ~plan ~owed gra
                         [ Ui.div ~cls:"category-cell" [ Ui.span ~cls:"tile" [ Ui.text (Ui.initial name) ]; Ui.span ~cls:"row-title" [ Ui.text name ] ];
                           Ui.span ~cls:"muted" [ Ui.text (match J.str (J.field "status" m) with "invited" -> Msg.label_invitation_pending locale | _ -> "") ] ])
                  @
-                 if admin then
+                 if owner then
                    [ Ui.div ~cls:"row inline-form"
                        [ Ui.input ~type_:"email" ~placeholder:(Msg.label_email locale) ~value:email ~on_input:set_email ();
                          Ui.button ~kind:"primary" ~disabled:(String.is_empty (String.strip email)) (Msg.action_invite locale)
                            (run ~after:(set_email "") "invite_member" [ ("email", `String email) ]) ] ]
                  else []);
-               (if admin then Ui.div ~cls:"provisional table-note" [ Ui.text (Msg.household_invite_hint locale) ] else Vdom.Node.none) ]) ]
+               (if owner then Ui.div ~cls:"provisional table-note" [ Ui.text (Msg.household_invite_hint locale) ] else Vdom.Node.none) ]) ]

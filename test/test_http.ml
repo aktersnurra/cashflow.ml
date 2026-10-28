@@ -10,13 +10,13 @@ module Str_compat = Cashflow_core.Str_compat
 
 open Test_service_support
 
-let claims ?(scopes = [ "ledger:read"; "ledger:write" ]) ?(groups = None) ?nonce subject : Oidc.claims =
+let claims ?(scopes = [ "ledger:read"; "ledger:write" ]) ?nonce subject : Oidc.claims =
   { issuer = "https://id.example"; subject; audience = [ "https://cashflow.example" ]; expires_at = Ptime.max; scopes; name = Some subject;
-    email = Some (subject ^ "@example.com"); groups; nonce }
+    email = Some (subject ^ "@example.com"); nonce }
 
 let config : Config.t =
   { database_path = ":memory:"; listen_address = "127.0.0.1:0"; public_base_url = "https://cashflow.example"; oidc_issuer = "https://id.example";
-    oidc_audience = "https://cashflow.example"; web_client_id = Some "web"; web_client_secret = Some "secret"; admin_group = "cashflow-admin";
+    oidc_audience = "https://cashflow.example"; web_client_id = Some "web"; web_client_secret = Some "secret";
     static_dir = "/nonexistent"; openrouter_api_key = None; openrouter_model = "x"; advisor_model = "x";
     openrouter_provider_only = Config.default_openrouter_provider_only;
     advisor_limits = None; log_level = None }
@@ -38,10 +38,10 @@ let deps () : Http_server.deps =
     | "reader-token" -> Ok (claims ~scopes:[ "ledger:read" ] "alice")
     | _ -> Error ()
   in
-  let verify_id_token = function "id-token" -> Ok (claims ~groups:(Some [ "cashflow-admin" ]) ?nonce:!last_nonce "alice") | _ -> Error () in
+  let verify_id_token = function "id-token" -> Ok (claims ?nonce:!last_nonce "alice") | _ -> Error () in
   let web_auth =
     Web_auth.make ~client:fake_client ~verify_id_token
-      ~config:{ issuer = "https://id.example"; client_id = "web"; client_secret = "secret"; redirect_uri = "https://cashflow.example/auth/callback"; admin_group = "cashflow-admin" }
+      ~config:{ issuer = "https://id.example"; client_id = "web"; client_secret = "secret"; redirect_uri = "https://cashflow.example/auth/callback" }
   in
   { service; verify_bearer; advisor = None; web_auth = Some web_auth; config; now = (fun () -> now) }
 
@@ -134,7 +134,6 @@ let test_web_login_and_csrf () =
   Alcotest.(check bool) "httponly" true (List.exists (fun v -> String.starts_with ~prefix:session_cookie v && Str_compat.contains ~sub:"HttpOnly" v) (headers_named callback "set-cookie"));
   let session = Http_server.handle deps (request "/api/session" ~headers:[ ("cookie", session_cookie) ]) in
   Alcotest.(check int) "session" 200 session.status;
-  Alcotest.(check string) "admin from the groups claim" "true" (Yojson.Safe.to_string (member "is_admin" (member "user" (body_json session))));
   let csrf = Yojson.Safe.Util.to_string (member "csrf_token" (body_json session)) in
   let command ?(csrf_header = []) () =
     Http_server.handle deps
@@ -323,7 +322,7 @@ let test_private_logos () =
     In_channel.with_open_bin path In_channel.input_all in
   let image = Logo_fetch.fetch Logo_fetch.{with_request=(fun f -> f ()); resolve=(fun ~host:_ -> Ok ["8.8.8.8"]);
     get=(fun ~uri:_ ~address:_ ~max_bytes:_ -> Ok {status=200; headers=[]; body=png})} "shop.com/pic.png" |> Result.get_ok in
-  let alice = Service.sign_in deps.service {issuer="https://id.example"; subject="alice"; display_name=None; email=None; is_admin=None; locale=None} in
+  let alice = Service.sign_in deps.service {issuer="https://id.example"; subject="alice"; display_name=None; email=None; locale=None} in
   let bob = sign_in deps.service "bob" in
   let owner = Access.personal alice in
   let id = Sql.transaction deps.service.db (fun () ->
@@ -353,7 +352,7 @@ let test_private_logos () =
   Alcotest.(check (option string)) "HEAD cannot be cached" (Some "private, no-store") (header head "cache-control");
   Merchant_logo_store.delete deps.service.db owner "shop";
   Alcotest.(check int) "removed association" 404 (fetch ()).status;
-  let admin = sign_in deps.service ~admin:true "household-admin" in
+  let admin = sign_in deps.service "household-admin" in
   let household = ok (Service.create_household deps.service admin ~name:"Home" ~default_currency:"SEK") in
   let owner = Owner.Household household.id in
   let member = Service.access_for deps.service (Access.user admin) in

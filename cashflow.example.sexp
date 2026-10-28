@@ -10,9 +10,7 @@
  (oidc
   ((issuer https://id.example.com)
    ;; What MCP bearer tokens must carry as their audience: normally the public URL.
-   (audience https://cashflow.example.com)
-   ;; Members of this Pocket ID group are admins. Optional; this is the default.
-   (admin_group cashflow-admin)))
+   (audience https://cashflow.example.com)))
 
  ;; The web UI's confidential OIDC client. Its callback is <public_url>/auth/callback.
  ;; Leave the whole field out to serve only MCP.

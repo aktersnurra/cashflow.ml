@@ -65,7 +65,7 @@ let test_prompts_name_categories_in_the_viewers_language () =
   let asked = ref [] in
   let capturing : Llm.t = { fake with complete = (fun ?schema:_ ~system:_ ~user () -> asked := user :: !asked; Ok {|{"suggestions": []}|}) } in
   let service = Service.make ~now:(fun () -> now) ~assistant:capturing (Store_sqlite.open_memory ()) in
-  let alice = sign_in service ~admin:true "alice" in
+  let alice = sign_in service "alice" in
   let household = ok (Service.create_household service alice ~name:"Home" ~default_currency:"SEK") in
   let alice = Service.access_for service (Access.user alice) in
   let bob = sign_in service "bob" in
@@ -169,7 +169,7 @@ let test_weekly_brief_scopes () =
   let asked = ref [] in
   let writer : Llm.t = { fake with complete = (fun ?schema:_ ~system:_ ~user () -> asked := user :: !asked; Ok "A week.") } in
   let service = Service.make ~now:(fun () -> now) ~assistant:writer (Store_sqlite.open_memory ()) in
-  let alice = sign_in service ~admin:true "alice" in
+  let alice = sign_in service "alice" in
   let household = ok (Service.create_household service alice ~name:"Home" ~default_currency:"SEK") in
   let alice = Service.access_for service (Access.user alice) in
   let bob = sign_in service "bob" in

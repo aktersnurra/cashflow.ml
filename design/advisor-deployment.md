@@ -54,7 +54,7 @@ It does not establish deployment retention/accessibility or production readiness
 ## User contract and data
 
 Individual opt-in is required. Household reads additionally require current
-membership and administrator-enabled household consent. Conversations are private
+membership and owner-enabled household consent. Conversations are private
 to their owner, not shared with household members. Scope, currency and locale are
 pinned; a scope change starts a new conversation. Account identifiers/labels are
 pseudonymized for the model. Relevant descriptions, categories, dates, amounts,

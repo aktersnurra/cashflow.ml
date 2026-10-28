@@ -301,7 +301,7 @@ let test_auto_apply_threshold () =
 
 let test_pair_and_share () =
   let service = make_service () in
-  let alice = sign_in service ~admin:true "alice" in
+  let alice = sign_in service "alice" in
   let household = ok (Service.create_household service alice ~name:"Home" ~default_currency:"SEK") in
   let alice = Service.access_for service (Access.user alice) in
   let checking = open_checking service alice ~statement_backed:true "Checking" in
@@ -354,7 +354,7 @@ let test_llm_pairs_unsure_moves () =
         | _ -> Alcotest.fail "expected cases")
     in
     let service = Service.make ~assistant:Llm.{ model = "fake"; complete } ~now:(fun () -> now) (Store_sqlite.open_memory ()) in
-    let alice = sign_in service ~admin:true "alice" in
+    let alice = sign_in service "alice" in
     let household = ok (Service.create_household service alice ~name:"Home" ~default_currency:"SEK") in
     let alice = Service.access_for service (Access.user alice) in
     let checking = open_checking service alice ~statement_backed:true "Checking" in
@@ -374,7 +374,7 @@ let test_llm_pairs_unsure_moves () =
 
 let household_setup () =
   let service = make_service () in
-  let alice = sign_in service ~admin:true "alice" in
+  let alice = sign_in service "alice" in
   let household = ok (Service.create_household service alice ~name:"Home" ~default_currency:"SEK") in
   let alice = Service.access_for service (Access.user alice) in
   let checking = open_checking service alice ~statement_backed:true "Checking" in
@@ -568,7 +568,7 @@ let test_manual_move_confirmed_by_both_statements () =
    them is opened on the way. *)
 let test_member_shares_a_purchase () =
   let service = make_service () in
-  let alice = sign_in service ~admin:true "alice" and bob = sign_in service "bob" in
+  let alice = sign_in service "alice" and bob = sign_in service "bob" in
   let household = ok (Service.create_household service alice ~name:"Home" ~default_currency:"SEK") in
   ignore (ok (Service.invite_member service (Service.access_for service (Access.user alice)) ~email:"bob@example.com"));
   let bob = ok (Service.respond_to_invitation service bob ~household_id:household.id ~accept:true) in

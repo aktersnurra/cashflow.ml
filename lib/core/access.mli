@@ -13,5 +13,6 @@ val household : t -> Household.t option
 val personal : t -> Owner.t
 val owners : t -> Owner.t list
 val can_use : t -> Owner.t -> bool
-val is_admin : t -> bool
+val is_owner : t -> bool
+(** Whether the user created their household, and so runs it. *)
 val restrict : t -> Ledger_core.view -> Ledger_core.view

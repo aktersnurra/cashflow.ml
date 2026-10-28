@@ -87,7 +87,7 @@ let financial_tables =
   ]
 
 let login service name =
-  let access = S.sign_in service ~admin:true name in
+  let access = S.sign_in service name in
   let token = Web_auth.create_session service.Service.db ~now:(service.now ()) (Access.user access) in
   let principal = ok (Advisor_access.authenticate service ~now:(service.now ()) ~token) in
   ignore (ok (Advisor_access.set_user_consent service principal ~enabled:true));

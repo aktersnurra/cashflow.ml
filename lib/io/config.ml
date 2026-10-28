@@ -12,7 +12,6 @@ type t = {
   oidc_audience : string;  (** the MCP resource: the audience bearer tokens must carry *)
   web_client_id : string option;  (** the web UI's OIDC client; without it, only MCP is served *)
   web_client_secret : string option;
-  admin_group : string;
   static_dir : string;
   openrouter_api_key : string option;
   openrouter_model : string;  (** categorising, pairing and summaries *)
@@ -36,7 +35,7 @@ module File = struct
   type oidc = {
     issuer : string;
     audience : string;  (** what MCP bearer tokens must carry: usually the public URL *)
-    admin_group : string; [@default "cashflow-admin"]
+    admin_group : string; [@default ""]  (** no longer used; read so that older config files still load *)
   }
   [@@deriving sexp]
 
@@ -119,7 +118,7 @@ let resolve (file : File.t) =
   let public_base_url = if String.ends_with ~suffix:"/" file.public_url then String.sub file.public_url 0 (String.length file.public_url - 1) else file.public_url in
   Ok
     { database_path = file.database; listen_address = file.listen; public_base_url; oidc_issuer = file.oidc.issuer; oidc_audience = file.oidc.audience;
-      web_client_id = Option.map (fun (w : File.web) -> w.client_id) file.web; web_client_secret; admin_group = file.oidc.admin_group;
+      web_client_id = Option.map (fun (w : File.web) -> w.client_id) file.web; web_client_secret;
       static_dir = file.static_dir; openrouter_api_key;
       openrouter_model = Option.fold ~none:"anthropic/claude-haiku-5.5" ~some:(fun (o : File.openrouter) -> o.model) file.openrouter;
       advisor_model = Option.fold ~none:"anthropic/claude-haiku-5.5" ~some:(fun (o : File.openrouter) -> Option.value o.advisor_model ~default:o.model) file.openrouter;

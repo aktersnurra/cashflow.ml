@@ -10,13 +10,13 @@ open Sql
 let pay_cycle = map ~name:"pay cycle" text ~to_db:Pay_cycle_setting.to_string ~of_db:Pay_cycle_setting.of_string
 
 let user_columns =
-  "id, oidc_issuer, oidc_subject, display_name, email, locale, timezone, default_currency, pay_cycle, is_admin, created_at"
+  "id, oidc_issuer, oidc_subject, display_name, email, locale, timezone, default_currency, pay_cycle, created_at"
 
 let user_row =
   row
-    Codec.(user_id @-> text @-> text @-> text @-> nullable text @-> text @-> text @-> text @-> pay_cycle @-> bool @-> time @-> nil)
-    (fun id oidc_issuer oidc_subject display_name email locale timezone default_currency pay_cycle is_admin created_at : User.t ->
-      { id; oidc_issuer; oidc_subject; display_name; email; locale; timezone; default_currency; pay_cycle; is_admin; created_at })
+    Codec.(user_id @-> text @-> text @-> text @-> nullable text @-> text @-> text @-> text @-> pay_cycle @-> time @-> nil)
+    (fun id oidc_issuer oidc_subject display_name email locale timezone default_currency pay_cycle created_at : User.t ->
+      { id; oidc_issuer; oidc_subject; display_name; email; locale; timezone; default_currency; pay_cycle; created_at })
 
 let user_by_identity =
   stmt ("SELECT " ^ user_columns ^ " FROM users WHERE oidc_issuer = ? AND oidc_subject = ?") (text @-> text @-> nil) (opt user_row)
@@ -27,13 +27,13 @@ let all_users = stmt ("SELECT " ^ user_columns ^ " FROM users ORDER BY display_n
 
 let insert_user =
   stmt
-    "INSERT INTO users (id, oidc_issuer, oidc_subject, display_name, email, is_admin, locale, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-    Codec.(user_id @-> text @-> text @-> text @-> nullable text @-> bool @-> text @-> time @-> nil)
+    "INSERT INTO users (id, oidc_issuer, oidc_subject, display_name, email, locale, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    Codec.(user_id @-> text @-> text @-> text @-> nullable text @-> text @-> time @-> nil)
     exec
 
 let refresh_user =
-  stmt "UPDATE users SET display_name = ?, email = ?, is_admin = ? WHERE id = ?"
-    Codec.(text @-> nullable text @-> bool @-> user_id @-> nil)
+  stmt "UPDATE users SET display_name = ?, email = ? WHERE id = ?"
+    Codec.(text @-> nullable text @-> user_id @-> nil)
     exec
 
 let update_settings =
@@ -48,27 +48,24 @@ type claims = {
   subject : string;
   display_name : string option;
   email : string option;
-  is_admin : bool option;
   locale : string option;  (** only used when the user is first created *)
 }
 
-(* Users are created on first sign-in. Name, email and admin rights follow the identity
-   provider, so they are refreshed whenever a sign-in carries them. *)
+(* Users are created on first sign-in. Name and email follow the identity provider, so they are
+   refreshed whenever a sign-in carries them. *)
 let resolve_user db ~now (claims : claims) =
   Sql.transaction db (fun () ->
       match run db user_by_identity claims.issuer claims.subject with
       | Some user ->
           let display_name = Option.value claims.display_name ~default:user.display_name in
           let email = match claims.email with Some _ as email -> email | None -> user.email in
-          let is_admin = Option.value claims.is_admin ~default:user.is_admin in
-          if user.display_name <> display_name || user.email <> email || user.is_admin <> is_admin then
-            run db refresh_user display_name email is_admin user.id;
+          if user.display_name <> display_name || user.email <> email then run db refresh_user display_name email user.id;
           (Option.get (run db user_by_id user.id), `Existing)
       | None ->
           let id = Id_generator.user () in
           let display_name = Option.value claims.display_name ~default:(Option.value claims.email ~default:claims.subject) in
           let locale = match claims.locale with Some l when List.mem l I18n_locale.supported -> l | _ -> I18n_locale.default in
-          run db insert_user id claims.issuer claims.subject display_name claims.email (Option.value claims.is_admin ~default:false) locale now;
+          run db insert_user id claims.issuer claims.subject display_name claims.email locale now;
           (Option.get (run db user_by_id id), `Created))
 
 let find_user db id = run db user_by_id id
