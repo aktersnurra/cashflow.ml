@@ -158,6 +158,42 @@ let plan_category service ~principal ~owner ~id (p : S.proposal) =
               | Error _ -> Error ()))
   | _ -> error A.Invalid_request
 
+(* A manual entry: the same call as entering it by hand, under a key made from the proposal, so a repeat is the same entry. *)
+let plan_entry service ~principal ~owner ~id (p : S.proposal) =
+  let* access, ctx = scoped_context service ~principal ~owner p in
+  let book = Insights.book ctx in
+  match
+    ( Option.bind (string_field p.arguments "from_account_id") Account_id.of_string, Option.bind (string_field p.arguments "to_account_id") Account_id.of_string,
+      Option.bind (string_field p.arguments "amount") Int64.of_string_opt,
+      Option.bind (string_field p.arguments "date") (fun d -> Result.to_option (Date.of_string d)), string_field p.arguments "description" )
+  with
+  | Some from_id, Some to_id, Some minor, Some on, Some description -> (
+      match (book.inside from_id, book.inside to_id, Amount.of_int64 minor) with
+      | Some from_, Some to_, Some amount ->
+          let balance_sheet (k : Account.kind) = k = Account.Asset || k = Account.Liability in
+          let sensible =
+            (balance_sheet from_.account.kind && to_.account.kind = Account.Expense) || (from_.account.kind = Account.Income && balance_sheet to_.account.kind)
+            || (balance_sheet from_.account.kind && balance_sheet to_.account.kind)
+          in
+          let pending = from_.details.statement_backed || to_.details.statement_backed in
+          let promised = match field p.precondition "pending" with Some (`Bool b) -> b | _ -> pending in
+          if Account_id.equal from_id to_id || pending <> promised || (not sensible) || from_.account.closed || to_.account.closed || Option.is_some from_.details.role || Option.is_some to_.details.role
+             || Date.compare on (Date.add_days ctx.today (-366)) < 0 || Date.compare on (Date.add_days ctx.today 31) > 0
+          then Ok `Out_of_date
+          else
+            Ok
+              (`Do
+                (fun () ->
+                  match
+                    Service.add_entry service access
+                      { key = category_key id; from_account = from_id; to_account = to_id; amount; value_date = on;
+                        memo = { Transfer.empty_memo with description }; code = None; scope = Some (Insights.budget_owner ctx) }
+                  with
+                  | Ok (Ok _) -> Ok ()
+                  | _ -> Error ()))
+      | _ -> Ok `Out_of_date)
+  | _ -> error A.Invalid_request
+
 let decide service ~owner ~id state =
   let* decided = S.decide_proposal (store service) ~owner ~id state in
   if decided then Ok state else (S.proposal (store service) ~owner id |> Result.map (fun (p : S.proposal) -> p.state))
@@ -213,6 +249,7 @@ let apply service ~principal ~id =
         | "add_rule" -> plan_rule service ~principal ~owner ~id p
         | "save_goal" -> plan_goal service ~principal ~owner ~id p
         | "new_category" -> plan_category service ~principal ~owner ~id p
+        | "entry" -> plan_entry service ~principal ~owner ~id p
         | _ -> error A.Invalid_request
       in
       match
@@ -340,6 +377,23 @@ let undo_category service ~principal ~owner ~id (p : S.proposal) =
       else (match Service.close_account service access account.id with Ok _ -> Ok `Undone | Error _ -> Ok `Changed)
   | None -> Ok `Changed
 
+(* An entry is taken back as it would be by hand: voided if it is still waiting for its statement, reversed if posted,
+   and left alone once a statement has confirmed it or it has been reversed or corrected. *)
+let undo_entry service ~principal ~owner ~id (p : S.proposal) =
+  let* access, ctx = scoped_context service ~principal ~owner p in
+  let view = Store_sqlite.view service.Service.db in
+  match view.transfer_by_key (Insights.budget_owner ctx) (category_key id) with
+  | None -> Ok `Changed
+  | Some t when Option.is_some (view.reversal t.id) || Option.is_some (view.resolution t.id) -> Ok `Changed
+  | Some t -> (
+      let key = Result.get_ok (Idempotency_key.of_string ("undo-proposal:" ^ id)) in
+      match t.kind with
+      | Transfer.Pending _ -> (
+          match Service.void_pending service access ~key ~pending_id:t.id ~value_date:ctx.today with Ok (Ok _) -> Ok `Undone | _ -> Ok `Changed)
+      | Transfer.Single -> (
+          match Service.reverse service access ~key ~transfer_id:t.id () with Ok (Ok _) -> Ok `Undone | _ -> Ok `Changed)
+      | _ -> Ok `Changed)
+
 let undo service ~principal ~id =
   let* user = Sql.read_snapshot service.Service.db (fun () -> Advisor_access.user service principal) in
   let owner = user.id in
@@ -360,6 +414,7 @@ let undo service ~principal ~id =
                 | "add_rule" -> undo_rule service ~principal ~owner ~id p
                 | "save_goal" -> undo_goal service ~principal ~owner ~id p
                 | "new_category" -> undo_category service ~principal ~owner ~id p
+                | "entry" -> undo_entry service ~principal ~owner ~id p
                 | _ -> error A.Invalid_request
               in
               match outcome with `Undone -> Ok () | `Changed -> Error conflict)

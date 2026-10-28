@@ -369,6 +369,61 @@ let propose_simple_cards () =
   rejected "propose_new_category" "{\"name\":\"groceries\",\"kind\":\"expense\"}";
   rejected "propose_new_category" "{\"name\":\"Bad\\u0007name\",\"kind\":\"expense\"}"
 
+(* A manual entry is a purchase, income or a move between the user's own accounts, between accounts this run was shown;
+   the model sees an account only as an alias and a name hint without digits, the card shows the real names. *)
+let propose_entry_cards () =
+  fixture @@ fun service access principal h _ _ ->
+  let _ = seed service access h in
+  let checking = S.open_checking service access "Lönekonto ****1234" in
+  let savings = S.open_checking service access "Sparkonto 987654" in
+  ignore (checking, savings);
+  let c = conversation service principal A.Personal "entry" in
+  let aliases = ok (P.create_aliases service ~principal ~scope:A.Personal ~conversation:c) in
+  let open Yojson.Safe.Util in
+  let handle = ref aliases in
+  let fresh () = handle := ok (P.create_aliases service ~principal ~scope:A.Personal ~conversation:c) in
+  let read_json name =
+    let e = read service principal !handle A.Personal name "{}" in
+    Yojson.Safe.from_string (json !handle e)
+  in
+  let banks = read_json "bank_accounts" |> member "data" |> to_list in
+  let hints = List.map (fun b -> member "hint" b |> to_string) banks in
+  check "a name hint without its digits" (List.mem "Lönekonto" hints && List.mem "Sparkonto" hints);
+  check "no digit reaches the model" (List.for_all (fun h -> not (String.exists (fun c -> c >= '0' && c <= '9' || c = '*') h)) hints);
+  let bank hint = List.find (fun b -> member "hint" b = `String hint) banks |> member "reference" |> to_string in
+  let cats = read_json "categories" |> member "data" |> to_list in
+  let category name = List.find (fun c -> member "name" c = `String name) cats |> member "reference" |> to_string in
+  let lon = bank "Lönekonto" and spar = bank "Sparkonto" and groceries = category "Groceries" and salary = category "Salary" in
+  let propose arguments = P.read service ~principal ~scope:A.Personal ~aliases:!handle ~currency:sek_pin (ok (P.parse_call ~name:"propose_entry" ~arguments)) in
+  let entry from to_ amount rest = Printf.sprintf "{\"from_account\":%S,\"to_account\":%S,\"amount\":%S%s}" from to_ amount rest in
+  let accepted arguments =
+    let e = match propose arguments with Ok e -> e | Error _ -> Alcotest.fail ("rejected: " ^ arguments) in
+    (match e.T.result with T.Proposal_card_result _ -> () | _ -> Alcotest.fail "not a card");
+    check "awaits" (contains (json !handle e) "awaiting_user_confirmation");
+    check "the model never sees the digits" (not (contains (json !handle e) "Lönekonto ****" || contains (json !handle e) "****1234" || contains (json !handle e) "987654"));
+    check "one status only, and it is awaiting" (not (contains (json !handle e) "\"posted\"") && contains (json !handle e) "\"posting\"");
+    P.display e
+  in
+  let rejected arguments = check ("rejected " ^ arguments) (Result.is_error (propose arguments)) in
+  let purchase = accepted (entry lon groceries "249.90" ",\"description\":\"ICA lunch\"") in
+  check "the card names the account as the user knows it" (List.exists (fun (f : A.fact) -> f.label = "From" && f.value = A.Text "Lönekonto ****1234") purchase.facts);
+  check "with the exact amount" (List.exists (fun (f : A.fact) -> f.label = "Amount" && f.value = A.Money { minor_units = 24990L; currency = sek_pin }) purchase.facts);
+  check "posted at once" (List.exists (fun (f : A.fact) -> f.label = "Status" && f.value = A.Text "posted") purchase.facts);
+  ignore (accepted (entry lon spar "500" ",\"description\":\"Savings\",\"date\":null"));
+  fresh ();
+  ignore (read_json "bank_accounts"); ignore (read_json "categories");
+  ignore (accepted (entry salary lon "30000" ",\"description\":\"Salary\",\"date\":\"2026-10-15\""));
+  rejected (entry groceries lon "10" ",\"description\":\"backwards\"");
+  rejected (entry lon lon "10" ",\"description\":\"to itself\"");
+  rejected (entry lon groceries "0" ",\"description\":\"nothing\"");
+  rejected (entry lon groceries "-5" ",\"description\":\"negative\"");
+  rejected (entry lon groceries "1.005" ",\"description\":\"too precise\"");
+  rejected (entry lon salary "10" ",\"description\":\"bank to income\"");
+  rejected (entry lon groceries "10" ",\"description\":\"long ago\",\"date\":\"2020-01-01\"");
+  rejected (entry lon groceries "10" ",\"description\":\"far ahead\",\"date\":\"2030-01-01\"");
+  rejected (entry lon groceries "10" ",\"description\":\"two\\nlines\"");
+  rejected (entry "account_notissued_1" groceries "10" ",\"description\":\"unknown\"")
+
 let redacted_eight_tools () =
   fixture @@ fun service access principal h _ calls ->
   let bank, category, shared, _, injection = seed service access h in
@@ -823,6 +878,7 @@ let () =
           Alcotest.test_case "propose budget card" `Quick propose_budget_card;
           Alcotest.test_case "propose categorize card" `Quick propose_categorize_card;
           Alcotest.test_case "propose rule, goal and category cards" `Quick propose_simple_cards;
+          Alcotest.test_case "propose entry cards" `Quick propose_entry_cards;
           Alcotest.test_case "categories in the user's language" `Quick categories_in_the_users_language;
           Alcotest.test_case "resource isolation and import freshness" `Quick isolation_and_freshness;
           Alcotest.test_case "household and empty results" `Quick household_and_empty;

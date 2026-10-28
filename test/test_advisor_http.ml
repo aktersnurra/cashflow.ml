@@ -1167,6 +1167,66 @@ let simple_proposal_endpoints () =
       Alcotest.(check int) "the category exists once" 1
         (List.length (List.filter (fun (i : Account_info.t) -> i.account.name = "Tea") (Service.accounts service access))))
 
+(* A manual entry is entered as it would be by hand, taken back as it would be by hand, and left alone once it is not
+   exactly as entered. *)
+let entry_proposal_endpoints () =
+  fixture (fun _ service token _ req ->
+      let open Yojson.Safe.Util in
+      ignore (req ~meth:POST ~body:"{\"enabled\":true}" "/api/advisor/consent");
+      let access = Test_service_support.sign_in service "http" in
+      let owner = (Access.user access).id in
+      let groceries =
+        (List.find (fun (i : Account_info.t) -> i.account.name = "Groceries" && Owner.equal i.account.owner (Access.personal access)) (Service.accounts service access)).account.id
+      in
+      let wallet = Test_service_support.open_checking service access "Wallet" in
+      let statement = Test_service_support.open_checking service access ~statement_backed:true "Statement" in
+      let store = Advisor_store.create ~clock:service.now service.db in
+      let reference = Web_auth.session_ref token in
+      let accepted = ok (Advisor_store.accept store ~owner ~session:reference ~now ~model:"synthetic" ~source_finding:None (submit "entry")) in
+      ignore (ok (Advisor_store.transition store ~run:accepted.ids.run_id (Advisor.Fail { code = Provider_unavailable; context = No_context })));
+      let conversation_id = accepted.ids.conversation_id in
+      let counter = ref 0 in
+      let propose ?(date = "2026-10-20") from to_ amount description =
+        incr counter;
+        let id = Printf.sprintf "00000000-0000-4000-8000-%012d" (500 + !counter) in
+        ok (Advisor_store.add_proposal store ~owner ~conversation_id ~id ~kind:"entry"
+              ~arguments:(`Assoc [ ("from_account_id", `String (Account_id.to_string from)); ("to_account_id", `String (Account_id.to_string to_));
+                                   ("amount", `String amount); ("date", `String date); ("description", `String description) ])
+              ~precondition:(`Assoc []) ~now ~expires:(Option.get (Ptime.add_span now (Ptime.Span.of_int_s 3600))));
+        id
+      in
+      let post id action = req ~meth:POST ~body:"{}" ("/api/advisor/proposals/" ^ id ^ "/" ^ action) in
+      let state response = body response |> Yojson.Safe.from_string |> member "state" |> to_string in
+      let balance id = Account.posted_balance (Result.get_ok (Service.find_account service access id)).account in
+      (* A purchase on an account no statement confirms is posted at once, and a reversal takes it back. *)
+      let lunch = propose wallet groceries "24990" "ICA lunch" in
+      Alcotest.(check int64) "proposing enters nothing" 0L (balance groceries);
+      Alcotest.(check string) "apply" "applied" (state (post lunch "apply"));
+      Alcotest.(check int64) "the category has it" 24990L (balance groceries);
+      Alcotest.(check string) "a second click enters nothing twice" "applied" (state (post lunch "apply"));
+      Alcotest.(check int64) "still once" 24990L (balance groceries);
+      Alcotest.(check string) "undo" "reverted" (state (post lunch "undo"));
+      Alcotest.(check int64) "and it is gone" 0L (balance groceries);
+      (* An entry a bank statement will confirm waits, pending; undoing voids it. *)
+      let waiting = propose statement groceries "10000" "Coffee beans" in
+      ignore (post waiting "apply");
+      let pending () = List.length (Transfer_query.run_filter service.db access { Transfer_query.default_filter with text = Some "Coffee beans"; limit = 10 }) in
+      Alcotest.(check int) "it is pending" 1 (pending ());
+      Alcotest.(check string) "undo voids it" "reverted" (state (post waiting "undo"));
+      Alcotest.(check int64) "nothing was ever counted" 0L (balance groceries);
+      (* What the user has done since is theirs. *)
+      let theirs = propose wallet groceries "5000" "Snack" in
+      ignore (post theirs "apply");
+      let entered = List.find (fun (v : Service.transfer_view) -> v.transfer.memo.description = "Snack")
+        (Service.query_transfers service access { Transfer_query.default_filter with text = Some "Snack"; limit = 10 }) in
+      ignore (Test_service_support.ok (Service.reverse service access ~key:(Test_service_support.key "by-hand") ~transfer_id:entered.transfer.id ()));
+      Alcotest.(check int) "an entry the user already reversed cannot be undone" 409 (status (post theirs "undo"));
+      (* Checks at apply. *)
+      let long_ago = propose ~date:"2020-01-01" wallet groceries "100" "Old" in
+      Alcotest.(check string) "a date outside the window is out of date" "out_of_date" (state (post long_ago "apply"));
+      let nowhere = propose groceries groceries "100" "Circle" in
+      Alcotest.(check string) "an account to itself is out of date" "out_of_date" (state (post nowhere "apply")))
+
 let () =
   Alcotest.run "advisor_http"
     [
@@ -1193,5 +1253,6 @@ let () =
           Alcotest.test_case "undo endpoints" `Quick undo_endpoints;
           Alcotest.test_case "undo edge cases" `Quick undo_edge_cases;
           Alcotest.test_case "rule, goal and category proposals" `Quick simple_proposal_endpoints;
+          Alcotest.test_case "entry proposals" `Quick entry_proposal_endpoints;
         ] );
     ]
