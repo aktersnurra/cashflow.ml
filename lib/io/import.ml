@@ -468,7 +468,9 @@ let event_for ctx (account : Account.t) (p : planned) =
               { debit_account_id = debit; credit_account_id = credit; amount; phase = Posted; code = (if out then Purchase else Income);
                 memo = { description = p.row.description; counterparty = p.row.counterparty; tags }; value_date = p.row.booking_date } }
       in
-      Ok (Some (event, match inbox with `Inbox current -> Some current | `Categorized -> None))
+      (* A row filed without asking is still an inbox row, filed: if it turns out to be one half of a move between the
+         user's own accounts, pairing must find it. *)
+      Ok (Some (event, Some (match inbox with `Inbox current -> (current, "open") | `Categorized -> (category, "done"))))
 
 let entry_of (post : Transfer.t) = match post.kind with Post_pending { pending_id } -> Some pending_id | _ -> None
 
@@ -579,16 +581,16 @@ let confirm ctx request =
               (fun (planned, transfer_id, inbox) ->
                 match inbox with
                 | None -> ()
-                | Some current ->
+                | Some (current, status) ->
                     Import_store.add_item db ~now
                       { transfer_id; bank_account_id = account.id; current_account_id = current; revision = 0;
                         suggested_account_id = Option.map (fun (s : Suggest.suggestion) -> s.category_id) planned.suggestion;
                         suggestion_source = Option.map (fun (s : Suggest.suggestion) -> Suggest.source_to_string s.source) planned.suggestion;
                         suggestion_confidence = Option.map (fun (s : Suggest.suggestion) -> s.confidence) planned.suggestion;
                         candidate_pending_id = Option.map (fun (t : Transfer.t) -> t.id) planned.near_pending;
-                        merchant_key = Suggest.merchant_key planned.row; status = "open" })
+                        merchant_key = Suggest.merchant_key planned.row; status })
               posted;
-            let inbox_count = List.length (List.filter_map (fun (_, id, inbox) -> Option.map (fun _ -> id) inbox) posted) in
+            let inbox_count = List.length (List.filter (fun (_, _, inbox) -> match inbox with Some (_, "open") -> true | _ -> false) posted) in
             (* The file teaches the account what it is, so the next one finds it by itself. *)
             let details = d.account.details in
             let learned =
@@ -683,11 +685,14 @@ let undo ctx ~batch_id =
               to_reverse;
             let now = ctx.service.now () in
             (* Only a partner still paired goes back to the inbox: one whose own import was undone
-               already is dismissed and stays so. *)
+               already is dismissed and stays so. A partner that was filed in a category before it was
+               paired is filed there again. *)
+            let waiting (item : Import_store.item) = (Account_store.details db item.current_account_id).role = Some Account_info.Uncategorized in
             List.iter
               (fun id ->
                 Option.iter
-                  (fun (item : Import_store.item) -> if item.status = "paired" then Import_store.save_item db ~now { item with status = "open" })
+                  (fun (item : Import_store.item) ->
+                    if item.status = "paired" then Import_store.save_item db ~now { item with status = (if waiting item then "open" else "done") })
                   (Import_store.find_item db id))
               partners;
             List.iter

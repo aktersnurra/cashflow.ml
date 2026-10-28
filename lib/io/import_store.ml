@@ -167,6 +167,18 @@ let open_items_for =
       ORDER BY t.value_date DESC, t.seq DESC LIMIT ?3")
     (text @-> text @-> int @-> nil) (many item_row)
 
+(* Rows that may be one half of a move between the user's own accounts: those waiting in the inbox, and those filed in
+   an income or expense category (by a person, or on import), which a move must not stay in. A row shared with the
+   household or moved to an account is left as it is. *)
+let pairable_items_for =
+  stmt
+    ("SELECT " ^ item_columns ^ " FROM inbox_items i JOIN accounts a ON a.id = i.bank_account_id JOIN accounts c ON c.id = i.current_account_id \
+      JOIN transfers t ON t.id = i.transfer_id \
+      WHERE (i.status = 'open' OR (i.status = 'done' AND c.kind IN ('income', 'expense'))) \
+      AND ((a.owner_kind = 'user' AND a.owner_id = ?1) OR (a.owner_kind = 'household' AND a.owner_id = ?2)) \
+      ORDER BY t.value_date DESC, t.seq DESC")
+    (text @-> text @-> nil) (many item_row)
+
 let count_open_for =
   stmt
     "SELECT count(*) FROM inbox_items i JOIN accounts a ON a.id = i.bank_account_id WHERE i.status = 'open' \
@@ -178,10 +190,11 @@ let update_item =
     Codec.(account_id @-> int @-> text @-> time @-> transfer_id @-> nil)
     exec
 
+(* Only what a person chose teaches: a row filed on import without asking is still at revision 0. *)
 let history_for =
   stmt
     "SELECT i.current_account_id, count(*) FROM inbox_items i JOIN accounts a ON a.id = i.current_account_id \
-     WHERE i.merchant_key = ? AND i.status = 'done' AND a.owner_kind = ? AND a.owner_id = ? AND a.closed = 0 \
+     WHERE i.merchant_key = ? AND i.status = 'done' AND i.revision > 0 AND a.owner_kind = ? AND a.owner_id = ? AND a.closed = 0 \
      GROUP BY i.current_account_id ORDER BY max(i.updated_at) DESC LIMIT 1"
     (text @-> text @-> text @-> nil) (opt (row Codec.(account_id @-> int @-> nil) (fun id n -> (id, n))))
 
@@ -192,6 +205,7 @@ let add_item db ~now (i : item) =
 let find_item db id = run db item_by_transfer id
 let open_items db access ~limit = let u, h = Transfer_query.scope_params access in run db open_items_for u h limit
 let open_count db access = let u, h = Transfer_query.scope_params access in run db count_open_for u h
+let pairable_items db access = let u, h = Transfer_query.scope_params access in run db pairable_items_for u h
 let save_item db ~now (i : item) = run db update_item i.current_account_id i.revision i.status now i.transfer_id
 let history db owner merchant = run db history_for merchant (Codec.owner_kind owner) (Codec.owner_id owner)
 

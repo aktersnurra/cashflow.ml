@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### A move filed as spending is still a move
+
+- A move between your own accounts only paired while both rows waited in the inbox. A row filed in a category first
+  (by you, before the other account's statement was in or before pairing existed, or on import by a confident
+  suggestion on an account that applies them) stayed spending, and its other half stayed income: the cash flow counted
+  every such move twice. Pairing now also finds rows filed in an income or expense category, on import and with "Find
+  transfers between my accounts", and moves them out of that category. A row shared with the household is left alone.
+- A row filed on import without asking is kept as a filed inbox row, so it can pair, but doesn't teach later
+  suggestions: only a category you chose does.
+- Undoing the import of one half of a move files the other half where you had put it, instead of back in the inbox.
+
 ### Only what you need to see
 
 - Insights names a price change from the charge before it, as Overview does: it compared the latest charge with the

@@ -184,10 +184,20 @@ let share (service : Service.t) access ~transfer_id ~household_category_id =
           finish service item ~current:receivable.account.id ~revision ~status:"done");
         Ok results)
 
+(* A row can be one half of a move while it waits in the inbox or is filed in an income or expense
+   category, by a person before the other half was imported or on import without asking: pairing
+   moves the amount on from wherever the row is now. Not once it is shared with the household or
+   moved to an account. *)
+let pairable (service : Service.t) access (item : Import_store.item) =
+  let* current = Service.find_account service access item.current_account_id in
+  match current.account.kind with
+  | Income | Expense -> Ok ()
+  | Asset | Liability | Equity -> Error (`Invalid "one of these rows was shared or moved to an account, so it can't be paired")
+
 (* Two rows that are one move between the user's own accounts (checking to savings, personal to
-   household): the money left one and arrived in the other, so the uncategorized sides cancel.
-   Both rows are then paired: asking again for the same pair returns what was posted, and neither
-   row can be paired with anything else. *)
+   household): the money left one and arrived in the other, so what each row was counted as
+   (uncategorized, or the category it was filed in) cancels. Both rows are then paired: asking
+   again for the same pair returns what was posted, and neither row can be paired with anything else. *)
 let pair (service : Service.t) access ~out_id ~in_id =
   let* out_item, out_bank = find_open service access ~paired:true out_id in
   let* in_item, in_bank = find_open service access ~paired:true in_id in
@@ -197,8 +207,9 @@ let pair (service : Service.t) access ~out_id ~in_id =
       let* existing = Service.get_transfer service access t in
       Ok (Ok (Ledger_core.Exists existing))
   | "paired", _, _ | _, "paired", _ -> Error (`Invalid "one of the rows is already paired with another")
-  | "done", _, _ | _, "done", _ -> Error (`Invalid "pair two uncategorised rows; one of these already has a category")
   | _ ->
+      let* () = pairable service access out_item in
+      let* () = pairable service access in_item in
       let* out_t = Service.get_transfer service access out_id in
       let* in_t = Service.get_transfer service access in_id in
       let out_t = out_t.transfer and in_t = in_t.transfer in
@@ -341,9 +352,9 @@ let still_open (service : Service.t) ids =
   List.filter (fun id -> match Import_store.find_item service.db id with Some { status = "open"; _ } -> true | _ -> false) ids
 
 (* Finding moves between the user's own accounts across the whole inbox, in memory: two years of
-   imports from several accounts is thousands of open rows, too many to ask the database about one by one.
-   A row's counterparts are the open rows of the same amount the other way within three days on another
-   bank account. *)
+   imports from several accounts is thousands of rows, too many to ask the database about one by one.
+   A row's counterparts are the pairable rows of the same amount the other way within three days on
+   another bank account. *)
 type move_row = { view : item_view; out : bool }
 
 let counterparts_of rows =
@@ -356,8 +367,12 @@ let counterparts_of rows =
         && abs (Date.days_between ~first:o.view.transfer.transfer.value_date ~last:r.view.transfer.transfer.value_date) <= 3)
       (Hashtbl.find_all by_amount (Amount.to_int64 r.view.transfer.transfer.amount))
 
-let open_rows (service : Service.t) access =
-  List.map (fun (view : item_view) -> { view; out = outflow view.item view.transfer.transfer }) (list service access ~limit:max_int)
+(* The rows waiting in the inbox and those filed in a category (see [pairable]): a move filed as spending before its
+   other half was imported is still a move. *)
+let move_rows (service : Service.t) access =
+  List.filter_map
+    (fun item -> Result.to_option (Result.map (fun (view : item_view) -> { view; out = outflow view.item view.transfer.transfer }) (view_item service access item)))
+    (Import_store.pairable_items service.db access)
 
 let pair_rows (service : Service.t) access ~out ~in_ =
   match pair service access ~out_id:out.view.item.transfer_id ~in_id:in_.view.item.transfer_id with Ok (Ok _) -> true | _ -> false
@@ -383,7 +398,7 @@ let pair_obvious (service : Service.t) access =
     if made = [] then paired
     else go (List.filter (fun r -> not (List.exists (fun (a, b) -> same_row a r || same_row b r) made)) rows) (paired + List.length made)
   in
-  go (open_rows service access) 0
+  go (move_rows service access) 0
 
 (* What is still unsure goes to the LLM, a batch at a time: each outflow row with its possible counterparts.
    [among] limits it to the rows involving those transfers, so an import doesn't ask again about old leftovers.
@@ -404,7 +419,7 @@ let rec chunks n = function
   | items -> let batch = List.filteri (fun i _ -> i < n) items in batch :: chunks n (List.filteri (fun i _ -> i >= n) items)
 
 let pair_unsure ?among (service : Service.t) access =
-  let rows = open_rows service access in
+  let rows = move_rows service access in
   let scale_of r = match Service.find_account service access r.view.item.bank_account_id with Ok bank -> Currency.scale bank.account.currency | Error _ -> 2 in
   let describe r = (Transfer_id.to_string r.view.item.transfer_id, r.view.transfer.transfer.value_date, r.view.transfer.transfer.memo.description) in
   let find id = List.find_opt (fun r -> String.equal (Transfer_id.to_string r.view.item.transfer_id) id) rows in
@@ -430,4 +445,4 @@ let pair_unsure ?among (service : Service.t) access =
 let pair_all service access =
   let obvious = pair_obvious service access in
   let by_llm = pair_unsure service access in
-  (obvious, by_llm, List.length (unsure_cases (open_rows service access) ()))
+  (obvious, by_llm, List.length (unsure_cases (move_rows service access) ()))
