@@ -70,6 +70,13 @@ let test_openrouter_providers () =
   Alcotest.(check (list string)) "custom allowlist" [ "amazon-bedrock" ] custom.openrouter_provider_only
 
 (* The advisor can run on a bigger model than the cheap calls (categorising, pairing, summaries). *)
+(* Categories are chosen by Jev unless the configuration says otherwise, or "none". *)
+let test_classifier_model () =
+  Alcotest.(check (option string)) "Jev by default" (Some "typesafe/jev-1.14") (ok (with_openrouter "(provider_only (amazon-bedrock))")).classifier_model;
+  Alcotest.(check (option string)) "another" (Some "typesafe/jev-latest")
+    (ok (with_openrouter "(classifier_model typesafe/jev-latest) (provider_only (amazon-bedrock))")).classifier_model;
+  Alcotest.(check (option string)) "none turns it off" None (ok (with_openrouter "(classifier_model none) (provider_only (amazon-bedrock))")).classifier_model
+
 let test_advisor_model_apart () =
   let c = ok (with_openrouter "(model anthropic/claude-haiku-5.5) (advisor_model anthropic/claude-sonnet-5.5) (provider_only (amazon-bedrock))") in
   Alcotest.(check string) "cheap calls stay on haiku" "anthropic/claude-haiku-5.5" c.openrouter_model;
@@ -124,4 +131,5 @@ let () =
           Alcotest.test_case "OpenRouter providers" `Quick test_openrouter_providers;
           Alcotest.test_case "OpenRouter requires providers" `Quick test_openrouter_requires_providers;
           Alcotest.test_case "advisor model apart" `Quick test_advisor_model_apart;
+          Alcotest.test_case "classifier model" `Quick test_classifier_model;
           Alcotest.test_case "OpenRouter privacy is mandatory" `Quick test_openrouter_cannot_disable_privacy ] ) ]

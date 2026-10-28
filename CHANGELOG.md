@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Categorising by itself
+
+- Filed once by you, a merchant is filed by itself after that: the other rows waiting from it at once, and later
+  imports' without asking. Rows cashflow files by itself never teach it; a merchant you filed under different
+  categories stays a suggestion.
+- Categories are chosen by TypeSafe's Jev 1.14 (`openrouter.classifier_model`, `none` turns it off) through
+  OpenRouter's decisions API, whose calibrated probability is the confidence. It is served by TypeSafe on an
+  endpoint OpenRouter lists as zero-data-retention; requests ask for ZDR and no data collection, and an account-wide
+  ZDR guardrail on the OpenRouter key enforces it. If Jev can't answer, the chat model does, capped at 75.
+- Ask the advisor to categorise for you and it does: every waiting row cashflow is at least 80% sure of is filed at
+  once, and the rest come back as a list to review with its best guess. Say you want it to continue and later
+  imports are filed the same way.
+
+### Phone
+
+- While you type, the tab bar steps aside and the advisor's message box sits on the keyboard.
+- No zooming: pinch and double-tap zoom are off, and form fields are large enough that iOS doesn't zoom into them.
+
 ### Danger zone: start over with your imports
 
 - Settings has a Danger zone. "Reset my imported data" undoes every statement imported into your accounts, newest first,
