@@ -2,10 +2,13 @@
 
 ## Unreleased
 
-### Closing the inbox's category picker
+### The inbox's category picker on a phone
 
 - A tap or click outside the inbox's category, sharing and pairing pickers closes them without choosing anything. On a
   phone, which has no Escape key, there was no way out except picking a category.
+- On a phone the picker has a Cancel button, opens without raising the keyboard over the list, and lists every
+  category in a list that scrolls (it stopped at twelve). Rows no longer all say "Expense category"; the kind shows
+  only where the options differ, as for money coming in.
 
 ### Logos from more websites
 

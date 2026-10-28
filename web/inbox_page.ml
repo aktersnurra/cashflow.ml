@@ -18,9 +18,16 @@ let page ?(embedded = false) ~(ctx : Ctx.t) graph =
   let accounts = Remote.load ~name:"list_accounts" ~ctx graph in
   let selected, set_selected = Bonsai.state 0 graph in
   let picker, set_picker = Bonsai.state No_picker graph in
-  (* The picker's input takes focus whenever the picker opens, so typing filters right away. *)
+  (* The picker's input takes focus whenever the picker opens, so typing filters right away. Not on a touch screen,
+     where focus raises the keyboard over the list people tap from. *)
   let picker_open = let%arr picker in match picker with Category _ | Share _ -> true | No_picker | Pair _ -> false in
-  let focus = match%sub picker_open with true -> Bonsai_web.Effect.Focus.on_activate () graph | false -> Bonsai.return Vdom.Attr.empty in
+  let touch_screen =
+    Js.to_bool (Js.Unsafe.get (Js.Unsafe.meth_call Dom_html.window "matchMedia" [| Js.Unsafe.inject (Js.string "(hover: none)") |]) "matches")
+  in
+  let focus =
+    if touch_screen then Bonsai.return Vdom.Attr.empty
+    else match%sub picker_open with true -> Bonsai_web.Effect.Focus.on_activate () graph | false -> Bonsai.return Vdom.Attr.empty
+  in
   let%arr focus and inbox and accounts and selected and set_selected and picker and set_picker and locale = ctx.locale and changed = ctx.changed
   and notify = ctx.notify and session = ctx.session in
   let currency = J.str ~default:"SEK" (J.path [ "user"; "default_currency" ] session) in
@@ -113,27 +120,38 @@ let page ?(embedded = false) ~(ctx : Ctx.t) graph =
   let category_picker ~title ~query ~set_query ~options ~choose =
     let all_options = options in
     let options = List.filter options ~f:(Accounts_data.matches query) in
-    (* A tap outside closes it: on a phone there is no Escape key. *)
+    (* A row's kind tells options apart only where they differ: income, or a move from another account. *)
+    let mixed =
+      match all_options with
+      | [] -> false
+      | (first : Accounts_data.account) :: rest -> List.exists rest ~f:(fun a -> not (String.equal a.kind first.kind))
+    in
+    (* A tap outside closes it, and so does Cancel, which a phone shows: there is no Escape key there. *)
     Vdom.Node.div
       ~attrs:[ Vdom.Attr.class_ "overlay"; Vdom.Attr.on_click (fun _ -> set_picker No_picker) ]
       [ Vdom.Node.div
           ~attrs:[ Vdom.Attr.class_ "palette"; Vdom.Attr.on_click (fun _ -> Effect.Stop_propagation) ]
-          [ Vdom.Node.input
-              ~attrs:
-                [ focus; Vdom.Attr.placeholder title; Vdom.Attr.value_prop query;
-                  Vdom.Attr.on_input (fun _ v -> set_query v);
-                  Vdom.Attr.on_keydown (fun e ->
-                      match Js.Optdef.case e##.key (fun () -> "") Js.to_string with
-                      | "Enter" -> (
-                          match List.filter all_options ~f:(Accounts_data.matches (Ui.event_value e)) with
-                          | first :: _ -> choose first.Accounts_data.id
-                          | [] -> Effect.Ignore)
-                      | "Escape" -> set_picker No_picker
-                      | _ -> Effect.Ignore) ]
-              ();
+          [ Ui.div ~cls:"palette-head"
+              [ Vdom.Node.input
+                  ~attrs:
+                    [ focus; Vdom.Attr.placeholder title; Vdom.Attr.value_prop query;
+                      Vdom.Attr.on_input (fun _ v -> set_query v);
+                      Vdom.Attr.on_keydown (fun e ->
+                          match Js.Optdef.case e##.key (fun () -> "") Js.to_string with
+                          | "Enter" -> (
+                              match List.filter all_options ~f:(Accounts_data.matches (Ui.event_value e)) with
+                              | first :: _ -> choose first.Accounts_data.id
+                              | [] -> Effect.Ignore)
+                          | "Escape" -> set_picker No_picker
+                          | _ -> Effect.Ignore) ]
+                  ();
+                Ui.button ~kind:"palette-cancel" (Msg.action_cancel locale) (set_picker No_picker) ];
             Ui.div ~cls:"list"
-              (List.map (List.take options 12) ~f:(fun (a : Accounts_data.account) ->
-                   Vdom.Node.div ~attrs:[ Vdom.Attr.class_ "row clickable"; Vdom.Attr.on_click (fun _ -> choose a.id) ] [ Ui.div ~cls:"row-title" [ Ui.text a.name ]; Ui.span ~cls:"row-sub" [ Ui.text (Accounts_data.kind_label locale a.kind) ] ])) ] ]
+              (List.map options ~f:(fun (a : Accounts_data.account) ->
+                   Vdom.Node.div
+                     ~attrs:[ Vdom.Attr.class_ "row clickable"; Vdom.Attr.on_click (fun _ -> choose a.id) ]
+                     [ Ui.div ~cls:"row-title" [ Ui.text a.name ];
+                       (if mixed then Ui.span ~cls:"row-sub" [ Ui.text (Accounts_data.kind_label locale a.kind) ] else Vdom.Node.none) ])) ] ]
   in
   let overlay =
     match picker, current with

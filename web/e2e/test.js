@@ -153,7 +153,7 @@ fs.writeFileSync(out + '/savings.csv', savings);
     await page.keyboard.type('Mat');
     const groceriesOption = page.locator('.palette .row', { hasText: /^Mat & hushåll/ });
     await groceriesOption.waitFor({ timeout: 10000 });
-    assert.equal(await groceriesOption.locator('.row-sub').textContent(), 'Utgiftskategori', 'its kind in Swedish too');
+    assert.equal(await groceriesOption.locator('.row-sub').count(), 0, 'every option is an expense category: no kind label');
     await page.screenshot({ path: out + '/16-inbox-picker-sv.png' });
     await page.keyboard.press('Escape');
     await page.click('.sidebar >> text=Översikt');
@@ -204,6 +204,19 @@ fs.writeFileSync(out + '/savings.csv', savings);
     await page.touchscreen.tap(195, 20);
     await page.waitForSelector('.overlay', { state: 'detached', timeout: 5000 });
     assert.equal(await rows.count(), pending, 'closing the sheet categorizes nothing');
+    // It opens without raising the keyboard over the list, and has a Cancel to tap.
+    await page.locator('.page:visible .row.selected .button', { hasText: 'Välj kategori' }).tap();
+    await page.waitForSelector('.overlay .palette', { timeout: 10000 });
+    assert.equal(await page.evaluate(() => document.activeElement.matches('.palette input')), false, 'no keyboard on open');
+    // Without typing, every category must be reachable: the last one scrolls into reach.
+    assert.ok(await page.locator('.palette .row').count() > 12, 'the list is not cut short at twelve');
+    const last = page.locator('.palette .row').last();
+    await last.scrollIntoViewIfNeeded();
+    assert.ok((await last.boundingBox()).y + 20 < 844, 'the last category can be scrolled into view');
+    await page.screenshot({ path: out + '/24-phone-picker.png' });
+    await page.locator('.palette-cancel').tap();
+    await page.waitForSelector('.overlay', { state: 'detached', timeout: 5000 });
+    assert.equal(await rows.count(), pending, 'Cancel categorizes nothing');
   }, { hasTouch: true, isMobile: true });
   await browser.close();
   console.log(errors.length ? 'ERRORS:\n' + errors.join('\n') : 'no browser errors');
