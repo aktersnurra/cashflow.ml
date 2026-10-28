@@ -52,6 +52,7 @@ let parse_call ~name ~arguments =
     | "bank_accounts" -> Some []
     | "propose_entry" -> Some [ "from_account"; "to_account"; "amount"; "date"; "description" ]
     | "propose_save_goal" -> Some [ "name"; "target_amount"; "target_date"; "monthly_amount" ]
+    | "propose_update_goal" -> Some [ "goal"; "name"; "target_amount"; "target_date"; "monthly_amount" ]
     | "propose_new_category" -> Some [ "name"; "kind" ]
     | _ -> None
   in
@@ -96,6 +97,12 @@ let parse_call ~name ~arguments =
               let text f k = match List.assoc_opt k f with Some `Null -> None | _ -> text f k in
               let short k = Option.map (fun s -> if String.length s > 30 then raise Invalid else s) (text f k) in
               T.Propose_goal { name = require (text f "name"); target_amount = require (short "target_amount"); target_date = short "target_date"; monthly_amount = short "monthly_amount" }
+          | "propose_update_goal" ->
+              let text f k = match List.assoc_opt k f with Some `Null -> None | _ -> text f k in
+              let short k = Option.map (fun s -> if String.length s > 30 then raise Invalid else s) (text f k) in
+              T.Propose_update_goal
+                { goal = require (T.goal_reference (require (text f "goal"))); name = text f "name"; target_amount = short "target_amount"; target_date = short "target_date";
+                  monthly_amount = short "monthly_amount" }
           | "propose_new_category" ->
               let kind = match require (text f "kind") with "expense" -> `Expense | "income" -> `Income | _ -> raise Invalid in
               T.Propose_category { name = require (text f "name"); kind }
@@ -160,6 +167,7 @@ type aliases = {
   accounts : (Account_id.t, string) Hashtbl.t;
   series : (string, string) Hashtbl.t;
   rows : (string, Transfer_id.t) Hashtbl.t;  (** inbox row aliases issued to this run, never persisted *)
+  goals : (string, string) Hashtbl.t;  (** goal aliases issued to this run, never persisted *)
   evidence : (A.Evidence_id.t, T.evidence) Hashtbl.t;
   selected : (A.Evidence_id.t, int) Hashtbl.t;
 }
@@ -185,6 +193,7 @@ let create_aliases (service : Service.t) ~principal ~scope ~conversation =
         accounts = Hashtbl.create 32;
         series = Hashtbl.create 20;
         rows = Hashtbl.create 32;
+        goals = Hashtbl.create 20;
         evidence = Hashtbl.create 8;
         selected = Hashtbl.create 8;
       }
@@ -333,7 +342,7 @@ let read (service : Service.t) ~principal ~scope ~aliases ~currency:pinned reque
                 && s.input.leave_out = []
                 && List.length s.leave_out <= 20
                 && List.length s.input.one_off <= 10
-            | Recurring _ | Goals _ | Propose_budget _ | Inbox_rows _ | Categories _ | Propose_rule _ | Propose_goal _ | Propose_category _ | Bank_accounts _ | Propose_entry _ -> true
+            | Recurring _ | Goals _ | Propose_budget _ | Inbox_rows _ | Categories _ | Propose_rule _ | Propose_goal _ | Propose_update_goal _ | Propose_category _ | Bank_accounts _ | Propose_entry _ -> true
             | Propose_categorize { rows } ->
                 let n = List.length rows in
                 n >= 1 && n <= 20 && List.length (List.sort_uniq String.compare (List.map (fun (r, _) -> T.row_reference_text r) rows)) = n
@@ -534,9 +543,9 @@ let read (service : Service.t) ~principal ~scope ~aliases ~currency:pinned reque
                          | Ok d when Date.compare d ctx.today > 0 && Date.compare d (Date.add_days ctx.today 18_250) <= 0 -> Ok (Some d)
                          | _ -> error A.Invalid_tool_arguments)
                   in
-                  (* A goal name that already exists is only refused when it is applied: refusing it here would tell the
-                     model which goal names exist, and goal names are not shown to it. *)
-                  if (match monthly with Some m -> Int64.compare m target > 0 | None -> false) then error A.Invalid_tool_arguments
+                  (* Goal names are shown to the model, so a name that exists is refused here, and again when applied. *)
+                  let exists = List.exists (fun (o : Planning_store.goal) -> String.equal (String.lowercase_ascii o.name) (String.lowercase_ascii name)) (Planning_store.goals service.Service.db (Insights.budget_owner ctx)) in
+                  if exists || (match monthly with Some m -> Int64.compare m target > 0 | None -> false) then error A.Invalid_tool_arguments
                   else
                     let owner_text = match Insights.budget_owner ctx with Owner.Household _ -> "household" | Owner.User _ -> "personal" in
                     let money label n = { A.label; value = A.Money { minor_units = n; currency = ctx.currency } } in
@@ -561,6 +570,87 @@ let read (service : Service.t) ~principal ~scope ~aliases ~currency:pinned reque
                                           ("monthly_amount", (match monthly with Some m -> `String (Int64.to_string m) | None -> `Null)) ]);
                             precondition = "{}" },
                         1, 1, [] )
+              | Propose_update_goal { goal; name; target_amount; target_date; monthly_amount } ->
+                  let scale = Currency.scale ctx.currency in
+                  let* current =
+                    match Hashtbl.find_opt aliases.goals (T.goal_reference_text goal) with
+                    | None -> error A.Not_found
+                    | Some id -> (
+                        match Planning_store.find_goal service.Service.db id with
+                        | Some g
+                          when Access.can_use ctx.access g.goal_owner && Owner.equal g.goal_owner (Insights.budget_owner ctx) && String.equal g.currency (Currency.code ctx.currency) -> Ok g
+                        | _ -> error A.Not_found)
+                  in
+                  let positive text = match Json.parse_decimal ~scale text with Some n when Int64.compare n 0L > 0 -> Ok n | _ -> error A.Invalid_tool_arguments in
+                  let* new_name = match name with None -> Ok None | Some n -> (match one_line ~min:1 ~max:60 n with Some n -> Ok (Some n) | None -> error A.Invalid_tool_arguments) in
+                  let* new_target = match target_amount with None -> Ok None | Some t -> let* n = positive t in Ok (Some n) in
+                  let* new_monthly =
+                    match monthly_amount with
+                    | None -> Ok None
+                    | Some m -> (match Json.parse_decimal ~scale m with Some n when Int64.compare n 0L >= 0 -> Ok (Some n) | _ -> error A.Invalid_tool_arguments)
+                  in
+                  let* new_date =
+                    match target_date with
+                    | None -> Ok None
+                    | Some d -> (
+                        match Date.of_string d with
+                        | Ok d when Date.compare d ctx.today > 0 && Date.compare d (Date.add_days ctx.today 18_250) <= 0 -> Ok (Some d)
+                        | _ -> error A.Invalid_tool_arguments)
+                  in
+                  (* Only what actually changes counts; asking for what is already there is not a proposal. *)
+                  let new_name = Option.bind new_name (fun n -> if String.equal n current.name then None else Some n) in
+                  let new_target = Option.bind new_target (fun n -> if Int64.equal n current.target_amount then None else Some n) in
+                  let new_monthly = Option.bind new_monthly (fun n -> if Option.equal Int64.equal (Some n) current.monthly_amount then None else Some n) in
+                  let new_date = Option.bind new_date (fun d -> if Option.equal Date.equal (Some d) current.target_date then None else Some d) in
+                  let others = Planning_store.goals service.Service.db (Insights.budget_owner ctx) in
+                  let renamed_to_existing =
+                    match new_name with
+                    | Some n -> List.exists (fun (o : Planning_store.goal) -> o.goal_id <> current.goal_id && String.equal (String.lowercase_ascii o.name) (String.lowercase_ascii n)) others
+                    | None -> false
+                  in
+                  let target_after = Option.value new_target ~default:current.target_amount in
+                  let monthly_after = match new_monthly with Some m -> Some m | None -> current.monthly_amount in
+                  if (new_name, new_target, new_monthly, new_date) = (None, None, None, None)
+                     || (match monthly_after with Some m -> Int64.compare m target_after > 0 | None -> false)
+                     || renamed_to_existing
+                  then error A.Invalid_tool_arguments
+                  else
+                    let current_name = Option.value (one_line ~min:1 ~max:60 current.name) ~default:"goal" in
+                    let money label n = { A.label; value = A.Money { minor_units = n; currency = ctx.currency } } in
+                    let was_money label = function Some n -> money label n | None -> { A.label; value = A.Text "none" } in
+                    let facts =
+                      [ { A.label = "Goal"; value = A.Text current_name } ]
+                      @ (match new_name with Some n -> [ { A.label = "Name"; value = A.Text n }; { A.label = "Name was"; value = A.Text current_name } ] | None -> [])
+                      @ (match new_target with Some n -> [ money "Target" n; money "Target was" current.target_amount ] | None -> [])
+                      @ (match new_date with
+                         | Some d ->
+                             [ { A.label = "Target date"; value = A.Date d };
+                               (match current.target_date with Some o -> { A.label = "Target date was"; value = A.Date o } | None -> { A.label = "Target date was"; value = A.Text "none" }) ]
+                         | None -> [])
+                      @ (match new_monthly with Some n -> [ money "Monthly saving" n; was_money "Monthly saving was" current.monthly_amount ] | None -> [])
+                    in
+                    let opt_text f = function Some v -> `String (f v) | None -> `Null in
+                    let opt_json_date = function Some d -> `String (Date.to_string d) | None -> `Null in
+                    Ok
+                      ( T.Proposal_card_result
+                          { tool = "propose_update_goal"; kind = "update_goal"; facts;
+                            model =
+                              [ ("goal", T.Text_value current_name);
+                                ("new_name", (match new_name with Some n -> T.Text_value n | None -> T.Null_value));
+                                ("new_target", (match new_target with Some n -> T.Number_value n | None -> T.Null_value));
+                                ("new_target_date", (match new_date with Some d -> T.Text_value (Date.to_string d) | None -> T.Null_value));
+                                ("new_monthly_saving", (match new_monthly with Some n -> T.Number_value n | None -> T.Null_value)) ];
+                            accounts = [];
+                            arguments =
+                              Yojson.Safe.to_string
+                                (`Assoc [ ("goal_id", `String current.goal_id); ("name", opt_text Fun.id new_name); ("target_amount", opt_text Int64.to_string new_target);
+                                          ("target_date", opt_json_date new_date); ("monthly_amount", opt_text Int64.to_string new_monthly) ]);
+                            (* What the goal is now: applying it to a goal that has changed since is out of date, and undoing puts this back. *)
+                            precondition =
+                              Yojson.Safe.to_string
+                                (`Assoc [ ("name", `String current.name); ("target_amount", `String (Int64.to_string current.target_amount));
+                                          ("target_date", opt_json_date current.target_date); ("monthly_amount", opt_text Int64.to_string current.monthly_amount) ]) },
+                        1, 1, [] )
               | Propose_category { name; kind } ->
                   let* name = match one_line ~min:1 ~max:40 name with Some n -> Ok n | None -> error A.Invalid_tool_arguments in
                   let kind_account = match kind with `Expense -> Account.Expense | `Income -> Account.Income in
@@ -569,7 +659,7 @@ let read (service : Service.t) ~principal ~scope ~aliases ~currency:pinned reque
                     List.exists
                       (fun (i : Account_info.t) ->
                         i.account.kind = kind_account && (not i.account.closed) && Owner.equal i.account.owner owner
-                        && String.equal (String.lowercase_ascii i.account.name) (String.lowercase_ascii name))
+                        && List.exists (fun n -> String.equal (String.lowercase_ascii n) (String.lowercase_ascii name)) (Starter.names i))
                       (Insights.accounts ctx)
                   in
                   if taken then error A.Invalid_tool_arguments
@@ -676,8 +766,18 @@ let read (service : Service.t) ~principal ~scope ~aliases ~currency:pinned reque
                   let ys =
                     take 20 xs
                     |> List.map (fun (x : Insights.goal_progress) ->
+                        let reference =
+                          match Hashtbl.fold (fun a id found -> if String.equal id x.goal.goal_id then Some a else found) aliases.goals None with
+                          | Some a -> a
+                          | None ->
+                              let a = Printf.sprintf "goal_%s_%d" aliases.nonce (Hashtbl.length aliases.goals + 1) in
+                              Hashtbl.add aliases.goals a x.goal.goal_id;
+                              a
+                        in
                         {
-                          T.target = x.goal.target_amount;
+                          T.reference = require (T.goal_reference reference);
+                          name = Option.value (one_line ~min:1 ~max:60 x.goal.name) ~default:"goal";
+                          target = x.goal.target_amount;
                           saved = x.saved;
                           remaining = x.remaining;
                           target_date = x.goal.target_date;
@@ -1028,6 +1128,8 @@ let model_json ~aliases (e : T.evidence) =
                 (fun (x : T.goal) ->
                   obj
                     [
+                      ("reference", str (T.goal_reference_text x.reference));
+                      ("name", str x.name);
                       ("target", num x.target);
                       ("saved", num x.saved);
                       ("remaining", num x.remaining);

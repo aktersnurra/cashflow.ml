@@ -22,6 +22,59 @@
 - "Add transaction" and "Open account" are plain buttons rather than the page's main action: statements bring most
   rows in, and opening an account is rare.
 
+### An undone import leaves no trace
+
+- Undoing an import reverses its rows in the ledger, and the account's list showed the original row, the reversal and,
+  after uploading the file again, the new row: every transaction three times, though the balance was right. The list
+  now shows an imported row once: a row that was undone, and the entry that undid it, are left out.
+- The reports that look at single transactions saw them too. After an undo and a new upload, the forecast lost its bills
+  and salary, recurring payments found none, and the largest transactions listed rows twice. A transfer reversed the same
+  day, and its reversal, now cancel out before any report reads them. Totals (cash flow, spending by category, net
+  worth) were right and are unchanged.
+
+### The weekly brief covers households and what is coming
+
+- Home's weekly brief follows the personal, household and family switch: the household's brief is about the household's
+  own accounts, and a member's personal spending is not in it. It also says what recurring payments are expected in the
+  next seven days. The sentences are written a few seconds after the figures stop changing, once per set of figures.
+
+### The advisor can propose changing a savings goal
+
+- Ask the advisor to raise a goal's target, move its date, change the monthly saving or rename it. The card names the goal
+  and shows each new value beside the old one; nothing changes until you click Apply, and Undo puts the goal back unless
+  you have changed it since. A change is refused when the goal is no longer as it was proposed against.
+- To say which goal, the advisor is now shown your goals' names (one line each) with a reference. Until now it saw only
+  their figures.
+  
+### A faster Accounts page
+
+- The Accounts page no longer reads every transaction you have ever had to draw the net-worth figure: the database adds
+  up each account's movements per day and only those sums are loaded. The account's own page shows its latest 50
+  transactions, with a button for older ones, instead of 200 at once.
+- Answers from the server are sent gzipped to browsers that accept it.
+
+### The advisor no longer proposes a category you already have under another name
+
+- A proposed category counts as a duplicate if it matches an existing one in any language: asking for "Mat & hushåll"
+  when the starter Groceries is already there is refused, as "Groceries" is.
+
+### A weekly brief on Home
+
+- Home opens with last week (Monday to Sunday) in figures: income, spending, the week before and the three categories
+  that took the most, with two or three sentences that a model writes from those figures alone. Whether there is a brief,
+  and every number in it, is computed by code; a week with no income or spending has none. The sentences are written once
+  for a given set of figures (an import that changes them writes them again) and never per transaction, and nothing is
+  sent outside the app. Without a configured model the figures show on their own.
+
+### OpenRouter
+
+- Requests to OpenRouter now carry the app's public URL as `HTTP-Referer` next to the `cashflow` title, so usage shows
+  up under the app in the OpenRouter dashboard.
+- The advisor now runs on `anthropic/claude-sonnet-5.5` via Amazon Bedrock. `claude-sonnet-4.6` on the same route is
+  still accepted.
+- New `openrouter.advisor_model` setting: keep `model` on Haiku for categorising, pairing and summaries, and run only
+  the advisor on Sonnet. Without it the advisor follows `model`, as before.
+
 ### The advisor can propose a manual entry
 
 - Ask the advisor to add a purchase, some income, or a move between your own accounts. It appears as a card with the
@@ -79,6 +132,16 @@
   changed since the proposal (you categorized it yourself, say), none is filed and the card says so; they are filed
   together or not at all. Money out can only go to an expense category and money in to an income one.
 - Not built yet: proposing a new category or rule, goals and entries, and undoing an applied proposal.
+
+### Transfers between your accounts
+
+- Importing a statement now pairs a move between your own accounts (a salary transfer to the household account, checking
+  to savings) with its other half automatically, so it no longer counts as income in one account and spending in the
+  other. Only clear matches pair by themselves: the same amount the other way, within three days, on another account,
+  with no rival. When an assistant is configured it judges the unsure ones, and anything it isn't sure of stays in the
+  inbox.
+- New button in the inbox, "Find transfers between my accounts", does the same for everything already waiting there.
+- Not built yet: rows you already filed under a category are not re-paired.
 
 ### Command bar
 

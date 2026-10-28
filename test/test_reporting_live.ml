@@ -289,11 +289,7 @@ let forecast_paired_imports () =
   in
   import checking "2026-07-24;HUSHÅLL;-8000,00\n2026-08-25;HUSHÅLL;-8000,00\n2026-09-01;LÖN;30000,00\n2026-09-25;HUSHÅLL;-8000,00\n";
   import shared "2026-07-24;FRÅN ALICE;8000,00\n2026-08-25;FRÅN ALICE;8000,00\n2026-09-25;FRÅN ALICE;8000,00\n";
-  let row text on =
-    (List.find (fun (v : Inbox.item_view) -> v.transfer.transfer.memo.description = text && Date.to_string v.transfer.transfer.value_date = on)
-       (Inbox.list service alice ~limit:50)).item.transfer_id
-  in
-  List.iter (fun on -> ignore (ok (Inbox.pair service alice ~out_id:(row "HUSHÅLL" on) ~in_id:(row "FRÅN ALICE" on)))) [ "2026-07-24"; "2026-08-25"; "2026-09-25" ];
+  Alcotest.(check int) "the contributions paired themselves" 1 (Inbox.count service alice);
   Planning_store.save_goal service.db ~now (goal (Owner.Household household.id) "Shared costs" 800_000L);
   let report =
     get (Reporting_live.run ~service ~access:alice (fun () ->

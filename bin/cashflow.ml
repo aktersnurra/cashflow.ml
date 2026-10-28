@@ -75,8 +75,8 @@ let serve path =
           let assistant =
             Option.map
               (fun api_key ->
-                Llm.openrouter ~post:(Https.post env) ~api_key ~model:config.openrouter_model
-                  ~provider_only:config.openrouter_provider_only)
+                Llm.openrouter ~app_url:config.public_base_url ~post:(Https.post env) ~api_key ~model:config.openrouter_model
+                  ~provider_only:config.openrouter_provider_only ())
               config.openrouter_api_key
           in
           let service = Service.make ?assistant ~logo_network:(Https.logo_network env)
@@ -96,9 +96,9 @@ let serve path =
           in
           Eio.Switch.run (fun sw ->
               let provider =
-                Cashflow_io.Advisor_provider.create ?limits:config.advisor_limits ~post:(Https.stream_post env)
+                Cashflow_io.Advisor_provider.create ?limits:config.advisor_limits ~app_url:config.public_base_url ~post:(Https.stream_post env)
                   ~api_key:(Option.value config.openrouter_api_key ~default:"")
-                  ~model:config.openrouter_model ~provider_only:config.openrouter_provider_only ()
+                  ~model:config.advisor_model ~provider_only:config.openrouter_provider_only ()
               in
               let origin = Eio.Time.Mono.now env#mono_clock in
               let clock : Cashflow_io.Advisor_runtime.clock =

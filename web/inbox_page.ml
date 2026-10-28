@@ -59,6 +59,13 @@ let page ?(embedded = false) ~(ctx : Ctx.t) graph =
     | Ok json -> set_picker (Pair (Some json))
     | Error message -> Effect.Many [ set_picker No_picker; notify message ]
   in
+  let find_moves =
+    match%bind.Effect Api.run "pair_all_moves" (`Assoc []) with
+    | Ok json ->
+        let paired = J.int (J.field "paired_by_rule" json) + J.int (J.field "paired_by_assistant" json) in
+        Effect.Many [ changed; notify (Msg.inbox_moves_found ~paired ~unsure:(J.int (J.field "still_unsure" json)) locale) ]
+    | Error message -> notify message
+  in
   let accept item =
     match J.str_opt (J.path [ "suggested_category"; "id" ] item) with Some category -> categorize item category | None -> set_picker (Category "")
   in
@@ -168,7 +175,9 @@ let page ?(embedded = false) ~(ctx : Ctx.t) graph =
                if count = 0 then Ui.empty (Msg.inbox_empty locale)
                else
                  Ui.div
-                   ([ Ui.div ~cls:"hint kbd-only" [ Ui.text (Msg.inbox_keys locale) ]; Ui.div ~cls:"list" (List.mapi items ~f:row) ]
+                   ([ Ui.div ~cls:"hint kbd-only" [ Ui.text (Msg.inbox_keys locale) ];
+                      Ui.div ~cls:"actions" [ Ui.button (Msg.inbox_find_moves locale) find_moves ];
+                      Ui.div ~cls:"list" (List.mapi items ~f:row) ]
                    @
                    if total > count then
                      [ Ui.div ~cls:"row table-foot" [ Ui.muted (Msg.inbox_showing ~shown:(Int.to_string count) ~total:(Int.to_string total) locale) ] ]

@@ -5,6 +5,7 @@ type account_reference = string
 
 type series_reference = string
 type row_reference = string
+type goal_reference = string
 type currency_code = string
 type common = { currency : currency_code option }
 type period = Cycle_offset of int
@@ -29,6 +30,7 @@ type request =
   | Propose_rule of { pattern : string; category : account_reference; direction : [ `In | `Out ] option }
       (** A merchant text that suggests a category on import (never applies it by itself). *)
   | Propose_goal of { name : string; target_amount : string; target_date : string option; monthly_amount : string option }
+  | Propose_update_goal of { goal : goal_reference; name : string option; target_amount : string option; target_date : string option; monthly_amount : string option }
   | Propose_category of { name : string; kind : [ `Expense | `Income ] }
   | Propose_categorize of { rows : (row_reference * account_reference) list }
       (** Up to 20 uncategorized rows, each with the category to file it under, for the user to confirm. *)
@@ -72,6 +74,8 @@ type budget = {
 }
 
 type goal = {
+  reference : goal_reference;
+  name : string;
   target : int64;
   saved : int64;
   remaining : int64;
@@ -198,6 +202,8 @@ let valid prefix s =
 let account_reference s = if valid "account_" s then Some s else None
 let row_reference s = if valid "row_" s then Some s else None
 let row_reference_text x = x
+let goal_reference s = if valid "goal_" s then Some s else None
+let goal_reference_text x = x
 let series_reference s = if valid "series_" s then Some s else None
 let account_reference_text x = x
 let series_reference_text x = x
@@ -213,7 +219,7 @@ let common = function
   | Forecast (c, _, _) ->
       c
   | Inbox_rows c | Categories c | Bank_accounts c -> c
-  | Propose_budget _ | Propose_categorize _ | Propose_rule _ | Propose_goal _ | Propose_category _ | Propose_entry _ -> { currency = None }
+  | Propose_budget _ | Propose_categorize _ | Propose_rule _ | Propose_goal _ | Propose_update_goal _ | Propose_category _ | Propose_entry _ -> { currency = None }
 
 let name = function
   | Cycle_summary_result _ -> "cycle_summary"

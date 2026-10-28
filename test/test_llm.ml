@@ -103,6 +103,155 @@ let test_month_review_in_the_readers_language () =
   Alcotest.(check bool) "in Swedish" true (Str_compat.contains ~sub:"Mat & hushåll" prompt);
   Alcotest.(check bool) "not in English" false (Str_compat.contains ~sub:"Groceries" prompt)
 
+(* The weekly brief: the last full week (Monday to Sunday), its figures computed by code, the sentences written from those
+   figures once per set of figures and never when nothing asks for them. *)
+let test_weekly_brief () =
+  let asked = ref [] in
+  let writer : Llm.t = { fake with complete = (fun ?schema:_ ~system:_ ~user () -> asked := user :: !asked; Ok "A quiet week.") } in
+  let service = Service.make ~now:(fun () -> now) ~assistant:writer (Store_sqlite.open_memory ()) in
+  let alice = sign_in service "alice" in
+  let checking = open_checking service alice "Checking" in
+  let spend name day minor =
+    let e = entry name ~from_account:checking ~to_account:(account_named service alice "Groceries") minor in
+    ignore (ok (Service.add_entry service alice { e with value_date = date day }))
+  in
+  Alcotest.(check bool) "an empty week has no brief" true (Option.is_none (Cashflow_io.Weekly_brief.compute service alice ~write:true));
+  Alcotest.(check int) "and asks no one" 0 (List.length !asked);
+  spend "this week" "2026-10-15" 250_00;
+  spend "the week before" "2026-10-08" 100_00;
+  spend "too recent to count" "2026-10-20" 999_00;
+  let brief = Option.get (Cashflow_io.Weekly_brief.compute service alice ~write:false) in
+  Alcotest.(check string) "Monday to Sunday" "2026-10-12 to 2026-10-18" (Cashflow_core.Date.to_string brief.first ^ " to " ^ Cashflow_core.Date.to_string brief.last);
+  Alcotest.(check int64) "the week's spending" 250_00L brief.spending;
+  Alcotest.(check int64) "the week before" 100_00L brief.previous_spending;
+  Alcotest.(check (option string)) "no text until it is asked for" None brief.text;
+  Alcotest.(check bool) "and it can be written" true brief.can_write;
+  Alcotest.(check int) "reading asked no one" 0 (List.length !asked);
+  let written = Option.get (Cashflow_io.Weekly_brief.compute service alice ~write:true) in
+  Alcotest.(check (option string)) "the text" (Some "A quiet week.") written.text;
+  ignore (Cashflow_io.Weekly_brief.compute service alice ~write:true);
+  Alcotest.(check int) "written once for these figures" 1 (List.length !asked);
+  Alcotest.(check bool) "read back without asking" true ((Option.get (Cashflow_io.Weekly_brief.compute service alice ~write:false)).text = Some "A quiet week.");
+  spend "late" "2026-10-16" 50_00;
+  ignore (Cashflow_io.Weekly_brief.compute service alice ~write:true);
+  Alcotest.(check int) "new figures, new text" 2 (List.length !asked);
+  Alcotest.(check bool) "only figures reach the model" true (not (Str_compat.contains ~sub:"late" (List.hd !asked)))
+
+let test_weekly_brief_edges () =
+  let week today = let f, l = Cashflow_io.Weekly_brief.last_full_week (date today) in Cashflow_core.Date.to_string f ^ " " ^ Cashflow_core.Date.to_string l in
+  Alcotest.(check string) "Monday" "2026-10-12 2026-10-18" (week "2026-10-19");
+  Alcotest.(check string) "Sunday" "2026-10-12 2026-10-18" (week "2026-10-25");
+  Alcotest.(check string) "the year turn" "2026-12-21 2026-12-27" (week "2027-01-03");
+  Alcotest.(check string) "the first Monday of a year" "2026-12-28 2027-01-03" (week "2027-01-04");
+  let asked = ref 0 in
+  let failing : Llm.t = { fake with complete = (fun ?schema:_ ~system:_ ~user:_ () -> incr asked; Error "provider down") } in
+  let service = Service.make ~now:(fun () -> now) ~assistant:failing (Store_sqlite.open_memory ()) in
+  let alice = sign_in service "alice" in
+  let checking = open_checking service alice "Checking" in
+  let e = entry "lunch" ~from_account:checking ~to_account:(account_named service alice "Groceries") 250_00 in
+  ignore (ok (Service.add_entry service alice { e with value_date = date "2026-10-15" }));
+  let brief write = Option.get (Cashflow_io.Weekly_brief.compute service alice ~write) in
+  Alcotest.(check bool) "can be written before the attempt" true (brief false).can_write;
+  Alcotest.(check (option string)) "a failure leaves no text" None (brief true).text;
+  ignore (brief true); ignore (brief true);
+  Alcotest.(check int) "and is not asked again for the same figures" 1 !asked;
+  Alcotest.(check bool) "nor offered" false (brief false).can_write;
+  let plain = Service.make ~now:(fun () -> now) (Store_sqlite.open_memory ()) in
+  let bob = sign_in plain "bob" in
+  let e = entry "lunch" ~from_account:(open_checking plain bob "Checking") ~to_account:(account_named plain bob "Groceries") 250_00 in
+  ignore (ok (Service.add_entry plain bob { e with value_date = date "2026-10-15" }));
+  let without = Option.get (Cashflow_io.Weekly_brief.compute plain bob ~write:true) in
+  Alcotest.(check bool) "without a model the figures stand alone" true (without.text = None && not without.can_write && without.spending = 250_00L)
+
+(* A household's brief is about the household's own accounts: a member's personal spending is not in it, a stranger gets none,
+   and the model sees figures only, never account names. *)
+let test_weekly_brief_scopes () =
+  let asked = ref [] in
+  let writer : Llm.t = { fake with complete = (fun ?schema:_ ~system:_ ~user () -> asked := user :: !asked; Ok "A week.") } in
+  let service = Service.make ~now:(fun () -> now) ~assistant:writer (Store_sqlite.open_memory ()) in
+  let alice = sign_in service ~admin:true "alice" in
+  let household = ok (Service.create_household service alice ~name:"Home" ~default_currency:"SEK") in
+  let alice = Service.access_for service (Access.user alice) in
+  let bob = sign_in service "bob" in
+  ignore (ok (Service.invite_member service alice ~email:"bob@example.com"));
+  let bob = ok (Service.respond_to_invitation service bob ~household_id:household.id ~accept:true) in
+  let carol = sign_in service "carol" in
+  let shared = open_checking service alice ~owner:(Household household.id) "Shared pot" in
+  let mine = open_checking service alice "Alice private checking" in
+  let spend name from_account category minor =
+    let e = entry name ~from_account ~to_account:category minor in
+    ignore (ok (Service.add_entry service alice { e with value_date = date "2026-10-15" }))
+  in
+  let household_groceries =
+    (List.find (fun (i : Account_info.t) -> i.account.name = "Groceries" && Owner.equal i.account.owner (Household household.id)) (Service.accounts service alice)).account.id
+  in
+  spend "mine" mine (account_named service alice "Groceries") 250_00;
+  spend "ours" shared household_groceries 400_00;
+  let spending ?(scope = Analytics.Me) access = Option.map (fun (b : Cashflow_io.Weekly_brief.t) -> b.spending) (Cashflow_io.Weekly_brief.compute ~scope service access ~write:true) in
+  Alcotest.(check (option int64)) "alice, personal" (Some 250_00L) (spending alice);
+  Alcotest.(check (option int64)) "alice, household" (Some 400_00L) (spending ~scope:Household alice);
+  Alcotest.(check (option int64)) "alice, family" (Some 650_00L) (spending ~scope:Family alice);
+  Alcotest.(check (option int64)) "bob sees the household's, not alice's" (Some 400_00L) (spending ~scope:Household bob);
+  let worded = List.length !asked in
+  Alcotest.(check (option int64)) "bob's family brief leaves out alice's personal spending" (Some 400_00L) (spending ~scope:Family bob);
+  Alcotest.(check int) "and the same figures in another scope are worded on their own" (worded + 1) (List.length !asked);
+  Alcotest.(check (option int64)) "bob has nothing of his own" None (spending bob);
+  Alcotest.(check (option int64)) "a stranger has no household brief" None (spending ~scope:Household carol);
+  Alcotest.(check bool) "each scope was worded on its own figures" true (List.length !asked >= 3);
+  List.iter
+    (fun prompt ->
+      Alcotest.(check bool) "no account names reach the model" false
+        (Str_compat.contains ~sub:"Alice private" prompt || Str_compat.contains ~sub:"Shared pot" prompt))
+    !asked
+
+(* The week is the reader's own: on Monday at UTC+13 it is still Sunday in UTC. *)
+let test_weekly_brief_follows_the_readers_timezone () =
+  let at = Option.get (Ptime.of_date_time ((2026, 10, 18), ((23, 0, 0), 0))) in
+  let service = Service.make ~now:(fun () -> at) (Store_sqlite.open_memory ()) in
+  let in_zone name timezone =
+    let access = sign_in service name in
+    let u = Access.user access in
+    ok (Service.update_settings service access { User.locale = u.locale; timezone; default_currency = u.default_currency; pay_cycle = u.pay_cycle })
+  in
+  let utc = in_zone "utc" "+00:00" and nz = in_zone "nz" "+13:00" in
+  let spend access day =
+    let e = entry ("lunch " ^ day) ~from_account:(open_checking service access "Checking") ~to_account:(account_named service access "Groceries") 100_00 in
+    ignore (ok (Service.add_entry service access { e with value_date = date day }))
+  in
+  spend utc "2026-10-08";
+  spend nz "2026-10-15";
+  let week access = Option.map (fun (b : Cashflow_io.Weekly_brief.t) -> Cashflow_core.Date.to_string b.first) (Cashflow_io.Weekly_brief.compute service access ~write:false) in
+  Alcotest.(check (option string)) "in UTC it is still Sunday, so last week began on the 5th" (Some "2026-10-05") (week utc);
+  Alcotest.(check (option string)) "at +13:00 it is Monday, so last week began on the 12th" (Some "2026-10-12") (week nz)
+
+(* What is coming: recurring payments expected within the next seven days are counted, and only those. *)
+let test_weekly_brief_upcoming () =
+  let service = make_service () in
+  let alice = sign_in service "alice" in
+  let checking = open_checking service alice "Checking" in
+  let pay day description minor =
+    let e = entry (description ^ day) ~from_account:checking ~to_account:(account_named service alice "Subscriptions") minor in
+    ignore (ok (Service.add_entry service alice { e with value_date = date day; memo = { e.memo with description } }))
+  in
+  List.iter (fun day -> pay day "NETFLIX" 129_00) [ "2026-07-23"; "2026-08-23"; "2026-09-23" ];
+  List.iter (fun day -> pay day "GYM" 400_00) [ "2026-06-01"; "2026-07-01"; "2026-08-01"; "2026-09-01" ];
+  pay "2026-10-15" "LUNCH" 50_00;
+  let upcoming () = (Option.get (Cashflow_io.Weekly_brief.compute service alice ~write:false)).upcoming in
+  Alcotest.(check (pair int int64)) "one payment is due this week" (1, 129_00L) (upcoming ());
+  (* The window is today (the 21st) through the 27th, with five days of grace for a bank that is slow to show a payment. *)
+  List.iter (fun (day, count) ->
+      let service = make_service () in
+      let alice = sign_in service "alice" in
+      let checking = open_checking service alice "Checking" in
+      let months = [ "2026-07-"; "2026-08-"; "2026-09-" ] in
+      List.iter (fun m ->
+          let e = entry (m ^ day) ~from_account:checking ~to_account:(account_named service alice "Subscriptions") 100_00 in
+          ignore (ok (Service.add_entry service alice { e with value_date = date (m ^ day); memo = { e.memo with description = "BOUNDARY" } }))) months;
+      let e = entry "other" ~from_account:checking ~to_account:(account_named service alice "Groceries") 10_00 in
+      ignore (ok (Service.add_entry service alice { e with value_date = date "2026-10-15" }));
+      Alcotest.(check int) ("expected on the " ^ day ^ "th of October") count (fst (Option.get (Cashflow_io.Weekly_brief.compute service alice ~write:false)).upcoming))
+    [ ("16", 1); ("15", 0); ("21", 1); ("27", 1); ("28", 0) ]
+
 (* Confirming an import asks the model before it takes the database, never inside the transaction,
    and still applies the suggestion. *)
 let test_no_network_inside_the_import_transaction () =
@@ -194,14 +343,18 @@ let openrouter_config fields =
 (* Privacy restrictions belong in the HTTP request, not just the configuration. *)
 let test_openrouter_privacy_policy () =
   let requests = ref [] in
-  let post ~uri:_ ~headers:_ ~body =
+  let sent_headers = ref [] in
+  let post ~uri:_ ~headers ~body =
+    sent_headers := headers;
     requests := Yojson.Safe.from_string body :: !requests;
     Ok {|{"choices":[{"message":{"content":"Groceries"}}]}|}
   in
   let config = openrouter_config "" in
-  let assistant = Llm.openrouter ~post ~api_key:"test-key" ~model:config.openrouter_model ~provider_only:config.openrouter_provider_only in
+  let assistant = Llm.openrouter ~app_url:"https://cashflow.example" ~post ~api_key:"test-key" ~model:config.openrouter_model ~provider_only:config.openrouter_provider_only () in
   Alcotest.(check (result string string)) "completion" (Ok "Groceries") (assistant.complete ~system:"Classify" ~user:"ICA" ());
   Alcotest.(check int) "one request" 1 (List.length !requests);
+  Alcotest.(check (option string)) "OpenRouter learns which app calls" (Some "https://cashflow.example") (List.assoc_opt "http-referer" !sent_headers);
+  Alcotest.(check (option string)) "and its name" (Some "cashflow") (List.assoc_opt "x-title" !sent_headers);
   let open Yojson.Safe.Util in
   let request = List.hd !requests in
   Alcotest.(check string) "model" "test-model" (member "model" request |> to_string);
@@ -211,11 +364,19 @@ let test_openrouter_privacy_policy () =
   Alcotest.(check (list string)) "only approved providers"
     [ "google-vertex"; "amazon-bedrock"; "azure" ] (member "only" provider |> to_list |> List.map to_string)
 
+(* The advisor runs on Sonnet 5.5, and 4.6 on the same route still works; any other model or route does not. *)
+let test_advisor_models () =
+  let supported model provider_only = Option.is_some (Cashflow_io.Advisor_provider.supported_limits ~model ~provider_only) in
+  Alcotest.(check bool) "5.5 on bedrock" true (supported "anthropic/claude-sonnet-5.5" [ "amazon-bedrock" ]);
+  Alcotest.(check bool) "4.6 on bedrock" true (supported "anthropic/claude-sonnet-4.6" [ "amazon-bedrock" ]);
+  Alcotest.(check bool) "5.5 elsewhere" false (supported "anthropic/claude-sonnet-5.5" [ "azure" ]);
+  Alcotest.(check bool) "another model" false (supported "anthropic/claude-haiku-5.5" [ "amazon-bedrock" ])
+
 (* With a schema the request asks for structured output, and only from endpoints that honour it. *)
 let test_openrouter_structured_output () =
   let requests = ref [] in
   let post ~uri:_ ~headers:_ ~body = requests := Yojson.Safe.from_string body :: !requests; Ok {|{"choices":[{"message":{"content":"{}"}}]}|} in
-  let assistant = Llm.openrouter ~post ~api_key:"test-key" ~model:"test-model" ~provider_only:[ "amazon-bedrock" ] in
+  let assistant = Llm.openrouter ~post ~api_key:"test-key" ~model:"test-model" ~provider_only:[ "amazon-bedrock" ] () in
   let schema = `Assoc [ ("type", `String "object") ] in
   Alcotest.(check (result string string)) "reply" (Ok "{}") (assistant.complete ~schema:("shape", schema) ~system:"Read" ~user:"rows" ());
   let open Yojson.Safe.Util in
@@ -232,7 +393,7 @@ let test_openrouter_does_not_relax_policy () =
   let requests = ref [] in
   let post ~uri:_ ~headers:_ ~body = requests := Yojson.Safe.from_string body :: !requests; Error "HTTP 404 Not Found" in
   let config = openrouter_config "(provider_only (amazon-bedrock))" in
-  let assistant = Llm.openrouter ~post ~api_key:"test-key" ~model:config.openrouter_model ~provider_only:config.openrouter_provider_only in
+  let assistant = Llm.openrouter ~post ~api_key:"test-key" ~model:config.openrouter_model ~provider_only:config.openrouter_provider_only () in
   Alcotest.(check (result string string)) "no eligible endpoint is an error" (Error "HTTP 404 Not Found")
     (assistant.complete ~system:"Classify" ~user:"ICA" ());
   Alcotest.(check int) "no relaxed-policy retry" 1 (List.length !requests);
@@ -246,7 +407,7 @@ let test_openrouter_does_not_relax_policy () =
 let test_openrouter_empty_allowlist_sends_nothing () =
   let sent = ref false in
   let post ~uri:_ ~headers:_ ~body:_ = sent := true; Error "request was sent" in
-  let assistant = Llm.openrouter ~post ~api_key:"test-key" ~model:"test-model" ~provider_only:[] in
+  let assistant = Llm.openrouter ~post ~api_key:"test-key" ~model:"test-model" ~provider_only:[] () in
   Alcotest.(check (result string string)) "empty allowlist refused"
     (Error "OpenRouter provider allowlist must not be empty") (assistant.complete ~system:"Classify" ~user:"ICA" ());
   Alcotest.(check bool) "financial data never sent" false !sent
@@ -257,11 +418,17 @@ let () =
         [ Alcotest.test_case "suggestions and privacy" `Quick test_suggestions_and_privacy;
           Alcotest.test_case "prompts name categories in the viewer's language" `Quick test_prompts_name_categories_in_the_viewers_language;
           Alcotest.test_case "month review in the reader's language" `Quick test_month_review_in_the_readers_language;
+          Alcotest.test_case "weekly brief" `Quick test_weekly_brief;
+          Alcotest.test_case "weekly brief edges" `Quick test_weekly_brief_edges;
+          Alcotest.test_case "weekly brief upcoming" `Quick test_weekly_brief_upcoming;
+          Alcotest.test_case "weekly brief scopes" `Quick test_weekly_brief_scopes;
+          Alcotest.test_case "weekly brief follows the reader's timezone" `Quick test_weekly_brief_follows_the_readers_timezone;
           Alcotest.test_case "no network inside the import transaction" `Quick test_no_network_inside_the_import_transaction;
           Alcotest.test_case "an unknown format read by the assistant" `Quick test_unknown_format_read_by_the_assistant;
           Alcotest.test_case "layout cells outside the file" `Quick test_layout_cells_outside_the_file ] );
       ( "openrouter",
         [ Alcotest.test_case "privacy policy in requests" `Quick test_openrouter_privacy_policy;
+          Alcotest.test_case "advisor models" `Quick test_advisor_models;
           Alcotest.test_case "never relax the policy" `Quick test_openrouter_does_not_relax_policy;
           Alcotest.test_case "structured output" `Quick test_openrouter_structured_output;
           Alcotest.test_case "empty allowlist sends nothing" `Quick test_openrouter_empty_allowlist_sends_nothing ] ) ]

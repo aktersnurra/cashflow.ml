@@ -172,6 +172,25 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
   let categories =
     Remote.load ~active:visible ~name:"spending_by_category" ~args:(let%arr scope and offset in `Assoc [ ("scope", `String scope); ("cycle_offset", `Int offset) ]) ~ctx graph
   in
+  (* The figures show at once; when there is no text yet, a second load asks for it to be written. That request is armed for
+     one scope and one version of the data, a few seconds after the figures arrived: a change of either lets it lapse (a run
+     of changes, like clearing last week's inbox, writes once when it settles) and a scope switch starts over. The server
+     writes once per set of figures and remembers a failure. Never on the Advisor page, where this page is not showing. *)
+  let armed, set_armed = Bonsai.state None graph in
+  let brief =
+    Remote.load ~active:visible ~name:"get_weekly_brief"
+      ~args:(let%arr armed and scope and version = ctx.version in
+             `Assoc [ ("scope", `String scope); ("write", `Bool (Option.equal [%equal: string * int] armed (Some (scope, version)))) ])
+      ~ctx graph
+  in
+  Bonsai.Edge.on_change ~equal:phys_equal brief
+    ~callback:(let%arr set_armed and advisor_route and scope and version = ctx.version in fun (result : Remote.t) ->
+      match result with
+      | Loaded json when J.bool (J.path [ "brief"; "can_write" ] json) && not advisor_route ->
+          let%bind.Effect () = Effect.of_deferred_thunk (fun () -> Async_kernel.after (Time_ns.Span.of_sec 6.)) in
+          set_armed (Some (scope, version))
+      | _ -> Effect.Ignore)
+    graph;
   let feed = Remote.load ~active:visible ~name:"get_attention_feed" ~args:(Bonsai.return (`Assoc [("narrative", `Bool false)])) ~ctx graph in
   let cards =
     let%arr feed in
@@ -199,7 +218,7 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
       ([body] @ (if eligible then [Ui.div ~cls:"finding-reply" [Ui.button (Msg.advisor_ask locale)
         (Effect.Many [set_captured (Some (finding_key, cards)); on_ask ~finding_key ~scope])]] else [])
        @ if selected then [outlet] else [])) graph in
-  let%arr summary and categories and views and offset and set_offset and scope and set_scope and locale = ctx.locale and session = ctx.session
+  let%arr summary and categories and brief and views and offset and set_offset and scope and set_scope and locale = ctx.locale and session = ctx.session
   and navigate = ctx.navigate and outlet and selected_finding and visible_cards and advisor_route in
   let cycles = match summary with Loaded json -> J.list (J.field "cycles" json) | Loading | Failed _ -> [] in
   let code = match summary with Loaded json -> J.str ~default:"SEK" (J.field "currency" json) | Loading | Failed _ -> "SEK" in
@@ -266,6 +285,32 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
           [ Ui.p (Msg.overview_empty locale); Ui.div ~cls:"actions" [ Ui.button ~kind:"primary" (Msg.import_title locale) (navigate Route.Import) ] ]
     | Loaded _, Some c ->
         Ui.div [ figures c; Remote.view ~locale categories ~f:(fun json -> if mostly_uncategorized json then Vdom.Node.none else flow c json) ]
+  in
+  let weekly =
+    match brief with
+    | Loaded json when not (J.is_null (J.field "brief" json)) ->
+        let b = J.field "brief" json in
+        let code = J.str ~default:code (J.field "currency" b) in
+        let money field = Fmt.format_money locale ~code (J.field field b) in
+        let top = J.list (J.field "top" b) in
+        Ui.div ~cls:"panel weekly-brief"
+          [ Vdom.Node.h2 [ Ui.text (Msg.brief_title ~first:(Fmt.date_json (J.field "first" b)) ~last:(Fmt.date_json (J.field "last" b)) locale) ];
+            (match J.str_opt (J.field "text" b) with
+             | Some text -> Ui.p text
+             | None -> if J.bool (J.field "can_write" b) then Ui.muted (Msg.brief_writing locale) else Vdom.Node.none);
+            Ui.div ~cls:"kpis"
+              [ Ui.kpi (Msg.label_income locale) (money "income"); Ui.kpi (Msg.label_spending locale) (money "spending") ];
+            Ui.muted (Msg.brief_before ~amount:(Fmt.money_json ~code (J.field "previous_spending" b)) locale);
+            (if J.int (J.field "upcoming_count" b) = 0 then Vdom.Node.none
+             else Ui.muted (Msg.brief_upcoming ~amount:(Fmt.money_json ~code (J.field "upcoming_total" b)) locale));
+            (if List.is_empty top then Vdom.Node.none
+             else
+               Ui.div
+                 [ Ui.muted (Msg.brief_top locale);
+                   Vdom.Node.ul
+                     (List.map top ~f:(fun c ->
+                          Vdom.Node.li [ Ui.text (J.str (J.field "name" c) ^ " " ^ Fmt.format_money locale ~code (J.field "total" c)) ])) ]) ]
+    | Loaded _ | Loading | Failed _ -> Vdom.Node.none
   in
   let attention =
     match Map.data views with

@@ -130,6 +130,41 @@ let plan_goal service ~principal ~owner ~id (p : S.proposal) =
               | Error _ -> Error ()))
   | _ -> error A.Invalid_request
 
+(* Changing a goal that exists: what the proposal asked for ([arguments], only the fields that change) on top of what the
+   goal was when it was proposed ([precondition], all of it). The goal must still be exactly as it was proposed. *)
+let goal_values json =
+  ( string_field json "name", Option.bind (string_field json "target_amount") Int64.of_string_opt,
+    Option.bind (string_field json "target_date") (fun d -> Result.to_option (Date.of_string d)), Option.bind (string_field json "monthly_amount") Int64.of_string_opt )
+
+let goal_is (g : Planning_store.goal) (name, target, date, monthly) =
+  Some g.name = name && Some g.target_amount = target && Option.equal Date.equal g.target_date date && Option.equal Int64.equal g.monthly_amount monthly
+
+let plan_update_goal service ~principal ~owner ~id:_ (p : S.proposal) =
+  let* _, ctx = scoped_context service ~principal ~owner p in
+  match string_field p.arguments "goal_id" with
+  | None -> error A.Invalid_request
+  | Some goal_id -> (
+      let new_name, new_target, new_date, new_monthly = goal_values p.arguments in
+      let others = Planning_store.goals service.Service.db (Insights.budget_owner ctx) in
+      (* Among the owner's goals that are not archived: an archived one is gone as far as the user can see. *)
+      match List.find_opt (fun (g : Planning_store.goal) -> g.goal_id = goal_id) others with
+      | Some g when Access.can_use ctx.access g.goal_owner && goal_is g (goal_values p.precondition) ->
+          let name = Option.value new_name ~default:g.name and target = Option.value new_target ~default:g.target_amount in
+          let date = match new_date with Some d -> Some d | None -> g.target_date and monthly = match new_monthly with Some m -> Some m | None -> g.monthly_amount in
+          let taken =
+            Option.is_some new_name
+            && List.exists (fun (o : Planning_store.goal) -> o.goal_id <> goal_id && String.equal (String.lowercase_ascii o.name) (String.lowercase_ascii name)) others
+          in
+          if taken || (match new_date with Some d -> Date.compare d ctx.today <= 0 | None -> false) then Ok `Out_of_date
+          else
+            Ok
+              (`Do
+                (fun () ->
+                  match Insights.save_goal ctx ~goal_id ~name ~target_amount:target ~target_date:date ~monthly_amount:monthly () with
+                  | Ok _ -> Ok ()
+                  | Error _ -> Error ()))
+      | _ -> Ok `Out_of_date)
+
 let category_key id = Result.get_ok (Idempotency_key.of_string ("proposal:" ^ id))
 
 let plan_category service ~principal ~owner ~id (p : S.proposal) =
@@ -142,7 +177,7 @@ let plan_category service ~principal ~owner ~id (p : S.proposal) =
         List.exists
           (fun (i : Account_info.t) ->
             i.account.kind = kind && (not i.account.closed) && Owner.equal i.account.owner scope_owner
-            && String.equal (String.lowercase_ascii i.account.name) (String.lowercase_ascii name))
+            && List.exists (fun n -> String.equal (String.lowercase_ascii n) (String.lowercase_ascii name)) (Starter.names i))
           (Insights.accounts ctx)
       in
       if taken then Ok `Out_of_date
@@ -248,6 +283,7 @@ let apply service ~principal ~id =
                         (Ok ()) pairs))
         | "add_rule" -> plan_rule service ~principal ~owner ~id p
         | "save_goal" -> plan_goal service ~principal ~owner ~id p
+        | "update_goal" -> plan_update_goal service ~principal ~owner ~id p
         | "new_category" -> plan_category service ~principal ~owner ~id p
         | "entry" -> plan_entry service ~principal ~owner ~id p
         | _ -> error A.Invalid_request
@@ -356,6 +392,29 @@ let undo_goal service ~principal ~owner ~id (p : S.proposal) =
       else Ok `Changed
   | _ -> Ok `Changed
 
+let undo_update_goal service ~principal ~owner ~id:_ (p : S.proposal) =
+  let* _, ctx = scoped_context service ~principal ~owner p in
+  match string_field p.arguments "goal_id" with
+  | None -> Ok `Changed
+  | Some goal_id -> (
+      let before_name, before_target, before_date, before_monthly = goal_values p.precondition in
+      let new_name, new_target, new_date, new_monthly = goal_values p.arguments in
+      let applied = (Some (Option.value new_name ~default:(Option.get before_name)), Some (Option.value new_target ~default:(Option.get before_target)),
+                     (match new_date with Some d -> Some d | None -> before_date), (match new_monthly with Some m -> Some m | None -> before_monthly)) in
+      let clash =
+        List.exists
+          (fun (o : Planning_store.goal) -> o.goal_id <> goal_id && String.equal (String.lowercase_ascii o.name) (String.lowercase_ascii (Option.get before_name)))
+          (Planning_store.goals service.Service.db (Insights.budget_owner ctx))
+      in
+      match List.find_opt (fun (g : Planning_store.goal) -> g.goal_id = goal_id) (Planning_store.goals service.Service.db (Insights.budget_owner ctx)) with
+      | Some g when Access.can_use ctx.access g.goal_owner && (not clash) && goal_is g applied -> (
+          match
+            Insights.save_goal ctx ~goal_id ~name:(Option.get before_name) ~target_amount:(Option.get before_target) ~target_date:before_date ~monthly_amount:before_monthly ()
+          with
+          | Ok _ -> Ok `Undone
+          | Error _ -> Ok `Changed)
+      | _ -> Ok `Changed)
+
 let undo_category service ~principal ~owner ~id (p : S.proposal) =
   let* access, ctx = scoped_context service ~principal ~owner p in
   let view = Store_sqlite.view service.Service.db in
@@ -413,6 +472,7 @@ let undo service ~principal ~id =
                 | "categorize" -> undo_categorize service ~principal ~owner p
                 | "add_rule" -> undo_rule service ~principal ~owner ~id p
                 | "save_goal" -> undo_goal service ~principal ~owner ~id p
+                | "update_goal" -> undo_update_goal service ~principal ~owner ~id p
                 | "new_category" -> undo_category service ~principal ~owner ~id p
                 | "entry" -> undo_entry service ~principal ~owner ~id p
                 | _ -> error A.Invalid_request

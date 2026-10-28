@@ -18,17 +18,19 @@ type finish_reason = Stop | Tool_calls | Length | Content_filter
 type usage = { prompt_tokens : int; completion_tokens : int; total_tokens : int }
 type provider_event = Text of string | Calls_ready of raw_call list | Round_finished of finish_reason
 type generation_limits = { context_tokens : int; completion_tokens : int }
-type t = { limits : generation_limits option; identity : unit ref; post : Https.stream_post; api_key : string; model : string; provider_only : string list }
-(* Policy below the documented Sonnet 4.6 Bedrock capabilities, not a
+type t = { limits : generation_limits option; identity : unit ref; post : Https.stream_post; api_key : string; app_url : string option; model : string; provider_only : string list }
+(* Policy below the documented Sonnet Bedrock capabilities, not a
    tokenizer/framing guarantee. See design/advisor-deployment.md for sources. *)
+let supported_models = [ "anthropic/claude-sonnet-5.5"; "anthropic/claude-sonnet-4.6" ]
+
 let supported_limits ~model ~provider_only =
-  if model = "anthropic/claude-sonnet-4.6" && provider_only = ["amazon-bedrock"] then
+  if List.mem model supported_models && provider_only = ["amazon-bedrock"] then
     Some { context_tokens = 200000; completion_tokens = 8192 }
   else None
 
-let create ?limits ~post ~api_key ~model ~provider_only () =
+let create ?limits ?app_url ~post ~api_key ~model ~provider_only () =
   let limits = match limits with Some _ -> limits | None -> supported_limits ~model ~provider_only in
-  { limits; identity = ref (); post; api_key; model; provider_only }
+  { limits; identity = ref (); post; api_key; app_url; model; provider_only }
 let model t = t.model
 let limits t = t.limits
 type prepared_request = { identity : unit ref; body : string; conservative_tokens : int }
@@ -67,6 +69,11 @@ let tool_schemas =
       "target_amount", `Assoc ["type", str "string"; "maxLength", `Int 30; "description", str "Positive decimal in the pinned currency (not minor units), no symbols or separators."];
       "target_date", `Assoc ["type", str "string"; "format", str "date"; "maxLength", `Int 30; "description", str "ISO YYYY-MM-DD, in the future. Optional."];
       "monthly_amount", `Assoc ["type", str "string"; "maxLength", `Int 30; "description", str "Planned monthly saving, non-negative decimal in the pinned currency. Optional."]] in
+  let propose_update_goal = propose "propose_update_goal" "Propose changing an existing savings goal. Use a goal reference from goals, and give only the fields that change; fields left out stay as they are (a date or monthly saving cannot be removed this way)."
+    ["goal"] ["goal", reference "goal_"; "name", string 60;
+      "target_amount", `Assoc ["type", str "string"; "maxLength", `Int 30; "description", str "New target, positive decimal in the pinned currency (not minor units), no symbols or separators."];
+      "target_date", `Assoc ["type", str "string"; "format", str "date"; "maxLength", `Int 30; "description", str "New ISO YYYY-MM-DD target date, in the future."];
+      "monthly_amount", `Assoc ["type", str "string"; "maxLength", `Int 30; "description", str "New planned monthly saving, non-negative decimal in the pinned currency."]] in
   let propose_entry = propose "propose_entry" "Propose a manual entry: a purchase (bank account to expense category), income (income category to bank account) or a move between two of the user's own accounts. Use account references from bank_accounts and categories."
     ["from_account"; "to_account"; "amount"; "description"] ["from_account", reference "account_"; "to_account", reference "account_";
       "amount", `Assoc ["type", str "string"; "maxLength", `Int 30; "description", str "Positive decimal in the pinned currency (not minor units), no symbols or separators."];
@@ -90,7 +97,7 @@ let tool_schemas =
      "recurring", [], []; "budget_status", [], [offset]; "goals", [], [];
      "inbox_rows", [], []; "categories", [], []; "bank_accounts", [], [];
      "forecast", [], ["cycles", `Assoc ["type", str "integer"; "enum", `List [`Int 1; `Int 3; `Int 6];
-       "description", str "Forecast horizon in months from the current local date: 1, 3 or 6 (default 3). All one-off dates must fit this horizon."]; "scenario", scenario]] @ [propose_budget; propose_categorize; propose_rule; propose_goal; propose_category; propose_entry]
+       "description", str "Forecast horizon in months from the current local date: 1, 3 or 6 (default 3). All one-off dates must fit this horizon."]; "scenario", scenario]] @ [propose_budget; propose_categorize; propose_rule; propose_goal; propose_update_goal; propose_category; propose_entry]
 
 let call_json (c : raw_call) = `Assoc ["id", str c.id; "type", str "function";
   "function", `Assoc ["name", str c.name; "arguments", str c.arguments]]
@@ -234,7 +241,7 @@ let stream_prepared (t : t) prepared ~on_activity ~on_event =
       List.iter (fun frame -> List.iter on_event (decode_frame frame)) frames
     in
     match t.post ~uri:"https://openrouter.ai/api/v1/chat/completions"
-      ~headers:["authorization", "Bearer " ^ t.api_key; "content-type", "application/json"; "x-title", "cashflow"]
+      ~headers:(["authorization", "Bearer " ^ t.api_key; "content-type", "application/json"] @ Llm.attribution_headers ?app_url:t.app_url ())
       ~body:prepared.body ~on_chunk with
     | Error error ->
         log_stream_error error;

@@ -5,10 +5,13 @@ type account_reference = private string
 
 type series_reference = private string
 type row_reference = private string
+type goal_reference = private string
 
 val account_reference : string -> account_reference option
 val series_reference : string -> series_reference option
 val row_reference : string -> row_reference option
+val goal_reference : string -> goal_reference option
+val goal_reference_text : goal_reference -> string
 val account_reference_text : account_reference -> string
 val series_reference_text : series_reference -> string
 val row_reference_text : row_reference -> string
@@ -41,6 +44,7 @@ type request =
   | Propose_rule of { pattern : string; category : account_reference; direction : [ `In | `Out ] option }
       (** A merchant text that suggests a category on import (never applies it by itself). *)
   | Propose_goal of { name : string; target_amount : string; target_date : string option; monthly_amount : string option }
+  | Propose_update_goal of { goal : goal_reference; name : string option; target_amount : string option; target_date : string option; monthly_amount : string option }
   | Propose_category of { name : string; kind : [ `Expense | `Income ] }
   | Propose_categorize of { rows : (row_reference * account_reference) list }
       (** Up to 20 uncategorized rows, each with the category to file it under, for the user to confirm. *)
@@ -86,6 +90,8 @@ type budget = {
 }
 
 type goal = {
+  reference : goal_reference;
+  name : string;
   target : int64;
   saved : int64;
   remaining : int64;

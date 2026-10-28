@@ -310,6 +310,32 @@ let categories_in_the_users_language () =
   check "in Swedish" (List.mem "Mat & hushåll" names);
   check "not in English" (not (List.mem "Groceries" names))
 
+(* Changing a goal needs a reference from goals; only a real change is a proposal, and the card says what it was. *)
+let propose_update_goal_cards () =
+  fixture @@ fun service access principal h _ _ ->
+  let _ = seed service access h in
+  let c = conversation service principal A.Personal "update-goal" in
+  let aliases = ok (P.create_aliases service ~principal ~scope:A.Personal ~conversation:c) in
+  let open Yojson.Safe.Util in
+  let goals = read service principal aliases A.Personal "goals" "{}" in
+  let reference = Yojson.Safe.from_string (json aliases goals) |> member "data" |> to_list |> List.hd |> member "reference" |> to_string in
+  let propose arguments = P.read service ~principal ~scope:A.Personal ~aliases ~currency:sek_pin (ok (P.parse_call ~name:"propose_update_goal" ~arguments)) in
+  let rejected arguments = check arguments (Result.is_error (propose arguments)) in
+  let change = match propose (Printf.sprintf "{\"goal\":%S,\"target_amount\":\"1200\",\"name\":null}" reference) with Ok e -> P.display e | Error _ -> Alcotest.fail "rejected" in
+  check "it shows the new target and the old"
+    (List.exists (fun (f : A.fact) -> f.label = "Target" && f.value = A.Money { minor_units = 120000L; currency = sek_pin }) change.facts
+     && List.exists (fun (f : A.fact) -> f.label = "Target was" && f.value = A.Money { minor_units = 100000L; currency = sek_pin }) change.facts);
+  check "and can be acted on" (change.proposal = Some A.Awaiting);
+  rejected (Printf.sprintf "{\"goal\":%S}" reference);
+  rejected (Printf.sprintf "{\"goal\":%S,\"target_amount\":\"1000\"}" reference);
+  rejected (Printf.sprintf "{\"goal\":%S,\"monthly_amount\":\"1001\"}" reference);
+  rejected (Printf.sprintf "{\"goal\":%S,\"target_date\":\"2020-01-01\"}" reference);
+  rejected (Printf.sprintf "{\"goal\":%S,\"target_amount\":\"1\"}" reference); (* below the planned monthly saving *)
+  ignore (S.ok (Insights.save_goal (S.ok (Insights.context service access ~scope:Me ())) ~name:"Car" ~target_amount:5000L ~target_date:None ~monthly_amount:None ()));
+  rejected (Printf.sprintf "{\"goal\":%S,\"name\":\"car\"}" reference); (* another goal's name *)
+  rejected (Printf.sprintf "{\"goal\":%S,\"name\":\"two\\nlines\"}" reference);
+  rejected "{\"goal\":\"goal_notissued_1\",\"name\":\"Sofa\"}"
+
 (* Rules, goals and categories are proposals built from typed, checked values; none is written while proposing. *)
 let propose_simple_cards () =
   fixture @@ fun service access principal h _ _ ->
@@ -350,8 +376,8 @@ let propose_simple_cards () =
   rejected "propose_save_goal" "{\"name\":\"Sofa\",\"target_amount\":\"0\"}";
   rejected "propose_save_goal" "{\"name\":\"Sofa\",\"target_amount\":\"10\",\"target_date\":\"2020-01-01\"}";
   rejected "propose_save_goal" "{\"name\":\"Sofa\",\"target_amount\":\"1.005\"}";
-  (* A name that exists is refused when applied, not here: refusing it here would tell the model which goals exist. *)
-  ignore (accepted "propose_save_goal" "{\"name\":\"secret goal\",\"target_amount\":\"10\"}");
+  (* A name that exists is refused, here and again when applied. *)
+  rejected "propose_save_goal" "{\"name\":\"secret goal\",\"target_amount\":\"10\"}";
   fresh ();
   rejected "propose_save_goal" "{\"name\":\"Sofa\",\"target_amount\":\"100\",\"monthly_amount\":\"101\"}";
   rejected "propose_save_goal" "{\"name\":\"Sofa\",\"target_amount\":\"100\",\"target_date\":\"9999-12-31\"}";
@@ -367,6 +393,7 @@ let propose_simple_cards () =
   check "a category card says it is for you" (List.exists (fun (f : A.fact) -> f.label = "Owner" && f.value = A.Text "personal") created.facts);
   ignore (accepted "propose_new_category" "{\"name\":\"Side income\",\"kind\":\"income\"}");
   rejected "propose_new_category" "{\"name\":\"groceries\",\"kind\":\"expense\"}";
+  rejected "propose_new_category" "{\"name\":\"mat & hushåll\",\"kind\":\"expense\"}"; (* the starter in Swedish *)
   rejected "propose_new_category" "{\"name\":\"Bad\\u0007name\",\"kind\":\"expense\"}"
 
 (* A manual entry is a purchase, income or a move between the user's own accounts, between accounts this run was shown;
@@ -459,7 +486,6 @@ let redacted_eight_tools () =
         [
           "SECRET ACCOUNT";
           "SECRET SHARED";
-          "SECRET GOAL";
           Account_id.to_string bank;
           Account_id.to_string category;
           Account_id.to_string shared;
@@ -469,6 +495,9 @@ let redacted_eight_tools () =
       let wire = Advisor_codec.evidence_out (P.display e) in
       check "display mapping" (wire.title = T.name e.result))
     es;
+  (* Goal names are shown too, one line and with a reference, so the model can name the goal a change is for. *)
+  let goals = List.find (fun e -> match e.T.result with Goals_result _ -> true | _ -> false) es in
+  check "goal name and reference are shown" (contains (json aliases goals) "\"name\":\"SECRET GOAL\"" && contains (json aliases goals) "\"reference\":\"goal_");
   (* Category names are the user's own labels and are shown; bank accounts stay opaque (no names, no numbers). *)
   let spending = List.hd es in
   check "category name is shown" (contains (json aliases spending) "\"name\":\"Groceries\"");
@@ -878,6 +907,7 @@ let () =
           Alcotest.test_case "propose budget card" `Quick propose_budget_card;
           Alcotest.test_case "propose categorize card" `Quick propose_categorize_card;
           Alcotest.test_case "propose rule, goal and category cards" `Quick propose_simple_cards;
+          Alcotest.test_case "propose goal change cards" `Quick propose_update_goal_cards;
           Alcotest.test_case "propose entry cards" `Quick propose_entry_cards;
           Alcotest.test_case "categories in the user's language" `Quick categories_in_the_users_language;
           Alcotest.test_case "resource isolation and import freshness" `Quick isolation_and_freshness;
