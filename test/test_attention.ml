@@ -70,6 +70,22 @@ let test_events_that_need_a_person () =
   let order = List.filter (fun k -> List.mem k [ "missing_payment"; "double_charge"; "yearly_bill"; "large_purchase" ]) (kinds service alice) in
   Alcotest.(check (list string)) "most urgent first" [ "missing_payment"; "double_charge"; "yearly_bill"; "large_purchase" ] order
 
+(* What a person says teaches the feed: "both are right" about a merchant's double charge means that merchant
+   isn't flagged again; another merchant still is. *)
+let test_the_feed_learns () =
+  let service = make_service () in
+  let alice = sign_in service "alice" in
+  let checking = open_checking service alice ~statement_backed:true "Checking" in
+  let import csv = ignore (ok_import (Import.confirm (Import.context service alice) { target = Import.Existing checking; file_name = None; content = csv; decisions = [] })) in
+  import "Datum;Text;Belopp\n2026-10-06;GYMMET;-399,00\n2026-10-07;GYMMET;-399,00\n";
+  let doubles () = List.filter_map (fun (Attention.Card c) -> if Attention.kind_name c.kind = "double_charge" then Some c.key else None) (Attention.feed ~narrative:false service alice) in
+  (match doubles () with
+   | [ key ] -> ignore (ok (Attention.act service alice ~key ~action:(`Resolve "both right") ~until:None))
+   | _ -> Alcotest.fail "expected one double charge");
+  import "Datum;Text;Belopp\n2026-10-12;GYMMET;-299,00\n2026-10-13;GYMMET;-299,00\n2026-10-14;ELGIGANTEN;-499,00\n2026-10-15;ELGIGANTEN;-499,00\n";
+  Alcotest.(check (list bool)) "the gym, said to be right, stays quiet; the shop doesn't"
+    [ true ] (List.map (fun k -> Cashflow_core.Str_compat.contains ~sub:"elgiganten" k) (doubles ()))
+
 (* And quiet when nothing is wrong: a salary not imported yet isn't missing, the same lunch three days running
    is a habit, and ordinary spending has no "biggest purchase". *)
 let test_events_stay_quiet () =
@@ -238,6 +254,7 @@ let () =
           Alcotest.test_case "the month review waits for the statements" `Quick test_month_review_waits_for_the_statements;
           Alcotest.test_case "events that need a person" `Quick test_events_that_need_a_person;
           Alcotest.test_case "events stay quiet" `Quick test_events_stay_quiet;
+          Alcotest.test_case "the feed learns" `Quick test_the_feed_learns;
           Alcotest.test_case "snooze and budget acknowledgement" `Quick test_snooze_and_budget_acknowledgement;
           Alcotest.test_case "snooze hides until the date" `Quick test_snooze_hides_until_the_date;
           Alcotest.test_case "unusual spending" `Quick test_unusual_spending;

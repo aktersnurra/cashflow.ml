@@ -47,6 +47,7 @@ let parse_call ~name ~arguments =
     | "forecast" -> Some [ "cycles"; "scenario" ]
     | "propose_set_budget" -> Some [ "category"; "monthly_amount"; "rollover" ]
     | "inbox_rows" | "categories" | "period_outlook" -> Some []
+    | "explain_month" -> Some [ "cycle_offset" ]
     | "propose_categorize" -> Some [ "rows" ]
     | "propose_add_rule" -> Some [ "pattern"; "category"; "direction" ]
     | "bank_accounts" -> Some []
@@ -81,6 +82,7 @@ let parse_call ~name ~arguments =
           | "goals" -> T.Goals c
           | "inbox_rows" -> T.Inbox_rows c
           | "period_outlook" -> T.Period_outlook c
+          | "explain_month" -> T.Explain_cycle (c, integer f "cycle_offset" (-1) (-5) (-1))
           | "file_inbox" -> T.File_inbox { keep_on = boolean f "keep_on" }
           | "categories" -> T.Categories c
           | "bank_accounts" -> T.Bank_accounts c
@@ -296,6 +298,7 @@ let refs = function
   | T.Bank_accounts_result xs -> List.map (fun (b : T.bank_account) -> b.account) xs
   | T.Filed_inbox_result { filed; unsure; _ } ->
       List.filter_map (fun (r : T.inbox_row) -> Option.map (fun (a, _, _) -> a) r.suggestion) (filed @ unsure)
+  | T.Explain_result { categories; _ } -> categories
   | T.Cycle_summary_result _ | T.Goals_result _ | T.Period_outlook_result _ -> []
 
 let assumptions (f : Forecast.t) =
@@ -349,6 +352,7 @@ let read ?filed (service : Service.t) ~principal ~scope ~aliases ~currency:pinne
                 && List.length s.leave_out <= 20
                 && List.length s.input.one_off <= 10
             | Recurring _ | Goals _ | Propose_budget _ | Inbox_rows _ | Categories _ | Propose_rule _ | Propose_goal _ | Propose_update_goal _ | Propose_category _ | Bank_accounts _ | Propose_entry _ | File_inbox _ | Period_outlook _ -> true
+            | Explain_cycle (_, n) -> n >= -5 && n <= -1
             | Propose_categorize { rows } ->
                 let n = List.length rows in
                 n >= 1 && n <= 20 && List.length (List.sort_uniq String.compare (List.map (fun (r, _) -> T.row_reference_text r) rows)) = n
@@ -360,6 +364,28 @@ let read ?filed (service : Service.t) ~principal ~scope ~aliases ~currency:pinne
               | T.Cycle_summary (_, n) ->
                   let* xs = run (Query.Cashflow_summary (qc, n)) in
                   Ok (T.Cycle_summary_result xs, List.length xs, List.length xs, [])
+              | Explain_cycle (_, offset) -> (
+                  let cycle = Insights.cycle_at ctx offset in
+                  (* Only a cycle the statements cover to its end: half a cycle is not explained. *)
+                  let covered = match Insights.covered_through ctx with Some d -> Date.compare cycle.last d <= 0 | None -> true in
+                  let floor = Int64.mul 300L (Int64.of_float (10. ** float_of_int (Currency.scale ctx.currency))) in
+                  match
+                    if covered then
+                      Explain.explain (Insights.book ctx) ~setting:ctx.setting ~floor ~cycle
+                        (Insights.transfers ctx ~first:(Date.add_days cycle.first (-400)) ~last:cycle.last)
+                    else None
+                  with
+                  | None -> error A.Not_found
+                  | Some e ->
+                      let categories =
+                        List.filter_map
+                          (function
+                            | Explain.Yearly { category; _ } | One_off { category; _ } | Habit { category; _ } | Less { category; _ } ->
+                                scoped category.account.id
+                            | Income_change _ -> None)
+                          e.drivers
+                      in
+                      Ok (T.Explain_result { explanation = e; categories }, 1, 1, [ "compared with the average of compared_with earlier cycles" ]))
               | Period_outlook _ ->
                   let* o = run (Query.Period_outlook qc) in
                   Ok
@@ -1215,6 +1241,26 @@ let model_json ~aliases (e : T.evidence) =
                           r.suggestion );
                     ])
                 rows
+          | Explain_result { explanation = e; categories } ->
+              let category (info : Account_info.t) =
+                match List.find_opt (fun (a : T.account) -> Account_id.equal a.id info.account.id) categories with Some a -> acct a | None -> `Null
+              in
+              let driver : Explain.driver -> Yojson.Safe.t = function
+                | Yearly { category = c; description; amount; date = d } ->
+                    obj [ ("kind", str "yearly"); ("category", category c); ("description", str (shorten description 80)); ("amount", num amount); ("date", date d) ]
+                | One_off { category = c; description; amount; date = d } ->
+                    obj [ ("kind", str "one_off"); ("category", category c); ("description", str (shorten description 80)); ("amount", num amount); ("date", date d) ]
+                | Habit { category = c; difference; cycles_up } -> obj [ ("kind", str "habit"); ("category", category c); ("amount", num difference); ("cycles_up", `Int cycles_up) ]
+                | Less { category = c; difference } -> obj [ ("kind", str "less"); ("category", category c); ("amount", num difference) ]
+                | Income_change { difference } -> obj [ ("kind", str "income"); ("amount", num difference) ]
+              in
+              obj
+                [
+                  ("cycle", str (Cycle.label e.cycle)); ("first_day", date e.cycle.first); ("last_day", date e.cycle.last);
+                  ("normal", `Bool e.normal); ("spending", num e.spending); ("usual_spending", num e.usual_spending);
+                  ("income", num e.income); ("usual_income", num e.usual_income); ("compared_with", `Int e.compared_with);
+                  ("drivers", arr driver e.drivers);
+                ]
           | Period_outlook_result o ->
               let flows (f : Analytics.flows) = obj [ ("income", num f.income); ("spending", num f.spending); ("savings", num (Analytics.savings f)) ] in
               obj

@@ -25,7 +25,13 @@ type import_due = { account : Account_info.t; last_import : Ptime.t option; days
 type mismatch = { account : Account_info.t; checkpoint : Planning_store.checkpoint }
 type count_cash = { cash : Account_info.t; since : Date.t }
 type overview = { cycle : Cycle.t; summary : Analytics.cycle_summary option; currency : Currency.t }
-type month_review = { reviewed : Cycle.t; review_summary : Analytics.cycle_summary option; review_currency : Currency.t; text : string option }
+type month_review = {
+  reviewed : Cycle.t;
+  review_summary : Analytics.cycle_summary option;
+  review_currency : Currency.t;
+  explanation : Cashflow_core.Explain.t option;  (** normal, or what made the difference *)
+  text : string option;
+}
 
 type unusual = { unusual : Analytics.unusual; unusual_currency : Currency.t; scope : Analytics.scope; explanation : string option }
 
@@ -135,6 +141,13 @@ let save_state =
     exec
 
 let clear_state = stmt "DELETE FROM attention_cards WHERE user_id = ? AND card_key = ?" Codec.(user_id @-> text @-> nil) exec
+
+(* The keys a person resolved that start with [prefix]: what they have said about a kind of card before. *)
+let resolved_like =
+  stmt "SELECT card_key FROM attention_cards WHERE user_id = ? AND state = 'resolved' AND substr(card_key, 1, length(?2)) = ?2"
+    Codec.(user_id @-> text @-> nil) (many (row (text @-> nil) Fun.id))
+
+let resolved_with db user_id prefix = run db resolved_like user_id prefix
 
 (* A snoozed card whose date has passed wakes up. *)
 let current_state db user_id key ~today =
@@ -251,6 +264,12 @@ let feed ?(narrative = true) (service : Service.t) access =
       let covered = match Insights.covered_through ctx with Some d -> Date.compare previous.last d <= 0 | None -> true in
       if covered && Date.days_between ~first:current.first ~last:today < 10 then (
         let summary = match Analytics.cashflow_summary (Insights.book ctx) ~cycles:[ previous ] ~reconciled_through:(Insights.reconciled_through ctx) (Insights.transfers ctx ~first:previous.first ~last:previous.last) with [ s ] -> Some s | _ -> None in
+        let explanation =
+          Cashflow_core.Explain.explain (Insights.book ctx) ~setting:ctx.setting
+            ~floor:(Int64.mul 300L (Int64.of_float (10. ** float_of_int (Currency.scale ctx.currency))))
+            ~cycle:previous
+            (Insights.transfers ctx ~first:(Date.add_days previous.first (-400)) ~last:previous.last)
+        in
         let text =
           if not narrative then None else Option.bind summary (fun summary ->
               let before = Cycle.previous ctx.setting previous in
@@ -260,9 +279,9 @@ let feed ?(narrative = true) (service : Service.t) access =
                 | _ -> None
               in
               let top = List.filteri (fun i _ -> i < 5) (Insights.spending_by_category ctx ~period:(Cycle_offset (-1)) ~compare_previous:true) in
-              Llm_features.month_summary service access ~cycle:previous ~currency:ctx.currency ~summary ~previous:previous_summary ~top)
+              Llm_features.month_summary service access ~cycle:previous ~currency:ctx.currency ~summary ~previous:previous_summary ~top ?explanation)
         in
-        add Month_review ("month_review:" ^ Cycle.label previous) { reviewed = previous; review_summary = summary; review_currency = ctx.currency; text });
+        add Month_review ("month_review:" ^ Cycle.label previous) { reviewed = previous; review_summary = summary; review_currency = ctx.currency; explanation; text });
       let summary = match Insights.cashflow_summary ctx ~cycles:1 with [ s ] -> Some s | _ -> None in
       add ~resolvable:false Overview "overview" { cycle = current; summary; currency = ctx.currency };
       List.iter
@@ -310,17 +329,26 @@ let feed ?(narrative = true) (service : Service.t) access =
               let series = Cashflow_core.Series.detect book ~cash ~setting:ctx.setting history in
               let floor = Int64.mul 100L (Int64.of_float (10. ** float_of_int (Currency.scale ctx.currency))) in
               let scope_key = match scope with Analytics.Me -> "me" | Household -> "household" | Family -> "family" in
+              (* What the person said before teaches the feed: a merchant whose double charge they called right is
+                 never flagged again, nor a payment they said is paid elsewhere, and two dismissed "biggest purchase"
+                 cards mean they don't want them. *)
+              let said prefix = resolved_with db user.id prefix <> [] in
+              let large_unwanted = List.length (resolved_with db user.id "large:") >= 2 in
               List.iter
                 (fun (event : E.t) ->
                   let stake = E.stake event in
                   match event with
                   | Missing { series; expected } ->
-                      add ~stake Missing_payment (Printf.sprintf "missing:%s:%s:%s" scope_key series.id (Date.to_string expected)) (event, ctx.currency)
-                  | Double_charge { first; second; _ } ->
-                      add ~stake Double_charge (Printf.sprintf "double:%s:%s" (Transfer_id.to_string first.id) (Transfer_id.to_string second.id)) (event, ctx.currency)
+                      let subject = Printf.sprintf "missing:%s:%s:" scope_key series.id in
+                      if not (said subject) then add ~stake Missing_payment (subject ^ Date.to_string expected) (event, ctx.currency)
+                  | Double_charge { merchant; first; second; _ } ->
+                      let subject = Printf.sprintf "double:%s:" merchant in
+                      if not (said subject) then
+                        add ~stake Double_charge (Printf.sprintf "%s%s:%s" subject (Transfer_id.to_string first.id) (Transfer_id.to_string second.id)) (event, ctx.currency)
                   | Yearly_bill { name; due; _ } ->
                       add ~stake Yearly_bill (Printf.sprintf "yearly:%s:%s:%s" scope_key name (Date.to_string due)) (event, ctx.currency)
-                  | Large_purchase { purchase; _ } -> add ~stake Large_purchase ("large:" ^ Transfer_id.to_string purchase.id) (event, ctx.currency))
+                  | Large_purchase { purchase; _ } ->
+                      if not large_unwanted then add ~stake Large_purchase ("large:" ^ Transfer_id.to_string purchase.id) (event, ctx.currency))
                 (E.detect book ~today ~covered_through:(Insights.covered_through ctx) ~floor ~series history);
               (* The feed covers every goal currency, unlike a currency-specific report. *)
               List.iter
@@ -422,6 +450,7 @@ let payload_json : type a. a kind -> a -> Yojson.Safe.t =
                   [ ("income", m s.flows.income); ("spending", m s.flows.spending); ("savings", m s.savings);
                     ("savings_rate", match s.savings_rate_bp with None -> `Null | Some bp -> `String (Json.decimal ~scale:2 (Int64.of_int bp) ^ "%")) ])
               r.review_summary );
+          ("explanation", Json.option (Json.explanation r.review_currency) r.explanation);
           ("text", Json.option (fun t -> `String t) r.text) ]
   | Budget_alert, (l, c) ->
       `Assoc

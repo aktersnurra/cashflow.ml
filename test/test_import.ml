@@ -286,7 +286,8 @@ let test_auto_apply_threshold () =
   let first, second = match spotifys with [ a; b ] -> (a.item.transfer_id, b.item.transfer_id) | _ -> Alcotest.fail "two spotify rows" in
   ignore (ok (Inbox.categorize service alice ~transfer_id:first ~category_id:subscriptions ()));
   ignore (ok (Inbox.categorize service alice ~transfer_id:second ~category_id:entertainment ()));
-  let subscriptions = entertainment in
+  (* Both choices were made at the same (frozen) time, so which is "latest" is a tie: the row goes to one of the two. *)
+  let filed () = Int64.add (balance service alice subscriptions) (balance service alice entertainment) in
   let file day = Printf.sprintf "Bokföringsdag;Text;Belopp;Saldo\n2026-11-%02d;SPOTIFY;-119,00;9 393,00\n" day in
   let import day = imported (Import.confirm (Import.context service alice) (request checking (file day))) in
   let set minimum = ok (Inbox.set_auto_apply service alice ~account_id:checking ~min_confidence:minimum) in
@@ -294,10 +295,10 @@ let test_auto_apply_threshold () =
   Alcotest.(check int) "mixed history waits in the inbox" 1 (import 10).inbox_count;
   set (Some 90);
   Alcotest.(check int) "a threshold above its confidence still waits" 1 (import 11).inbox_count;
-  let before = balance service alice subscriptions in
+  let before = filed () in
   set (Some 60);
   Alcotest.(check int) "a met threshold skips the inbox" 0 (import 12).inbox_count;
-  Alcotest.(check int64) "and categorises it" (Int64.add before 119_00L) (balance service alice subscriptions);
+  Alcotest.(check int64) "and categorises it" (Int64.add before 119_00L) (filed ());
   Alcotest.(check int) "the setting is listed" 1 (List.length (Inbox.auto_apply_settings service alice));
   set None;
   Alcotest.(check int) "turned off, it waits again" 1 (import 13).inbox_count;

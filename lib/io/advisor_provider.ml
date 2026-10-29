@@ -100,7 +100,7 @@ let tool_schemas =
      "category_trend", ["category"], [category; cycles];
      "relevant_transactions", [], [offset; category; "limit", integer 1 20];
      "recurring", [], []; "budget_status", [], [offset]; "goals", [], [];
-     "inbox_rows", [], []; "categories", [], []; "bank_accounts", [], []; "period_outlook", [], [];
+     "inbox_rows", [], []; "categories", [], []; "bank_accounts", [], []; "period_outlook", [], []; "explain_month", [], [offset];
      "forecast", [], ["cycles", `Assoc ["type", str "integer"; "enum", `List [`Int 1; `Int 3; `Int 6];
        "description", str "Forecast horizon in months from the current local date: 1, 3 or 6 (default 3). All one-off dates must fit this horizon."]; "scenario", scenario]] @ [propose_budget; propose_categorize; propose_rule; propose_goal; propose_update_goal; propose_category; propose_entry; file_inbox]
 

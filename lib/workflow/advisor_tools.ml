@@ -23,6 +23,7 @@ type request =
   | Goals of common
   | Forecast of common * int * scenario
   | Period_outlook of common  (** the cycle in progress so far, and where it is heading *)
+  | Explain_cycle of common * int  (** why a complete cycle (offset, -5 to -1) came out as it did *)
   | Inbox_rows of common
   | Categories of common
   | Bank_accounts of common
@@ -181,6 +182,8 @@ type result =
   | Proposal_card_result of proposal_card
   | Bank_accounts_result of bank_account list
   | Period_outlook_result of Outlook.t
+  | Explain_result of { explanation : Explain.t; categories : account list }
+      (** [categories]: the drivers' categories as the model may name them *)
   | Filed_inbox_result of { filed : inbox_row list; unsure : inbox_row list; kept_on : bool }
       (** [suggestion] is where a filed row went, or the best guess for one left for the user. *)
 
@@ -225,7 +228,7 @@ let common = function
   | Goals c
   | Forecast (c, _, _) ->
       c
-  | Inbox_rows c | Categories c | Bank_accounts c | Period_outlook c -> c
+  | Inbox_rows c | Categories c | Bank_accounts c | Period_outlook c | Explain_cycle (c, _) -> c
   | Propose_budget _ | Propose_categorize _ | Propose_rule _ | Propose_goal _ | Propose_update_goal _ | Propose_category _ | Propose_entry _
   | File_inbox _ ->
       { currency = None }
@@ -247,6 +250,7 @@ let name = function
   | Bank_accounts_result _ -> "bank_accounts"
   | Filed_inbox_result _ -> "file_inbox"
   | Period_outlook_result _ -> "period_outlook"
+  | Explain_result _ -> "explain_month"
 
 let currency_code s =
   if String.length s = 3 && String.for_all (function 'A' .. 'Z' -> true | _ -> false) s then Some s else None

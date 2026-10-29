@@ -490,6 +490,59 @@ let test_period_outlook () =
   Alcotest.(check (float 0.01)) "the goal is set aside" 3000. (money [ "goals_set_aside" ]);
   Alcotest.(check (float 0.01)) "and comes off what is safe to spend" (safe -. 3000.) (money [ "safe_to_spend" ])
 
+(* Why a month came out as it did: the yearly insurance (expected), a one-off purchase, and groceries up across
+   the month, largest first; not "normal". *)
+let test_explain_a_month () =
+  let service = make_service () in
+  let alice = sign_in service "alice" in
+  let checking = open_checking service alice "Checking" in
+  let ctx = Result.get_ok (Insights.context service alice ~scope:Analytics.Me ()) in
+  let module Cycle = Cashflow_core.Cycle in
+  let reviewed = Cycle.previous ctx.setting (Cycle.cycle_of ctx.setting ctx.today) in
+  let rec back c n = if n = 0 then c else back (Cycle.previous ctx.setting c) (n - 1) in
+  let n = ref 0 in
+  let post ~text ~from_account ~to_account d value =
+    incr n;
+    let e = entry (Printf.sprintf "%s %d" text !n) ~from_account ~to_account value in
+    match ok (Service.add_entry service alice { e with value_date = d; memo = { e.memo with description = text } }) with
+    | Ok _ -> ()
+    | Error e -> Alcotest.fail (Cashflow_core.Ledger_error.transfer_to_string e)
+  in
+  let day (c : Cycle.t) k = Cashflow_core.Date.add_days c.first k in
+  let salary = account_named service alice "Salary" and housing = account_named service alice "Housing"
+  and groceries = account_named service alice "Groceries" and insurance = account_named service alice "Insurance"
+  and shopping = account_named service alice "Shopping" in
+  let month (c : Cycle.t) ~grocery =
+    post ~text:"LON" ~from_account:salary ~to_account:checking c.first 30_000_00;
+    post ~text:"HYRA" ~from_account:checking ~to_account:housing (day c 5) 9_000_00;
+    List.iter (fun k -> post ~text:"ICA" ~from_account:checking ~to_account:groceries (day c k) grocery) [ 2; 9; 16; 23 ]
+  in
+  List.iter (fun k -> month (back reviewed k) ~grocery:1_000_00) [ 6; 5; 4; 3; 2; 1 ];
+  month reviewed ~grocery:1_250_00;
+  post ~text:"IF FORSAKRING" ~from_account:checking ~to_account:insurance (Cashflow_core.Date.add_days (day reviewed 10) (-365)) 4_800_00;
+  post ~text:"IF FORSAKRING" ~from_account:checking ~to_account:insurance (day reviewed 10) 4_800_00;
+  post ~text:"BAUHAUS" ~from_account:checking ~to_account:shopping (day reviewed 12) 3_000_00;
+  let transfers = Insights.transfers ctx ~first:(Cashflow_core.Date.add_days reviewed.first (-400)) ~last:reviewed.last in
+  match Cashflow_core.Explain.explain (Insights.book ctx) ~setting:ctx.setting ~floor:300_00L ~cycle:reviewed transfers with
+  | None -> Alcotest.fail "nothing to compare with"
+  | Some e ->
+      Alcotest.(check bool) "not a normal month" false e.normal;
+      Alcotest.(check int) "against six months" 6 e.compared_with;
+      let describe = function
+        | Cashflow_core.Explain.Yearly { amount; _ } -> Printf.sprintf "yearly %Ld" amount
+        | One_off { description; amount; _ } -> Printf.sprintf "one-off %s %Ld" description amount
+        | Habit { category; difference; cycles_up } -> Printf.sprintf "habit %s %Ld %d" category.account.name difference cycles_up
+        | Less { category; difference } -> Printf.sprintf "less %s %Ld" category.account.name difference
+        | Income_change { difference } -> Printf.sprintf "income %Ld" difference
+      in
+      Alcotest.(check (list string)) "what made the difference, largest first"
+        [ "yearly 480000"; "one-off BAUHAUS 300000"; "habit Groceries 100000 1" ]
+        (List.map describe e.drivers);
+      (* The month before was like the ones before it: nothing to say. *)
+      match Cashflow_core.Explain.explain (Insights.book ctx) ~setting:ctx.setting ~floor:300_00L ~cycle:(back reviewed 1) transfers with
+      | Some e -> Alcotest.(check (pair bool int)) "an ordinary month is normal" (true, 0) (e.normal, List.length e.drivers)
+      | None -> Alcotest.fail "nothing to compare with"
+
 let () =
   Alcotest.run "analytics"
     [ ( "insights",
@@ -500,6 +553,7 @@ let () =
           Alcotest.test_case "irregular spending is not recurring" `Quick test_irregular_spending_is_not_recurring;
           Alcotest.test_case "forecast" `Quick test_forecast_query;
           Alcotest.test_case "period outlook" `Quick test_period_outlook;
+          Alcotest.test_case "explain a month" `Quick test_explain_a_month;
           Alcotest.test_case "contribution plan" `Quick test_contribution_plan;
           Alcotest.test_case "net worth with a loan" `Quick test_net_worth_with_a_loan;
           Alcotest.test_case "goal report currency" `Quick test_goal_report_currency;

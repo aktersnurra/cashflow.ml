@@ -312,12 +312,13 @@ let statement_layout (service : Service.t) access (table : Csv.table) =
 
 (* A few sentences on a finished cycle, written from the computed figures alone, once per user,
    cycle and language. *)
-let month_summary (service : Service.t) access ~(cycle : Cycle.t) ~currency ~(summary : Analytics.cycle_summary) ~(previous : Analytics.cycle_summary option) ~(top : Analytics.category_total list) =
+let month_summary ?explanation (service : Service.t) access ~(cycle : Cycle.t) ~currency ~(summary : Analytics.cycle_summary) ~(previous : Analytics.cycle_summary option) ~(top : Analytics.category_total list) =
   match service.assistant with
   | None -> None
   | Some llm -> (
       let user = Access.user access in
-      let key = Printf.sprintf "month:%s:%s:%s" (User_id.to_string user.id) (Cycle.label cycle) user.locale in
+      (* v2: written from what made the difference, not from the totals alone. *)
+      let key = Printf.sprintf "month2:%s:%s:%s" (User_id.to_string user.id) (Cycle.label cycle) user.locale in
       match Sql.run service.db cache_get key with
       | Some text -> Some text
       | None -> (
@@ -328,13 +329,18 @@ let month_summary (service : Service.t) access ~(cycle : Cycle.t) ~currency ~(su
               [ ("cycle", `String (Cycle.label cycle)); ("currency", `String (Currency.code currency)); ("this_cycle", flows summary);
                 ("previous_cycle", Json.option flows previous);
                 ( "top_categories",
-                  `List (List.map (fun (c : Analytics.category_total) -> `Assoc [ ("name", `String (Starter.display_name ~locale:user.locale c.category)); ("total", m c.total); ("previous", Json.option m c.previous) ]) top) ) ]
+                  `List (List.map (fun (c : Analytics.category_total) -> `Assoc [ ("name", `String (Starter.display_name ~locale:user.locale c.category)); ("total", m c.total); ("previous", Json.option m c.previous) ]) top) );
+                ("what_made_the_difference", Json.option (Json.explanation currency) explanation) ]
           in
           let language = if String.starts_with ~prefix:"sv" user.locale then "Swedish" else "English" in
           let system =
             Printf.sprintf
-              "Write two or three short, plain sentences in %s summarising a household's month from the figures given: how spending \
-               and savings compare with the previous month and which categories explain it. No advice, no greetings, no markdown." language
+              "Write two or three short, plain sentences in %s summarising a household's month from the figures given. \
+               what_made_the_difference compares it with the usual month (the average of compared_with earlier ones): if normal is \
+               true, say it was an ordinary month and stop; otherwise name its drivers, largest first: a yearly bill is expected, \
+               a one_off is a single purchase and not a change in habits, a habit is more spent across a category (say how many \
+               months running when cycles_up is 2 or more), less is spending below usual, income is income above or below usual. \
+               Use only these figures; no percentages of change, no advice, no greetings, no markdown." language
           in
           let result = llm.complete ~system ~user:(Yojson.Safe.to_string figures) () in
           Service.log_llm_call service access ~purpose:"month_summary" ~items:1 ~ok:(Result.is_ok result);

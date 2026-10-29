@@ -60,9 +60,33 @@ let card_view ~(ctx : Ctx.t) (key : string Bonsai.t) (card : J.t Bonsai.t) graph
         ~actions:[ Ui.button (Msg.action_void locale) void; later ] ()
   | "month_review" ->
       let summary = J.field "summary" data in
+      (* Normal, or what made the difference, each kind of thing said as what it is. *)
+      let explanation =
+        match J.field "explanation" data with
+        | `Null -> []
+        | e when J.bool (J.field "normal" e) ->
+            [ Ui.muted (Msg.review_normal ~spending:(money (J.field "spending" e)) ~usual:(money (J.field "usual_spending" e)) locale) ]
+        | e ->
+            let category d = Accounts_data.name ~locale (J.field "category" d) in
+            let line d =
+              let amount = money (J.field "amount" d) in
+              match J.str (J.field "kind" d) with
+              | "yearly" -> Msg.review_yearly ~description:(J.str (J.field "description" d)) ~amount locale
+              | "one_off" -> Msg.review_one_off ~description:(J.str (J.field "description" d)) ~amount ~date:(Fmt.date_json (J.field "date" d)) locale
+              | "habit" when J.int (J.field "cycles_up" d) >= 2 ->
+                  Msg.review_habit_running ~category:(category d) ~amount ~cycles:(Int.to_string (J.int (J.field "cycles_up" d))) locale
+              | "habit" -> Msg.review_habit ~category:(category d) ~amount locale
+              | "less" -> Msg.review_less ~category:(category d) ~amount locale
+              | _ when Float.(Fmt.to_float (J.field "amount" d) >= 0.) -> Msg.review_income_up ~amount locale
+              | _ -> Msg.review_income_down ~amount:(money (`String (Printf.sprintf "%.2f" (Float.abs (Fmt.to_float (J.field "amount" d)))))) locale
+            in
+            Ui.muted (Msg.review_different ~spending:(money (J.field "spending" e)) ~usual:(money (J.field "usual_spending" e)) locale)
+            :: List.map (J.list (J.field "drivers" e)) ~f:(fun d -> Ui.div ~cls:"review-driver" [ Ui.text (line d) ])
+      in
       Ui.card ~eyebrow:(month (J.field "cycle" data)) ~title:(Msg.card_review_title ~month:(month (J.field "cycle" data)) locale)
         ~body:
           ((match J.str_opt (J.field "text" data) with Some text -> [ Ui.p text ] | None -> [])
+          @ explanation
           @
           if J.is_null summary then []
           else

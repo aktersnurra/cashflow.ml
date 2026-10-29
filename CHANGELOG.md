@@ -13,6 +13,13 @@
   due within a month, known from its last two payments. They stay quiet otherwise: a salary not imported yet isn't
   missing, and the same lunch three days running is a habit.
 - Cards of the same urgency are ordered by the money they are about; the Overview shows the first three.
+- The month review says why a finished month came out as it did, against the months before it: an ordinary month
+  says so, otherwise the few things that made the difference, each with its amount and what kind of thing it was:
+  a yearly bill (expected), a one-off purchase, a habit (and how many months running), less than usual somewhere,
+  or a change in income. The written review is built on the same list, and the advisor can explain any of the last
+  five finished months (`explain_month`).
+- Cards learn from what you do with them: a missing payment you resolved stays quiet for that series, a double
+  charge you said was right mutes that merchant, and after two large purchases you resolved those cards stop.
 
 ### A month in progress, honestly
 
