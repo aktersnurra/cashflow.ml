@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Things that need you, and what you can spend
+
+- The Overview of a cycle in progress leads with **safe to spend until payday**: what day-to-day spending can still
+  take with the bills still due and your goals' monthly amounts covered, counting usual spending for the days since
+  your last upload. Per day, beside what a usual day costs; with no goal, a note says nothing is set aside.
+- New cards for things in your statements that need a person, each saying what, how much and when, with what to
+  do: a regular income or bill that should have arrived by now and hasn't (only judged as far as the statements
+  reach), the same charge taken twice, the biggest purchase in half a year, and a yearly bill (insurance, car tax)
+  due within a month, known from its last two payments. They stay quiet otherwise: a salary not imported yet isn't
+  missing, and the same lunch three days running is a habit.
+- Cards of the same urgency are ordered by the money they are about; the Overview shows the first three.
+
 ### A month in progress, honestly
 
 - Statements arrive when you upload them, so a pay cycle's figures run only as far as the imports reach. Each

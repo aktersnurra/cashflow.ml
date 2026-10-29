@@ -131,6 +131,41 @@ let card_view ~(ctx : Ctx.t) (key : string Bonsai.t) (card : J.t Bonsai.t) graph
              Msg.card_recurring_changed ~merchant ~previous:(money (J.field "previous_amount" data)) ~last:(money (J.field "last_amount" data)) locale
            else Msg.card_recurring_new ~cadence:(J.str (J.field "cadence" data)) ~merchant locale)
         ~actions:[ Ui.button (Msg.action_keep locale) (after (act ~key:card_key ~action:"resolve")); later ] ()
+  (* Things in the statements that need you: what, how much, when, and what to do about it. *)
+  | "missing_payment" ->
+      let name = J.str (J.field "name" data) and amount = money (J.field "amount" data) and date = Fmt.date_json (J.field "expected" data) in
+      if J.bool (J.field "income" data) then
+        Ui.card ~tone:"warning" ~title:(Msg.card_missing_income_title ~name ~amount locale) ~body:[ Ui.muted (Msg.card_missing_income_body ~date locale) ]
+          ~actions:[ Ui.button (Msg.action_paid_elsewhere locale) (after (act ~key:card_key ~action:"resolve")); later ] ()
+      else
+        let cadence =
+          String.lowercase
+            (match J.str (J.field "cadence" data) with
+             | "weekly" -> Msg.forecast_cadence_weekly locale
+             | "quarterly" -> Msg.forecast_cadence_quarterly locale
+             | "yearly" -> Msg.forecast_cadence_yearly locale
+             | _ -> Msg.forecast_cadence_monthly locale)
+        in
+        Ui.card ~tone:"warning" ~title:(Msg.card_missing_bill_title ~name ~amount locale) ~body:[ Ui.muted (Msg.card_missing_bill_body ~cadence ~date locale) ]
+          ~actions:[ Ui.button (Msg.action_paid_elsewhere locale) (after (act ~key:card_key ~action:"resolve")); later ] ()
+  | "double_charge" ->
+      Ui.card ~tone:"warning"
+        ~title:(Msg.card_double_charge_title ~merchant:(J.str (J.field "merchant" data)) ~amount:(money (J.field "amount" data)) locale)
+        ~body:[ Ui.muted (Msg.card_double_charge_body ~first:(Fmt.date_json (J.field "first_date" data)) ~second:(Fmt.date_json (J.field "second_date" data)) locale) ]
+        ~actions:
+          [ Ui.button (Msg.action_see_transactions locale) (navigate (Route.Transactions { offset = 0; category = None }));
+            Ui.button (Msg.action_both_right locale) (after (act ~key:card_key ~action:"resolve")) ] ()
+  | "yearly_bill" ->
+      Ui.card ~title:(Msg.card_yearly_bill_title ~name:(J.str (J.field "name" data)) ~date:(Fmt.date_json (J.field "due" data)) locale)
+        ~body:[ Ui.muted (Msg.card_yearly_bill_body ~amount:(money (J.field "amount" data)) ~last:(Fmt.date_json (J.field "last_paid" data)) locale) ]
+        ~actions:[ done_; later ] ()
+  | "large_purchase" ->
+      Ui.card ~title:(Msg.card_large_purchase_title locale)
+        ~body:
+          [ Ui.muted
+              (Msg.card_large_purchase_body ~amount:(money (J.field "amount" data)) ~description:(J.str (J.field "description" data))
+                 ~date:(Fmt.date_json (J.field "date" data)) ~before:(money (J.field "largest_before" data)) locale) ]
+        ~actions:[ done_ ] ()
   | "overview" ->
       let summary = J.field "summary" data in
       let code = J.str ~default:currency (J.field "currency" data) in

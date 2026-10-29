@@ -44,6 +44,10 @@ type _ kind =
   | Count_cash : count_cash kind
   | Goal_off_track : (Insights.goal_progress * Currency.t) kind
   | Recurring_change : (Analytics.recurring * Currency.t) kind
+  | Missing_payment : (Cashflow_core.Events.t * Currency.t) kind  (** a regular income or bill not there by now *)
+  | Double_charge : (Cashflow_core.Events.t * Currency.t) kind
+  | Yearly_bill : (Cashflow_core.Events.t * Currency.t) kind
+  | Large_purchase : (Cashflow_core.Events.t * Currency.t) kind
   | Overview : overview kind
 
 let kind_name : type a. a kind -> string = function
@@ -61,6 +65,10 @@ let kind_name : type a. a kind -> string = function
   | Count_cash -> "count_cash"
   | Goal_off_track -> "goal_off_track"
   | Recurring_change -> "recurring_change"
+  | Missing_payment -> "missing_payment"
+  | Double_charge -> "double_charge"
+  | Yearly_bill -> "yearly_bill"
+  | Large_purchase -> "large_purchase"
   | Overview -> "overview"
 
 (* Lower comes first. *)
@@ -79,6 +87,11 @@ let priority : type a. a kind -> int = function
   | Count_cash -> 75
   | Goal_off_track -> 80
   | Recurring_change -> 90
+  (* A salary that hasn't come is the most urgent thing there is; a charge taken twice is money to get back. *)
+  | Missing_payment -> 15
+  | Double_charge -> 33
+  | Yearly_bill -> 62
+  | Large_purchase -> 88
   | Overview -> 100
 
 (* Lifecycle: a card is shown until it is snoozed (it comes back after the date) or resolved
@@ -100,7 +113,8 @@ let step : type a b. a state -> (a, b) transition -> b state =
   | Snoozed _, Wake -> Shown
   | Resolved _, _ -> .
 
-type card = Card : { kind : 'a kind; key : string; payload : 'a; resolvable : bool } -> card
+(* [stake]: the money a card is about, which orders cards of the same priority (most first). *)
+type card = Card : { kind : 'a kind; key : string; payload : 'a; resolvable : bool; stake : int64 } -> card
 
 (* Persistence of the lifecycle *)
 
@@ -221,7 +235,7 @@ let feed ?(narrative = true) (service : Service.t) access =
         Hashtbl.replace recurring_memo key payments;
         payments
   in
-  let add ?(resolvable = true) kind key payload = cards := Card { kind; key; payload; resolvable } :: !cards in
+  let add ?(resolvable = true) ?(stake = 0L) kind key payload = cards := Card { kind; key; payload; resolvable; stake } :: !cards in
   List.iter (fun (h : Household.t) -> add ~resolvable:false Invitation ("invitation:" ^ Household_id.to_string h.id) h) (Service.invitations service access);
   List.iter (fun (m : mismatch) -> add Reconciliation_mismatch ("mismatch:" ^ m.checkpoint.checkpoint_id) m) (mismatches service access);
   List.iter (fun (d : import_due) -> add Import_due ("import:" ^ Account_id.to_string d.account.account.id ^ ":" ^ Date.to_string today) d) (import_due service access ~today);
@@ -287,6 +301,27 @@ let feed ?(narrative = true) (service : Service.t) access =
                 (fun (s : Analytics.shortfall) ->
                   add Shortfall (Printf.sprintf "shortfall:%s:%s" (Account_id.to_string s.short_account.account.id) (Cycle.label report.report_cycle)) (s, ctx.currency))
                 (Insights.shortfalls ~recurring:(recurring ctx) ctx);
+              (* Things in the statements that need a person (Events): judged only as far as they reach. *)
+              let module E = Cashflow_core.Events in
+              let book = Insights.book ctx in
+              (* Two years: a yearly bill is known from its last two payments. *)
+              let history = Insights.transfers ctx ~first:(Date.add_days today (-760)) ~last:today in
+              let cash id = match book.inside id with Some info -> info.account.kind = Asset && not (Analytics.is_investment info) | None -> false in
+              let series = Cashflow_core.Series.detect book ~cash ~setting:ctx.setting history in
+              let floor = Int64.mul 100L (Int64.of_float (10. ** float_of_int (Currency.scale ctx.currency))) in
+              let scope_key = match scope with Analytics.Me -> "me" | Household -> "household" | Family -> "family" in
+              List.iter
+                (fun (event : E.t) ->
+                  let stake = E.stake event in
+                  match event with
+                  | Missing { series; expected } ->
+                      add ~stake Missing_payment (Printf.sprintf "missing:%s:%s:%s" scope_key series.id (Date.to_string expected)) (event, ctx.currency)
+                  | Double_charge { first; second; _ } ->
+                      add ~stake Double_charge (Printf.sprintf "double:%s:%s" (Transfer_id.to_string first.id) (Transfer_id.to_string second.id)) (event, ctx.currency)
+                  | Yearly_bill { name; due; _ } ->
+                      add ~stake Yearly_bill (Printf.sprintf "yearly:%s:%s:%s" scope_key name (Date.to_string due)) (event, ctx.currency)
+                  | Large_purchase { purchase; _ } -> add ~stake Large_purchase ("large:" ^ Transfer_id.to_string purchase.id) (event, ctx.currency))
+                (E.detect book ~today ~covered_through:(Insights.covered_through ctx) ~floor ~series history);
               (* The feed covers every goal currency, unlike a currency-specific report. *)
               List.iter
                 (fun owner ->
@@ -323,7 +358,8 @@ let feed ?(narrative = true) (service : Service.t) access =
          | State Shown -> true
          | State (Snoozed _) -> false
          | State (Resolved _) -> (match c.kind with Budget_alert -> true | _ -> false))
-  |> List.stable_sort (fun (Card a) (Card b) -> Int.compare (priority a.kind) (priority b.kind))
+  |> List.stable_sort (fun (Card a) (Card b) ->
+         match Int.compare (priority a.kind) (priority b.kind) with 0 -> Int64.compare b.stake a.stake | c -> c)
 
 (* Acting on a card: only a shown card can be snoozed or resolved, which the transition types say. *)
 let act (service : Service.t) access ~key ~action ~until =
@@ -345,6 +381,24 @@ let act (service : Service.t) access ~key ~action ~until =
   | State (Resolved _), _ -> Ok ()
 
 (* JSON *)
+
+let event_json (event : Cashflow_core.Events.t) c =
+      let m = Json.money c in
+      match event with
+      | Missing { series; expected } ->
+          `Assoc
+            [ ("name", `String series.name); ("income", `Bool (series.kind = Income)); ("amount", m (Int64.abs series.amount));
+              ("expected", Json.date expected); ("cadence", `String (Analytics.cadence_to_string series.cadence)) ]
+      | Double_charge { amount; first; second; _ } ->
+          `Assoc
+            [ ("merchant", `String first.memo.description); ("amount", m amount); ("first_date", Json.date first.value_date);
+              ("second_date", Json.date second.value_date) ]
+      | Yearly_bill { name; amount; due; last_paid } ->
+          `Assoc [ ("name", `String name); ("amount", m amount); ("due", Json.date due); ("last_paid", Json.date last_paid) ]
+      | Large_purchase { purchase; amount; largest_before } ->
+          `Assoc
+            [ ("description", `String purchase.memo.description); ("amount", m amount); ("date", Json.date purchase.value_date);
+              ("largest_before", m largest_before) ]
 
 let payload_json : type a. a kind -> a -> Yojson.Safe.t =
  fun kind payload ->
@@ -401,6 +455,10 @@ let payload_json : type a. a kind -> a -> Yojson.Safe.t =
       `Assoc
         [ ("merchant", `String r.merchant_name); ("cadence", `String (Analytics.cadence_to_string r.cadence)); ("last_amount", Json.money c r.last_amount);
           ("previous_amount", Json.money c r.previous_amount); ("price_changed", `Bool (Analytics.price_changed r)); ("next_expected", Json.date r.next_expected) ]
+  | Missing_payment, (event, c) -> event_json event c
+  | Double_charge, (event, c) -> event_json event c
+  | Yearly_bill, (event, c) -> event_json event c
+  | Large_purchase, (event, c) -> event_json event c
   | Overview, o ->
       `Assoc
         [ ("cycle", Json.cycle o.cycle);

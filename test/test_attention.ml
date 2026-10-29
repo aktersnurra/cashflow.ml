@@ -40,6 +40,54 @@ let test_month_review_waits_for_the_statements () =
   import "Datum;Text;Belopp\n2026-09-20;ICA;-700,00\n2026-09-25;LÖN;30000,00\n";
   Alcotest.(check bool) "covered past its end: reviewed" true (List.mem "month_review" (kinds service alice))
 
+(* Things that need a person, said with what, how much and when: a salary that hasn't come, a charge taken
+   twice, the biggest purchase in half a year, a yearly bill due next month. The salary comes first. *)
+let test_events_that_need_a_person () =
+  let service = make_service () in
+  let alice = sign_in service "alice" in
+  let checking = open_checking service alice ~statement_backed:true "Checking" in
+  let monthly = List.map (fun m -> Printf.sprintf "2026-%02d-03;ICA;-400,00" m) [ 4; 5; 6; 7; 8; 9; 10 ] in
+  let csv =
+    String.concat "\n"
+      ([ "Datum;Text;Belopp"; "2024-11-05;IF FORSAKRING;-4800,00"; "2025-11-05;IF FORSAKRING;-4800,00";
+         "2026-06-25;LON;30000,00"; "2026-07-24;LON;30000,00"; "2026-08-25;LON;30000,00";
+         "2026-10-12;ELGIGANTEN;-499,00"; "2026-10-13;ELGIGANTEN;-499,00"; "2026-10-14;BAUHAUS;-5000,00" ]
+      @ monthly)
+    ^ "\n"
+  in
+  ignore (ok_import (Import.confirm (Import.context service alice) { target = Import.Existing checking; file_name = None; content = csv; decisions = [] }));
+  let feed = Attention.feed ~narrative:false service alice in
+  let card kind = List.find_map (fun (Attention.Card c) -> if Attention.kind_name c.kind = kind then Some (Attention.payload_json c.kind c.payload) else None) feed in
+  let field name = function Some (`Assoc f) -> List.assoc_opt name f | _ -> None in
+  (match card "missing_payment" with
+   | Some _ as c ->
+       Alcotest.(check bool) "the salary" true (field "income" c = Some (`Bool true));
+       Alcotest.(check bool) "expected on payday" true (field "expected" c = Some (`String "2026-09-25"))
+   | None -> Alcotest.fail "no missing salary");
+  Alcotest.(check bool) "a charge taken twice" true (field "amount" (card "double_charge") = Some (`String "499.00"));
+  Alcotest.(check bool) "the biggest purchase in half a year" true (field "amount" (card "large_purchase") = Some (`String "5000.00"));
+  Alcotest.(check bool) "the yearly insurance, due next month" true (field "due" (card "yearly_bill") = Some (`String "2026-11-05"));
+  let order = List.filter (fun k -> List.mem k [ "missing_payment"; "double_charge"; "yearly_bill"; "large_purchase" ]) (kinds service alice) in
+  Alcotest.(check (list string)) "most urgent first" [ "missing_payment"; "double_charge"; "yearly_bill"; "large_purchase" ] order
+
+(* And quiet when nothing is wrong: a salary not imported yet isn't missing, the same lunch three days running
+   is a habit, and ordinary spending has no "biggest purchase". *)
+let test_events_stay_quiet () =
+  let service = make_service () in
+  let alice = sign_in service "alice" in
+  let checking = open_checking service alice ~statement_backed:true "Checking" in
+  let monthly = List.map (fun m -> Printf.sprintf "2026-%02d-03;ICA;-400,00" m) [ 4; 5; 6; 7; 8; 9 ] in
+  let csv =
+    String.concat "\n"
+      ([ "Datum;Text;Belopp"; "2026-06-25;LON;30000,00"; "2026-07-24;LON;30000,00"; "2026-08-25;LON;30000,00";
+         "2026-09-21;LUNCH;-120,00"; "2026-09-22;LUNCH;-120,00"; "2026-09-23;LUNCH;-120,00"; "2026-09-24;PRESSBYRAN;-450,00" ]
+      @ monthly)
+    ^ "\n"
+  in
+  ignore (ok_import (Import.confirm (Import.context service alice) { target = Import.Existing checking; file_name = None; content = csv; decisions = [] }));
+  let events = List.filter (fun k -> List.mem k [ "missing_payment"; "double_charge"; "yearly_bill"; "large_purchase" ]) (kinds service alice) in
+  Alcotest.(check (list string)) "nothing to say" [] events
+
 let test_snooze_and_budget_acknowledgement () =
   (* Four days into the cycle that began on 25 September, so spending can run ahead of pace. *)
   let service = Service.make ~now:(fun () -> Option.get (Ptime.of_date_time ((2026, 9, 28), ((10, 0, 0), 0)))) (Store_sqlite.open_memory ()) in
@@ -188,6 +236,8 @@ let () =
     [ ( "feed",
         [ Alcotest.test_case "follows the data" `Quick test_feed_follows_the_data;
           Alcotest.test_case "the month review waits for the statements" `Quick test_month_review_waits_for_the_statements;
+          Alcotest.test_case "events that need a person" `Quick test_events_that_need_a_person;
+          Alcotest.test_case "events stay quiet" `Quick test_events_stay_quiet;
           Alcotest.test_case "snooze and budget acknowledgement" `Quick test_snooze_and_budget_acknowledgement;
           Alcotest.test_case "snooze hides until the date" `Quick test_snooze_hides_until_the_date;
           Alcotest.test_case "unusual spending" `Quick test_unusual_spending;
