@@ -11,7 +11,13 @@
    The preview is the server's dry run (new rows, duplicates, entries it confirms, whether the
    balance will agree); nothing is posted, and no account opened, until Import is pressed. Rows the
    server can't place (ambiguous: identical to rows already imported, on a day the file may not
-   cover in full) need a decision each before Import is enabled. *)
+   cover in full) need a decision each before Import is enabled.
+
+   On the desk ([incoming]: a file already handed over) there is no file box: the file is read at once, and
+   when nothing needs the person — the file names an account cashflow knows, no row is ambiguous, nothing
+   is asked about an opening balance and the balance agrees — it is imported without a button, the way an
+   accountant just files a statement. Otherwise the preview asks what it must. Closing hands back to the
+   desk ([on_close]). *)
 open! Core
 open! Async_kernel
 open! Bonsai_web.Cont
@@ -84,15 +90,41 @@ let target_args identity = function
             [ ("name", `String name); ("kind", `String kind); ("owner", `String owner); ("institution", J.field "institution" identity);
               ("number_last4", J.field "number_last4" identity) ] ) ]
 
-let component ~(ctx : Ctx.t) ~(account_id : string option Bonsai.t) graph =
+(* Nothing in the preview needs the person. *)
+let needs_nobody ~identity ~target preview =
+  let rows = J.list (J.field "rows" preview) in
+  let balance = J.field "balance_check" preview in
+  (match target with Existing _ -> not (J.is_null (J.field "account" identity)) | Create _ -> false)
+  && (not (List.exists rows ~f:(fun r -> String.equal (J.str (J.field "status" r)) "ambiguous")))
+  && (not (String.equal (J.str (J.field "status" preview)) "already_imported"))
+  && J.is_null (J.field "suggested_opening_balance" preview)
+  && (J.is_null balance || J.bool (J.field "agrees" balance))
+
+let component ?(incoming : File.file Js.t option Bonsai.t option) ?(on_close : unit Effect.t Bonsai.t option) ~(ctx : Ctx.t)
+    ~(account_id : string option Bonsai.t) graph =
   let phase, set_phase = Bonsai.state Idle graph in
   let dragging, set_dragging = Bonsai.state false graph in
+  let desk = Option.is_some incoming in
+  let close = match on_close with Some c -> c | None -> let%arr set_phase in set_phase Idle in
+  let confirm =
+    let%arr set_phase and changed = ctx.changed in
+    fun ~file ~content ~identity ~target ~decisions ->
+      let%bind.Effect () = set_phase (Importing file) in
+      let decisions = `List (List.map decisions ~f:(fun (row, decision) -> `Assoc [ ("row", `Int row); ("decision", `String decision) ])) in
+      let args =
+        `Assoc ([ ("file_name", `String file); ("decisions", decisions); ("confirm", `Bool true) ] @ target_args identity target @ content_args content)
+      in
+      match%bind.Effect Api.run "import_statement" args with
+      | Ok result -> Effect.Many [ set_phase (Done result); changed ]
+      | Error message -> set_phase (Failed message)
+  in
   let run_preview =
-    let%arr set_phase in
+    let%arr set_phase and confirm in
     fun ~name ~content ~identity ~target ->
       let%bind.Effect () = set_phase (Previewing name) in
       let args = `Assoc ([ ("file_name", `String name) ] @ target_args identity target @ content_args content) in
       match%bind.Effect Api.run "import_statement" args with
+      | Ok preview when desk && needs_nobody ~identity ~target preview -> confirm ~file:name ~content ~identity ~target ~decisions:[]
       | Ok preview -> set_phase (Preview { file = name; content; identity; target; preview; decisions = [] })
       | Error message -> set_phase (Failed message)
   in
@@ -123,19 +155,11 @@ let component ~(ctx : Ctx.t) ~(account_id : string option Bonsai.t) graph =
       | Ok _ -> run_preview ~name ~content ~identity ~target:(Existing account_id)
       | Error message -> set_phase (Failed message)
   in
-  let confirm =
-    let%arr set_phase and changed = ctx.changed in
-    fun ~file ~content ~identity ~target ~decisions ->
-      let%bind.Effect () = set_phase (Importing file) in
-      let decisions = `List (List.map decisions ~f:(fun (row, decision) -> `Assoc [ ("row", `Int row); ("decision", `String decision) ])) in
-      let args =
-        `Assoc ([ ("file_name", `String file); ("decisions", decisions); ("confirm", `Bool true) ] @ target_args identity target @ content_args content)
-      in
-      match%bind.Effect Api.run "import_statement" args with
-      | Ok result -> Effect.Many [ set_phase (Done result); changed ]
-      | Error message -> set_phase (Failed message)
-  in
-  let%arr phase and set_phase and dragging and set_dragging and start and run_preview and confirm and set_opening and account_id
+  (match incoming with
+   | None -> ()
+   | Some incoming ->
+       Bonsai.Edge.lifecycle ~on_activate:(let%arr incoming and start in match incoming with Some f -> start f | None -> Effect.Ignore) graph);
+  let%arr phase and set_phase and dragging and set_dragging and start and run_preview and confirm and set_opening and account_id and close
   and locale = ctx.locale and session = ctx.session and navigate = ctx.navigate in
   let currency = J.str ~default:"SEK" (J.path [ "user"; "default_currency" ] session) in
   (* A tap opens the phone's file picker; on a computer a file can also be dropped on it. *)
@@ -158,10 +182,10 @@ let component ~(ctx : Ctx.t) ~(account_id : string option Bonsai.t) graph =
           () ]
   in
   match phase with
-  | Idle -> drop_zone
+  | Idle -> if desk then Vdom.Node.none else drop_zone
   | Reading file | Previewing file | Importing file -> Ui.div ~cls:"import-progress" [ Ui.div ~cls:"shimmer" []; Ui.muted (Msg.card_import_reading ~file locale) ]
   | Failed message ->
-      Ui.div ~cls:"import-result error" [ Ui.p (Msg.error_generic ~message locale); Ui.button (Msg.action_close locale) (set_phase Idle) ]
+      Ui.div ~cls:"import-result error" [ Ui.p (Msg.error_generic ~message locale); Ui.button (Msg.action_close locale) close ]
   | Preview { file; content; identity; target; preview; decisions } ->
       let rows = J.list (J.field "rows" preview) in
       let ambiguous = List.filter rows ~f:(fun r -> String.equal (J.str (J.field "status" r)) "ambiguous") in
@@ -252,7 +276,7 @@ let component ~(ctx : Ctx.t) ~(account_id : string option Bonsai.t) graph =
         @ [ (if already then Ui.muted (Msg.card_import_already locale) else Vdom.Node.none);
             Ui.div ~cls:"actions"
               [ Ui.button ~kind:"primary" ~disabled:(already || undecided || unnamed) (Msg.action_import locale) (confirm ~file ~content ~identity ~target ~decisions);
-                Ui.button (Msg.action_cancel locale) (set_phase Idle) ] ])
+                Ui.button (Msg.action_cancel locale) close ] ])
   | Done result ->
       let inbox = J.int (J.field "inbox" result) in
       Ui.div ~cls:"import-result ok"
@@ -262,4 +286,4 @@ let component ~(ctx : Ctx.t) ~(account_id : string option Bonsai.t) graph =
               (match J.str_opt (J.path [ "account"; "id" ] result) with
               | Some id when Option.is_none account_id -> Ui.button (Accounts_data.name ~locale (J.field "account" result)) (navigate (Route.Account id))
               | _ -> Vdom.Node.none);
-              Ui.button (Msg.action_close locale) (set_phase Idle) ] ]
+              Ui.button (Msg.action_close locale) close ] ]

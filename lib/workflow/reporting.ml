@@ -21,7 +21,7 @@ let cashflow_summary ~access ~scope ?currency ~cycles () =
   let* facts = Effects.perform (Load_cashflow request) in
   let book = Analytics.make_book ~accounts:facts.accounts ~owners:(Reporting_context.owners context) ~currency in
   let covered_through =
-    Analytics.covered_through ~accounts:facts.accounts ~owners:(Reporting_context.owners context) ~imported_through:facts.imported_through
+    Analytics.covered_through ~transfers:facts.transfers ~accounts:facts.accounts ~owners:(Reporting_context.owners context) ~imported_through:facts.imported_through
       ~today:(Reporting_context.today context)
   in
   Ok {context; cycles=Analytics.cashflow_summary ?covered_through book ~cycles ~reconciled_through:facts.reconciled_through facts.transfers}
@@ -80,7 +80,7 @@ type outlook_report = { context : Reporting_context.t; outlook : Cashflow_core.O
 let period_outlook ~access ~scope ?currency () =
   let* context, (facts : Forecast_facts.t), book, forecast = project ~access ~scope ?currency ~horizon:1 ~scenario:Forecast_request.no_scenario () in
   let owners = Reporting_context.owners context and today = Reporting_context.today context in
-  let covered_through = Analytics.covered_through ~accounts:facts.accounts ~owners ~imported_through:facts.imported_through ~today in
+  let covered_through = Analytics.covered_through ~transfers:facts.transfers ~accounts:facts.accounts ~owners ~imported_through:facts.imported_through ~today in
   Ok
     { context;
       outlook =

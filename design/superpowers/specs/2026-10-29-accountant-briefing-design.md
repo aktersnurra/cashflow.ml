@@ -75,6 +75,11 @@ feed: they are to-dos, not insights.
 
 ## 5. Surface
 
+One desk: everything is handed over in one place, as on an accountant's desk. The Overview opens with a single box
+(*Ask, or drop statements*): a question starts an advisor conversation; files dropped on the page, on the advisor
+page or picked with the paperclip are read, matched to their account and filed without asking when nothing needs the
+person, and ask what they must when something does. There is no import page in the navigation.
+
 The Overview: safe to spend (am I OK), then the briefing (three to five answered questions), then the to-dos.
 Each briefing card: the question as its title, the answer as one number and one line, follow-ups. It replaces the
 month review card and the weekly brief's written summary.

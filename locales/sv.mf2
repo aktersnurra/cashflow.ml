@@ -725,3 +725,7 @@ q.month.less = Varför kostade {$month} mindre
 q.month.sub = i utgifter · en vanlig månad {$usual}
 q.change.sub = i månaden på sistone, var {$earlier}
 q.new.sub = {$count} köp sedan {$date :date}
+desk.placeholder = Fråga, eller släpp kontoutdrag
+desk.attach = Lägg till kontoutdrag
+desk.drop = Släpp för att lämna över
+desk.send = Fråga

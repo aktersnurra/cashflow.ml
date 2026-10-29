@@ -141,7 +141,7 @@ const sleep = ms => new Promise(r => setTimeout(r,ms));
   assert.equal(await historyMenu.locator('[data-conversation-row]').count(),3);
   assert.equal(await menuItem('Load older conversations').count(),0,'exhausted native page has no older cursor');
   await historyMenu.getByRole('menuitem',{name:/Please change my budget and move money/}).click();
-  await page.waitForFunction(()=>document.querySelector('textarea')?.value==='second conversation draft');assert.equal(await composer().inputValue(),'second conversation draft');
+  await page.waitForFunction(()=>document.querySelector('textarea.advisor-input')?.value==='second conversation draft');assert.equal(await composer().inputValue(),'second conversation draft');
   // Real deletion endpoint; dialog holds only the currently selected opaque ID.
   await button('Conversation actions').click();page.once('dialog',dialog=>dialog.accept());await menuItem('Delete conversation').click();
   for(let n=0;n<100 && await page.getByText(/I cannot change budgets/).count();n++)await sleep(20);
@@ -162,7 +162,7 @@ const sleep = ms => new Promise(r => setTimeout(r,ms));
   assert.equal(await page.locator('.tabbar .label').count(),5,'existing mobile destinations preserved');
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
   await page.screenshot({path:evidence+'/mobile-swedish.png',fullPage:true});
-  await page.getByRole('textbox').scrollIntoViewIfNeeded();await page.screenshot({path:evidence+'/mobile-swedish-viewport.png'});
+  await page.locator('textarea.advisor-input').scrollIntoViewIfNeeded();await page.screenshot({path:evidence+'/mobile-swedish-viewport.png'});
   await page.setViewportSize({width:1440,height:1000});
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
   await page.screenshot({path:evidence+'/desktop-swedish-viewport.png'});

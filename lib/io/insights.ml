@@ -88,7 +88,8 @@ let covered_through ctx =
   let imported_through =
     List.filter_map (fun (info : Account_info.t) -> Option.map (fun d -> (info.account.id, d)) (Import_store.imported_through ctx.service.db info.account.id)) accounts
   in
-  Analytics.covered_through ~accounts ~owners:ctx.owners ~imported_through ~today:ctx.today
+  Analytics.covered_through ~transfers:(transfers ctx ~first:(Date.add_days ctx.today (-183)) ~last:ctx.today) ~accounts ~owners:ctx.owners ~imported_through
+    ~today:ctx.today
 
 let cashflow_summary ctx ~cycles =
   let cycles = recent_cycles ctx cycles in

@@ -18,6 +18,11 @@ Bokföringsdag;Text;Belopp;Saldo
 2026-08-01;RÄNTA;12,00;5 000,00
 `;
 fs.writeFileSync(out + '/savings.csv', savings);
+// The next month's statement for it: the account is known and nothing is ambiguous, so the desk files it.
+fs.writeFileSync(out + '/savings2.csv', `Kontoutdrag;Sparkonto ****4321
+Bokföringsdag;Text;Belopp;Saldo
+2026-09-03;FRÅN LÖNEKONTO;1 000,00;7 000,00
+`);
 (async () => {
   const browser = await chromium.launch();
   const errors = [];
@@ -195,14 +200,14 @@ fs.writeFileSync(out + '/savings.csv', savings);
     await page.goto(base + '/');
     await page.waitForSelector('.page .panel, .page .empty', { timeout: 15000 });
     await page.screenshot({ path: out + '/20-phone-home.png' });
-    // Importing is the middle tab; the file says which account it is for.
-    await page.click('.tabbar >> text=Importera');
-    const upload = page.locator('.page:visible .dropzone:visible');
-    await upload.waitFor({ timeout: 10000 });
-    assert.equal(await upload.locator('.dropzone-hint').isVisible(), false, 'a touch screen offers no drop');
+    // There is no import tab: statements are handed over on the Overview's desk, and the file says which account
+    // it is for. A new account needs a name, so this one asks.
+    assert.equal(await page.locator('.tabbar >> text=Importera').count(), 0, 'no import tab');
+    const desk = page.locator('.page:visible .desk');
+    await desk.waitFor({ timeout: 10000 });
     await page.screenshot({ path: out + '/21-phone-import.png' });
-    await upload.locator('input[type=file]').setInputFiles(out + '/savings.csv');
-    await page.waitForSelector('.import-preview', { timeout: 10000 });
+    await desk.locator('input[type=file]').setInputFiles(out + '/savings.csv');
+    await page.waitForSelector('.desk .import-preview', { timeout: 10000 });
     const destination = page.locator('.import-destination');
     assert.equal(await destination.locator('select').first().inputValue(), 'new', 'no account has ****4321, so a new one');
     assert.equal(await destination.locator('input').inputValue(), 'Sparkonto', 'named from the file');
@@ -212,9 +217,24 @@ fs.writeFileSync(out + '/savings.csv', savings);
     await page.click('.import-result >> text=Sparkonto');
     await page.waitForSelector('h1 >> text=Sparkonto', { timeout: 10000 });
     await page.screenshot({ path: out + '/23-phone-account.png', fullPage: true });
-    // Adding by hand is the way round.
-    await page.click('.tabbar >> text=Importera');
-    await page.click('.import-manual a');
+    // A statement for an account it knows is just filed: no preview, no button.
+    await page.click('.tabbar >> text=Översikt');
+    let previews = 0;
+    const seen = [];
+    page.on('request', r => { if (r.url().includes('_statement')) seen.push(r.url().split('/').pop() + ' ' + (r.postData() || '').replace(/"content[^,]*,/, '').slice(0, 160)); if (r.url().includes('import_statement') && !(r.postData() || '').includes('"confirm":true')) previews++; });
+    const filedBefore = await page.locator('.desk .import-result.ok').count();
+    await page.locator('.page:visible .desk input[type=file]').setInputFiles(out + '/savings2.csv');
+    await page.waitForFunction(n => document.querySelectorAll('.desk .import-result.ok').length > n, filedBefore, { timeout: 10000 });
+    assert.equal(await page.locator('.desk .import-preview').count(), 0, 'filed without asking');
+    await page.waitForTimeout(1500);
+    assert.equal(previews, 1, 'one dry run, then filed: ' + seen.join(' | '));
+    await page.screenshot({ path: out + '/24-phone-desk-filed.png', fullPage: true });
+    const receipts = await page.locator('.desk .import-result').count();
+    await page.locator('.desk .import-result').last().locator('.button', { hasText: 'Stäng' }).click();
+    await page.waitForFunction(n => document.querySelectorAll('.desk .import-result').length === n - 1, receipts, { timeout: 5000 });
+    // Adding by hand is the way round, from the transactions.
+    await page.goto(base + '/transactions');
+    await page.locator('.page:visible .button', { hasText: 'Lägg till' }).first().click();
     await page.waitForSelector('.add-form', { timeout: 10000 });
     await page.click('.tabbar >> text=Pengar');
     await page.waitForSelector('.section-nav');

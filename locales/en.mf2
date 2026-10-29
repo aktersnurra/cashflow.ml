@@ -726,3 +726,7 @@ q.month.less = Why {$month} cost less
 q.month.sub = spent · a usual month {$usual}
 q.change.sub = a month lately, was {$earlier}
 q.new.sub = {$count} purchases since {$date :date}
+desk.placeholder = Ask, or drop statements
+desk.attach = Add statements
+desk.drop = Drop to hand them over
+desk.send = Ask

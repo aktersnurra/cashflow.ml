@@ -193,7 +193,7 @@ let mostly_uncategorized categories_json =
   Float.(total uncategorized > total (fun _ -> true) /. 2.)
 
 let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor_protocol.Wire.scope -> unit Effect.t) Bonsai.t)
-    ~selected_finding ~outlet ~advisor_route ~(visible : bool Bonsai.t) graph =
+    ~(on_question : (string -> unit Effect.t) Bonsai.t) ~selected_finding ~outlet ~advisor_route ~(visible : bool Bonsai.t) graph =
   let captured, set_captured = Bonsai.state None graph in
   let offset, set_offset = Bonsai.state 0 graph in
   let scope, set_scope = Bonsai.state "me" graph in
@@ -204,6 +204,8 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
     Remote.load ~active:visible ~name:"spending_by_category" ~args:(let%arr scope and offset in `Assoc [ ("scope", `String scope); ("cycle_offset", `Int offset) ]) ~ctx graph
   in
   (* The accountant's briefing: the questions worth answering before they're asked. *)
+  (* The desk: questions to the advisor, statements filed where they belong. *)
+  let desk = Desk.component ~ctx ~on_question graph in
   let briefing = Briefing_view.component ~ctx ~scope ~visible ~on_ask ~selected_finding ~outlet graph in
   let feed = Remote.load ~active:visible ~name:"get_attention_feed" ~args:(Bonsai.return (`Assoc [("narrative", `Bool false)])) ~ctx graph in
   let cards =
@@ -232,7 +234,7 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
       ([body] @ (if eligible then [Ui.div ~cls:"finding-reply" [Ui.button (Msg.advisor_ask locale)
         (Effect.Many [set_captured (Some (finding_key, cards)); on_ask ~finding_key ~scope])]] else [])
        @ if selected then [outlet] else [])) graph in
-  let%arr summary and outlook and categories and briefing and views and offset and set_offset and scope and set_scope and locale = ctx.locale and session = ctx.session
+  let%arr desk and summary and outlook and categories and briefing and views and offset and set_offset and scope and set_scope and locale = ctx.locale and session = ctx.session
   and navigate = ctx.navigate and outlet and selected_finding and visible_cards and advisor_route in
   let cycles = match summary with Loaded json -> J.list (J.field "cycles" json) | Loading | Failed _ -> [] in
   let code = match summary with Loaded json -> J.str ~default:"SEK" (J.field "currency" json) | Loading | Failed _ -> "SEK" in
@@ -379,7 +381,7 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
     | Loaded _, None -> Ui.empty (Msg.overview_empty locale)
     | Loaded _, Some c when Float.(Fmt.to_float (J.field "income" c) = 0. && Fmt.to_float (J.field "spending" c) = 0.) ->
         Ui.div ~cls:"panel empty-panel"
-          [ Ui.p (Msg.overview_empty locale); Ui.div ~cls:"actions" [ Ui.button ~kind:"primary" (Msg.import_title locale) (navigate Route.Import) ] ]
+          [ Ui.p (Msg.overview_empty locale) ]
     | Loaded _, Some c ->
         Ui.div
           [ figures c; (if offset = 0 then briefing else Vdom.Node.none);
@@ -395,11 +397,13 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
   in
   let hosted = Map.exists visible_cards ~f:(fun card -> Option.equal String.equal selected_finding (Some (J.str (J.field "key" card)))) in
   let standalone = advisor_route && not hosted in
-  Vdom.Node.main ~attrs:[Vdom.Attr.class_ (if standalone then "page advisor-page" else "page")]
+  (* Statements can be dropped while talking to the advisor too; what became of them shows above the conversation. *)
+  Vdom.Node.main ~attrs:[Vdom.Attr.class_ ((if standalone then "page advisor-page" else "page") ^ if desk.dragging then " dropping" else ""); desk.drop]
     [(if standalone then Vdom.Node.h1 [Ui.text (Msg.nav_advisor locale)] else Vdom.Node.none);
      (* Keep the financial surface mounted for Home continuity; an unanchored
         Advisor conversation is not a second dashboard above the chat. *)
      Vdom.Node.div ~attrs:(if standalone then [Vdom.Attr.create "hidden" ""] else [])
        (let urgent = Map.exists visible_cards ~f:(fun card -> List.mem urgent_kinds (J.str (J.field "kind" card)) ~equal:String.equal) in
-        if urgent then [head; attention; body] else [head; body; attention]);
+        if urgent then [head; desk.view; attention; body] else [head; desk.view; body; attention]);
+     (if standalone then desk.files else Vdom.Node.none);
      (if standalone then outlet else Vdom.Node.none)]

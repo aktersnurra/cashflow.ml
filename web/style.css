@@ -731,3 +731,20 @@ html { touch-action: manipulation; -webkit-text-size-adjust: 100%; text-size-adj
 .briefing-list { gap: 8px; }
 .card.question { padding-top: 14px; padding-bottom: 6px; }
 .card.question .actions { margin-top: 6px; }
+/* The desk: one box for questions and statements. */
+.desk { margin: 0 0 16px; }
+.desk-composer { display: grid; grid-template-columns: 1fr; gap: 4px; padding: 8px 8px 8px 12px; border: 1px solid var(--line-strong); border-radius: 20px; background: var(--panel); transition: border-color .15s, background .15s; }
+.desk-composer:focus-within { border-color: var(--focus); }
+.desk.dragging .desk-composer, main.page.dropping .desk-composer { border: 2px dashed var(--accent); background: var(--surface); }
+.desk-input { display: block; width: 100%; min-height: 40px; max-height: 200px; resize: none; border: 0; outline: none; background: transparent; color: var(--text); font: inherit; font-size: 16px; line-height: 24px; padding: 6px 4px 0; }
+.desk-bottom { display: flex; justify-content: space-between; align-items: center; }
+.desk-attach { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 18px; color: var(--text-2); cursor: pointer; }
+.desk-attach:hover { background: var(--surface); color: var(--text); }
+.desk-attach input { display: none; }
+.desk-send { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 18px; border: 0; background: var(--accent); color: var(--on-accent); cursor: pointer; }
+.desk-send:disabled { opacity: .35; cursor: default; }
+.desk-files { display: grid; gap: 8px; margin-top: 8px; }
+.desk-files > * { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; background: var(--panel); }
+main.page.advisor-page.dropping { outline: 2px dashed var(--accent); outline-offset: -8px; border-radius: 16px; }
+.advisor-page > .desk-files { margin: 0 auto 12px; max-width: 744px; }
+

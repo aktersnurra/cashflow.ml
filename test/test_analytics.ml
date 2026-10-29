@@ -491,6 +491,21 @@ let test_period_outlook () =
   Alcotest.(check (float 0.01)) "the goal is set aside" 3000. (money [ "goals_set_aside" ]);
   Alcotest.(check (float 0.01)) "and comes off what is safe to spend" (safe -. 3000.) (money [ "safe_to_spend" ])
 
+(* A savings account that moves once a month doesn't hold the books back: its statement ends at its last
+   transfer, and what it moves isn't spending. Only the accounts money is spent from decide how far the books
+   reach. *)
+let test_coverage_follows_spending_accounts () =
+  let service = make_service () in
+  let alice = sign_in service "alice" in
+  let checking = open_checking service alice ~statement_backed:true "Checking" in
+  let savings = open_checking service alice ~statement_backed:true "Savings" in
+  let import target csv = ignore (ok_import (Cashflow_io.Import.confirm (Cashflow_io.Import.context service alice) { target = Cashflow_io.Import.Existing target; file_name = None; content = csv; decisions = [] })) in
+  import checking "Datum;Text;Belopp\n2026-09-25;LON;30000,00\n2026-10-02;ICA;-400,00\n2026-10-09;ICA;-450,00\n2026-10-20;ICA;-380,00\n";
+  import savings "Datum;Text;Belopp\n2026-09-03;FRAN LONEKONTO;1000,00\n";
+  let ctx = Result.get_ok (Insights.context service alice ~scope:Analytics.Me ()) in
+  Alcotest.(check (option string)) "through the checking account's last day" (Some "2026-10-20")
+    (Option.map Cashflow_core.Date.to_string (Insights.covered_through ctx))
+
 (* Why a month came out as it did: the yearly insurance (expected), a one-off purchase, and groceries up across
    the month, largest first; not "normal". *)
 let test_explain_a_month () =
@@ -602,6 +617,7 @@ let () =
           Alcotest.test_case "irregular spending is not recurring" `Quick test_irregular_spending_is_not_recurring;
           Alcotest.test_case "forecast" `Quick test_forecast_query;
           Alcotest.test_case "period outlook" `Quick test_period_outlook;
+          Alcotest.test_case "coverage follows spending accounts" `Quick test_coverage_follows_spending_accounts;
           Alcotest.test_case "explain a month" `Quick test_explain_a_month;
           Alcotest.test_case "explain a filed month" `Quick test_explain_a_filed_month;
           Alcotest.test_case "contribution plan" `Quick test_contribution_plan;

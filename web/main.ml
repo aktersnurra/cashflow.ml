@@ -39,11 +39,11 @@ let navigate_to set_route route =
       set_route route ]
 
 (* The sidebar: what you look at, then where the money lives; Settings sits at the foot. *)
-let nav_groups = Route.[ [ (Home, None); (Import, None); (Advisor None, None) ]; [ (section_entry Money, Some Money); (section_entry Plan, Some Plan) ]; [ (Household, None) ] ]
+let nav_groups = Route.[ [ (Home, None); (Advisor None, None) ]; [ (section_entry Money, Some Money); (section_entry Plan, Some Plan) ]; [ (Household, None) ] ]
 
-(* On a phone, importing a statement is the way money gets in, so it has the middle tab; adding a
-   transaction by hand is a link from there. *)
-let tab_items = Route.[ (Home, None); (section_entry Money, Some Money); (Import, None); (section_entry Plan, Some Plan); (Settings, None) ]
+(* Statements are handed over on the Overview's desk (dropped anywhere on it, or the paperclip), so there is no
+   import tab; the advisor, where the desk's questions go, has the middle one. *)
+let tab_items = Route.[ (Home, None); (section_entry Money, Some Money); (Advisor None, None); (section_entry Plan, Some Plan); (Settings, None) ]
 
 let icon route =
   let name : Feather_icon.t =
@@ -197,6 +197,16 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
       (* Opening a finding keeps its viewport anchor. Page following resumes
          when the reader reaches the tail or explicitly asks to follow. *)
       advisor.dispatch (C.Follow false); focus_advisor] in
+  (* A question typed on the Overview's desk: a new conversation with it as the first message, sent at once
+     when the advisor may answer (otherwise it waits in the composer behind the consent). *)
+  let on_question = let%arr advisor and locale and session and notify and set_selected_scope and set_selected_finding and set_declined and navigate in
+    fun text -> match advisor_currency session W.Personal with
+    | None -> notify (Msg.advisor_currency_unavailable locale)
+    | Some currency ->
+        let ready = match advisor.view.status with Some s -> s.available && s.consent | None -> false in
+        Effect.Many ([set_selected_scope W.Personal; set_selected_finding None; set_declined false;
+          advisor.open_empty ~scope:W.Personal ~currency ~locale; advisor.dispatch (C.Draft_changed text); navigate (Route.Advisor None)]
+          @ if ready then [advisor.dispatch (C.Submit_draft (Api.fresh_key "advisor"))] else []) in
   let new_conversation = let%arr advisor and session and locale and notify and set_selected_scope and set_selected_finding and set_declined and navigate in
     fun scope -> match advisor_currency session scope with
     | None -> notify (Msg.advisor_currency_unavailable locale)
@@ -231,7 +241,7 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
     match%sub home_access with
     | false, _ -> Bonsai.return Vdom.Node.none
     | true, true -> let%arr outlet and locale in Ui.page ~title:(Msg.nav_advisor locale) [outlet]
-    | true, false -> Home.page ~ctx ~on_ask ~selected_finding ~outlet
+    | true, false -> Home.page ~ctx ~on_ask ~on_question ~selected_finding ~outlet
         ~advisor_route:(let%arr route in match route with Route.Advisor _ -> true | _ -> false)
         ~visible:(let%arr route in match route with Route.Home | Route.Advisor _ -> true | _ -> false) graph) graph in
   let clear_home = let%arr reset_home and set_selected_finding and set_selected_scope in fun denied ->

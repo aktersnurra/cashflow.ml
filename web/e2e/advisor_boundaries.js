@@ -23,11 +23,11 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   const state=async()=>(await fetch(base+'/state')).json();
   await cookie('a');await page.goto(base);
   await page.locator('[data-finding-key^="shortfall:"]').getByRole('button',{name:'Ask advisor',exact:true}).click();
-  await button('Enable Advisor').click();await page.getByRole('textbox').fill('Explain the shortfall');await button('Send').click();
+  await button('Enable Advisor').click();await page.locator('textarea.advisor-input').fill('Explain the shortfall');await button('Send').click();
   await page.getByText(/first héj <img/).waitFor();assert.equal((await state()).released,false);
   await page.waitForURL(/\/advisor\//);const conversation=new URL(page.url()).pathname;
   const area=page.locator('.advisor-conversation');
-  await page.getByRole('textbox').fill('sensitive draft must die at session boundary');
+  await page.locator('textarea.advisor-input').fill('sensitive draft must die at session boundary');
   await page.setViewportSize({width:390,height:844});
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'long live output fits mobile');
   await area.scrollIntoViewIfNeeded();await page.screenshot({path:(process.env.ADVISOR_EVIDENCE_DIR||'/tmp/task11-evidence')+'/mobile-long-gated.png'});
@@ -37,7 +37,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   await nav('Plan').click();await nav('Advisor').click();await sleep(100);
   assert.equal(await page.evaluate(()=>window.scrollY),position,'document scroll-away survives financial-page visits');
   assert.equal(await page.evaluate(()=>window.documentStamp),stamp);
-  assert.equal(await page.getByRole('textbox').inputValue(),'sensitive draft must die at session boundary');
+  assert.equal(await page.locator('textarea.advisor-input').inputValue(),'sensitive draft must die at session boundary');
   // Session A -> B (same user), then B -> C (different user). CSRF really differs.
   assert.notEqual(sessions.a.csrf,sessions.b.csrf);
   const replace=async(which,settingsLabel,saveLabel,locale)=>{
@@ -55,26 +55,26 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   };
   await replace('b','Settings','Save','sv');
   await page.goto(base+conversation);await page.getByRole('textbox',{name:'Meddelande till rådgivaren',exact:true}).waitFor();
-  assert.equal(await page.getByRole('textbox').inputValue(),'');
-  await page.getByRole('textbox').fill('B private draft');
+  assert.equal(await page.locator('textarea.advisor-input').inputValue(),'');
+  await page.locator('textarea.advisor-input').fill('B private draft');
   await replace('c','Inställningar','Spara','en');
   await page.goto(base+conversation);
   await page.getByText(/Access to this conversation has ended/).waitFor();
   assert.equal(await page.getByText('Explain the shortfall',{exact:true}).count(),0);
-  assert.equal(await page.getByRole('textbox').count(),0);
+  assert.equal(await page.locator('textarea.advisor-input').count(),0);
   assert.equal(await button('Conversation actions').count(),0,'unconfirmed denied ID is not deletion handoff');
   assert.equal((await state()).provider_starts,1);
   // Original owner still may delete after explicit individual consent revocation.
   const owner=await browser.newPage();await owner.context().addCookies([{name:'cashflow_session',value:sessions.a.token,url:base}]);
-  await owner.goto(base+conversation);await owner.getByRole('textbox').waitFor();
-  await owner.getByRole('textbox').fill('old authorized private draft');
+  await owner.goto(base+conversation);await owner.locator('textarea.advisor-input').waitFor();
+  await owner.locator('textarea.advisor-input').fill('old authorized private draft');
   let snapshots=0;owner.on('request',r=>{if(r.method()==='GET' && r.url().includes('/api/advisor/conversations/'))snapshots++;});
   const revoked=await owner.request.post(base+'/api/advisor/consent',{headers:{'x-csrf-token':sessions.a.csrf,'origin':base},data:{enabled:false}});assert.equal(revoked.status(),200);
   // The native stream closes on revocation; controller recovery uses an authorized
   // snapshot, never a new provider request or an ownership-deletion content read.
   await owner.getByText(/Access to this conversation has ended/).waitFor();
   assert.equal(await owner.getByText('Explain the shortfall',{exact:true}).count(),0);
-  assert.equal(await owner.getByRole('textbox').count(),0);
+  assert.equal(await owner.locator('textarea.advisor-input').count(),0);
   assert.equal(await owner.getByRole('heading',{name:'Bills may run short before payday',exact:true}).count(),0,'captured Home source is cleared');
   const beforeDelete=snapshots;await owner.getByRole('button',{name:'Conversation actions',exact:true}).click();owner.once('dialog',d=>d.accept());await owner.getByRole('menuitem',{name:'Delete conversation',exact:true}).click();
   await sleep(200);assert.equal(snapshots,beforeDelete,'ownership deletion does not refetch denied contents');

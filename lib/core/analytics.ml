@@ -78,18 +78,33 @@ type cycle_summary = {
 
 (* How far the books are known: the earliest latest-imported day among the scope's bank accounts and
    cards that statements feed (and have fed), never after today. Anything later is not imported
-   yet, not zero. [None] when no statement has been imported: then only today bounds it. *)
-let covered_through ~(accounts : Account_info.t list) ~owners ~(imported_through : (Account_id.t * Date.t) list) ~today =
+   yet, not zero. [None] when no statement has been imported: then only today bounds it.
+
+   Only accounts money is spent from count, when [transfers] says which (three purchases or more paid
+   from it in them; none means every fed account counts): a savings account that moves once a month is not behind because its statement
+   ends at its last transfer, and what it does move is not spending. *)
+let covered_through ~(transfers : Transfer.t list) ~(accounts : Account_info.t list) ~owners ~(imported_through : (Account_id.t * Date.t) list) ~today =
   let fed =
     List.filter_map
       (fun (info : Account_info.t) ->
         if info.details.statement_backed && (not info.account.closed) && List.exists (Owner.equal info.account.owner) owners
            && (info.account.kind = Asset || info.account.kind = Liability)
-        then List.find_map (fun (id, d) -> if Account_id.equal id info.account.id then Some d else None) imported_through
+        then List.find_map (fun (id, d) -> if Account_id.equal id info.account.id then Some (info.account.id, d) else None) imported_through
         else None)
       accounts
   in
-  match fed with [] -> None | d :: rest -> Some (Date.min today (List.fold_left Date.min d rest))
+  let fed =
+        let expense = Hashtbl.create 64 in
+        List.iter (fun (info : Account_info.t) -> if info.account.kind = Expense then Hashtbl.replace expense info.account.id ()) accounts;
+        let purchases id =
+          List.length
+            (List.filter
+               (fun (t : Transfer.t) -> posted t && Account_id.equal t.credit_account_id id && Hashtbl.mem expense t.debit_account_id && t.code <> Reclassify)
+               transfers)
+        in
+        (match List.filter (fun (id, _) -> purchases id >= 3) fed with [] -> fed | spent_from -> spent_from)
+  in
+  match List.map snd fed with [] -> None | d :: rest -> Some (Date.min today (List.fold_left Date.min d rest))
 
 let cashflow_summary ?(covered_through : Date.t option) book ~cycles ~reconciled_through transfers =
   List.map

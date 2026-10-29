@@ -56,7 +56,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
      const p=await c.newPage();await p.goto(base+'/advisor/'+ids.conversation_id);await p.getByRole('button',{name:'Stop',exact:true}).waitFor();
     }
     const c=await context('extra8');await req(c,'extra8','/api/advisor/consent',{enabled:true});
-    const p=await c.newPage();await p.goto(base+'/advisor');await p.getByRole('textbox').fill('capacity ninth');const refused=p.waitForResponse(r=>r.request().method()==='POST'&&r.url()===base+'/api/advisor/turns');
+    const p=await c.newPage();await p.goto(base+'/advisor');await p.locator('textarea.advisor-input').fill('capacity ninth');const refused=p.waitForResponse(r=>r.request().method()==='POST'&&r.url()===base+'/api/advisor/turns');
     await p.getByRole('button',{name:'Send',exact:true}).click();assert.equal((await refused).status(),503);
     assert.equal((await state()).provider_starts,8);
     const list=await get(c,'/api/advisor/conversations');assert.equal(list.conversations.length,0);

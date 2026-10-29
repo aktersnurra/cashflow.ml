@@ -4,6 +4,15 @@
 
 ### Your accountant's briefing
 
+- **One desk.** The Overview opens with one box: *Ask, or drop statements*. A question goes to the advisor as a new
+  conversation. Statements dropped anywhere on the page (or on the advisor page, or picked with the paperclip, several
+  at once) are read, matched to their account and filed without a button when nothing needs you: the account is
+  known, no row is ambiguous and the balance agrees. A new account or a doubtful row brings up its questions right
+  there. The Import tab is gone; the advisor has its place in the phone's tab bar, and adding a transaction by hand
+  is on the transactions page.
+- How far your statements reach now counts only the accounts you spend from: a savings account whose statement ends
+  at its last monthly transfer no longer makes the whole month look unread.
+
 - **Worth knowing** on the Overview: the questions about your money an accountant would answer before you ask,
   already answered with exact figures, best first, at most five. Why last month cost more (a yearly bill, a
   one-off, a habit); where the money goes (bills, what is yours to decide, one-offs, and the biggest categories);

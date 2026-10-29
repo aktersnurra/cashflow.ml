@@ -47,7 +47,7 @@ const evidence = process.env.ADVISOR_EVIDENCE_DIR || '/tmp/briefing-evidence';
   const composer=page.getByRole('textbox',{name:'Message advisor',exact:true});await composer.waitFor();
   assert.equal(await card.locator('.advisor-outlet').count(),1,'the advisor opens under the card');
   await composer.fill('What should I do about this?');
-  await page.getByRole('button',{name:'Send',exact:true}).click();
+  await card.locator('.advisor-outlet').getByRole('button',{name:'Send',exact:true}).click();
   await page.waitForURL(/\/advisor\//);
   const id=new URL(page.url()).pathname.split('/').pop();
   const snapshot=await (await page.request.get(base+'/api/advisor/conversations/'+id)).json();
@@ -56,7 +56,19 @@ const evidence = process.env.ADVISOR_EVIDENCE_DIR || '/tmp/briefing-evidence';
   assert.equal(source.title,category+' has crept up');
   assert.ok(source.summary.includes(drift.answer.recent+' SEK a cycle')&&source.summary.includes(drift.answer.usual+' SEK before'),'the engine\'s figures: '+source.summary);
   await page.screenshot({path:evidence+'/briefing-ask.png',fullPage:true});
+  // One answer at a time per person: let the first finish.
+  await fetch(base+'/release');
+  for(let i=0;i<100;i++){const c=await (await page.request.get(base+'/api/advisor/conversations/'+id)).json();if(!c.data.active_run)break;await new Promise(r=>setTimeout(r,100));}
+  // The desk: a question typed on the Overview starts a conversation with it, sent at once (consent is given).
+  await page.locator('.sidebar').getByRole('link',{name:'Overview',exact:true}).click();
+  const desk=page.locator('.page:visible .desk textarea');await desk.waitFor();
+  await desk.fill('Where did my money go in September?');await desk.press('Enter');
+  await page.waitForURL(u=>/\/advisor\//.test(u.pathname)&&u.pathname.split('/').pop()!==id,{timeout:15000})
+   .catch(async e=>{await page.screenshot({path:evidence+'/desk-question.png',fullPage:true});console.error('at',page.url());throw e;});
+  const asked=await (await page.request.get(base+'/api/advisor/conversations/'+new URL(page.url()).pathname.split('/').pop())).json();
+  assert.equal(asked.data.turns[0].user_text,'Where did my money go in September?');assert.equal(asked.data.source_finding,null);
+  assert.equal(await desk.inputValue().catch(()=>''),'','the desk is cleared');
   assert.deepEqual(errors,[]);
-  console.log('PASS briefing: Ask opens the advisor under the card with the server-stated question and figures');
+  console.log('PASS briefing: Ask opens the advisor under the card with the server-stated question and figures; a question on the desk starts a conversation');
  } finally { await browser.close(); }
 })().catch(e=>{console.error(e);process.exit(1);});
