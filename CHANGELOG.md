@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Your accountant's briefing
+
+- **Worth knowing** on the Overview: the questions about your money an accountant would answer before you ask,
+  already answered with exact figures, best first, at most five. Why last month cost more (a yearly bill, a
+  one-off, a habit); where the money goes (bills, what is yours to decide, one-offs, and the biggest categories);
+  a category that has crept up and stayed; small purchases at one place that add up; what you pay regularly, with
+  new bills and price rises; fees and interest; what a normal month costs and how long your cash covers it; what you
+  really save without one-offs; a month coming up that cost more last year; spending in the week after payday.
+- Each is ranked by whether it is worth your attention: the money at stake against your income, how far it is from
+  your usual swing, how much history backs it, and whether you could do anything about it. Only complete months
+  are read. **Got it** puts an answer away (a materially different one comes back); **Not useful** stops that kind
+  of question. The advisor can read the same briefing (`get_briefing`).
+- It replaces the weekly brief and its written summary, and the month review, large-purchase and price-change cards:
+  Needs attention now holds only things to do. Design: `design/superpowers/specs/2026-10-29-accountant-briefing-design.md`.
+
 ### Things that need you, and what you can spend
 
 - The Overview of a cycle in progress leads with **safe to spend until payday**: what day-to-day spending can still

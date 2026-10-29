@@ -124,5 +124,5 @@ let explanation currency (e : Cashflow_core.Explain.t) =
     | Income_change { difference } -> `Assoc [ ("kind", `String "income"); ("amount", m difference) ]
   in
   `Assoc
-    [ ("normal", `Bool e.normal); ("spending", m e.spending); ("usual_spending", m e.usual_spending); ("income", m e.income);
+    [ ("cycle", cycle e.cycle); ("normal", `Bool e.normal); ("spending", m e.spending); ("usual_spending", m e.usual_spending); ("income", m e.income);
       ("usual_income", m e.usual_income); ("compared_with", `Int e.compared_with); ("drivers", `List (List.map driver e.drivers)) ]

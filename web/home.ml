@@ -60,31 +60,6 @@ let card_view ~(ctx : Ctx.t) (key : string Bonsai.t) (card : J.t Bonsai.t) graph
       Ui.card ~tone:"warning" ~title:(Msg.card_unmatched_title ~description:(J.str (J.field "description" t)) locale)
         ~body:[ Ui.muted (Msg.card_unmatched_body ~amount:(money ~code:(J.str ~default:currency (J.field "currency" t)) (J.field "amount" t)) ~date:(Fmt.date_json (J.field "date" t)) locale) ]
         ~actions:[ Ui.button (Msg.action_void locale) void; later ] ()
-  | "month_review" ->
-      (* The month in one line, then what made the difference as rows: what kind of thing, what, how much. *)
-      let e = J.field "explanation" data in
-      let signed x = Fmt.signed_whole locale ~code:currency (`String (Printf.sprintf "%.2f" x)) in
-      let row d =
-        let amount = Fmt.to_float (J.field "amount" d) and name f = J.str (J.field f d) in
-        let category () = Accounts_data.name ~locale (J.field "category" d) in
-        let tag, what, value =
-          match J.str (J.field "kind" d) with
-          | "yearly" -> (Msg.review_tag_yearly locale, name "description", kr (J.field "amount" d))
-          | "one_off" -> (Msg.review_tag_one_off locale, name "description", kr (J.field "amount" d))
-          | "habit" when J.int (J.field "cycles_up" d) >= 2 ->
-              (Msg.review_tag_habit_running ~cycles:(Int.to_string (J.int (J.field "cycles_up" d))) locale, category (), signed amount)
-          | "habit" -> (Msg.review_tag_habit locale, category (), signed amount)
-          | "less" -> (Msg.review_tag_less locale, category (), signed (-. amount))
-          | _ -> (Msg.review_tag_income locale, "", signed amount)
-        in
-        Ui.div ~cls:"review-driver"
-          [ Ui.span ~cls:"review-tag" [ Ui.text tag ]; Ui.span ~cls:"review-what" [ Ui.text what ]; Ui.span ~cls:"num" [ Ui.text value ] ]
-      in
-      Ui.card ~title:(Msg.card_review_title ~month:(month (J.field "cycle" data)) ~spending:(kr (J.field "spending" e)) locale)
-        ~body:
-          (if J.bool (J.field "normal" e) then [ Ui.muted (Msg.review_normal ~usual:(kr (J.field "usual_spending" e)) locale) ]
-           else Ui.muted (Msg.review_different ~usual:(kr (J.field "usual_spending" e)) locale) :: List.map (J.list (J.field "drivers" e)) ~f:row)
-        ~actions:[ done_ ] ()
   | "budget_alert" ->
       let category = Accounts_data.name ~locale (J.field "category" data) in
       let over = String.equal (J.str (J.field "status" data)) "over_budget" in
@@ -197,16 +172,13 @@ let card_view ~(ctx : Ctx.t) (key : string Bonsai.t) (card : J.t Bonsai.t) graph
         ~actions:[ Ui.button (Msg.nav_insights locale) (navigate Route.Insights) ] ()
   | _ -> Vdom.Node.none
 
-(* Overview, in the order the questions come: which period and whose books, how much was saved,
-   where the money went, and then the few things that need you. Notices that only restate the
-   figures above are left out: the overview card, and a month review with nothing to explain (too
-   few months before it to compare with); one that says why the month came out as it did stays.
-   At most three remain. *)
+(* Overview, in the order the questions come: am I OK (safe to spend), what is worth knowing (the
+   briefing), then what needs doing. Cards that are insights rather than to-dos are left to the briefing,
+   which answers them better: the overview card restates the figures, the month review is the briefing's
+   "why it cost more", a large purchase is its one-off, and a price change its regular bills. At most three
+   remain. *)
 let restates_figures card =
-  match J.str (J.field "kind" card) with
-  | "overview" -> true
-  | "month_review" -> J.is_null (J.path [ "data"; "explanation" ] card)
-  | _ -> false
+  List.mem [ "overview"; "month_review"; "large_purchase"; "recurring_change" ] (J.str (J.field "kind" card)) ~equal:String.equal
 
 (* Cards that ask for something before the figures can be trusted or before it is too late. When one is there, the
    cards come first. *)
@@ -231,25 +203,8 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
   let categories =
     Remote.load ~active:visible ~name:"spending_by_category" ~args:(let%arr scope and offset in `Assoc [ ("scope", `String scope); ("cycle_offset", `Int offset) ]) ~ctx graph
   in
-  (* The figures show at once; when there is no text yet, a second load asks for it to be written. That request is armed for
-     one scope and one version of the data, a few seconds after the figures arrived: a change of either lets it lapse (a run
-     of changes, like clearing last week's inbox, writes once when it settles) and a scope switch starts over. The server
-     writes once per set of figures and remembers a failure. Never on the Advisor page, where this page is not showing. *)
-  let armed, set_armed = Bonsai.state None graph in
-  let brief =
-    Remote.load ~active:visible ~name:"get_weekly_brief"
-      ~args:(let%arr armed and scope and version = ctx.version in
-             `Assoc [ ("scope", `String scope); ("write", `Bool (Option.equal [%equal: string * int] armed (Some (scope, version)))) ])
-      ~ctx graph
-  in
-  Bonsai.Edge.on_change ~equal:phys_equal brief
-    ~callback:(let%arr set_armed and advisor_route and scope and version = ctx.version in fun (result : Remote.t) ->
-      match result with
-      | Loaded json when J.bool (J.path [ "brief"; "can_write" ] json) && not advisor_route ->
-          let%bind.Effect () = Effect.of_deferred_thunk (fun () -> Async_kernel.after (Time_ns.Span.of_sec 6.)) in
-          set_armed (Some (scope, version))
-      | _ -> Effect.Ignore)
-    graph;
+  (* The accountant's briefing: the questions worth answering before they're asked. *)
+  let briefing = Briefing_view.component ~ctx ~scope ~visible graph in
   let feed = Remote.load ~active:visible ~name:"get_attention_feed" ~args:(Bonsai.return (`Assoc [("narrative", `Bool false)])) ~ctx graph in
   let cards =
     let%arr feed in
@@ -277,7 +232,7 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
       ([body] @ (if eligible then [Ui.div ~cls:"finding-reply" [Ui.button (Msg.advisor_ask locale)
         (Effect.Many [set_captured (Some (finding_key, cards)); on_ask ~finding_key ~scope])]] else [])
        @ if selected then [outlet] else [])) graph in
-  let%arr summary and outlook and categories and brief and views and offset and set_offset and scope and set_scope and locale = ctx.locale and session = ctx.session
+  let%arr summary and outlook and categories and briefing and views and offset and set_offset and scope and set_scope and locale = ctx.locale and session = ctx.session
   and navigate = ctx.navigate and outlet and selected_finding and visible_cards and advisor_route in
   let cycles = match summary with Loaded json -> J.list (J.field "cycles" json) | Loading | Failed _ -> [] in
   let code = match summary with Loaded json -> J.str ~default:"SEK" (J.field "currency" json) | Loading | Failed _ -> "SEK" in
@@ -426,37 +381,9 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
         Ui.div ~cls:"panel empty-panel"
           [ Ui.p (Msg.overview_empty locale); Ui.div ~cls:"actions" [ Ui.button ~kind:"primary" (Msg.import_title locale) (navigate Route.Import) ] ]
     | Loaded _, Some c ->
-        Ui.div [ figures c; Remote.view ~locale categories ~f:(fun json -> if mostly_uncategorized json then Vdom.Node.none else flow c json) ]
-  in
-  let weekly =
-    match brief with
-    | Loaded json when not (J.is_null (J.field "brief" json)) ->
-        let b = J.field "brief" json in
-        let code = J.str ~default:code (J.field "currency" b) in
-        let money field = Fmt.whole locale ~code (J.field field b) in
-        let top = J.list (J.field "top" b) in
-        Ui.div ~cls:"panel weekly-brief"
-          [ Vdom.Node.h2 [ Ui.text (Msg.brief_title ~first:(Fmt.date_json (J.field "first" b)) ~last:(Fmt.date_json (J.field "last" b)) locale) ];
-            (match J.str_opt (J.field "text" b) with
-             | Some text -> Ui.p text
-             | None -> if J.bool (J.field "can_write" b) then Ui.muted (Msg.brief_writing locale) else Vdom.Node.none);
-            (* One row of figures, then where it went. *)
-            (let kpi ?(sub = "") label value =
-               Ui.div ~cls:"kpi" [ Ui.div ~cls:"kpi-label" [ Ui.text label ]; Ui.div ~cls:"kpi-value" [ Ui.text value ]; Ui.div ~cls:"kpi-sub" [ Ui.text sub ] ]
-             in
-             Ui.div ~cls:"kpis brief-kpis"
-               [ kpi (Msg.label_spending locale) (money "spending") ~sub:(Msg.brief_before ~amount:(money "previous_spending") locale);
-                 kpi (Msg.label_income locale) (money "income");
-                 (if J.int (J.field "upcoming_count" b) = 0 then Vdom.Node.none else kpi (Msg.brief_upcoming locale) (money "upcoming_total")) ]);
-            (if List.is_empty top then Vdom.Node.none
-             else
-               Ui.div ~cls:"brief-top"
-                 (Ui.div ~cls:"kpi-label" [ Ui.text (Msg.brief_top locale) ]
-                  :: List.map top ~f:(fun c ->
-                         Ui.div ~cls:"figure-line outlook-row"
-                           [ Ui.span ~cls:"figure-label" [ Ui.text (J.str (J.field "name" c)) ];
-                             Ui.span ~cls:"figure-value" [ Ui.text (Fmt.whole locale ~code (J.field "total" c)) ] ]))) ]
-    | Loaded _ | Loading | Failed _ -> Vdom.Node.none
+        Ui.div
+          [ figures c; (if offset = 0 then briefing else Vdom.Node.none);
+            Remote.view ~locale categories ~f:(fun json -> if mostly_uncategorized json then Vdom.Node.none else flow c json) ]
   in
   let attention =
     match Map.data views with
@@ -474,5 +401,5 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
         Advisor conversation is not a second dashboard above the chat. *)
      Vdom.Node.div ~attrs:(if standalone then [Vdom.Attr.create "hidden" ""] else [])
        (let urgent = Map.exists visible_cards ~f:(fun card -> List.mem urgent_kinds (J.str (J.field "kind" card)) ~equal:String.equal) in
-        if urgent then [head; attention; body; weekly] else [head; body; weekly; attention]);
+        if urgent then [head; attention; body] else [head; body; attention]);
      (if standalone then outlet else Vdom.Node.none)]

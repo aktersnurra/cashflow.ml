@@ -248,3 +248,9 @@
  (enabled_if (= %{context_name} default))
  (modules test_advisor_client_state)
  (libraries alcotest cashflow_advisor_protocol))
+
+(test
+ (name test_briefing)
+ (enabled_if (= %{context_name} default))
+ (modules test_briefing test_service_support)
+ (libraries alcotest cashflow_io cashflow_core yojson))

@@ -719,8 +719,15 @@ html { touch-action: manipulation; -webkit-text-size-adjust: 100%; text-size-adj
 .review-tag { font-size: 11px; line-height: 16px; padding: 1px 7px; border-radius: 999px; background: var(--surface-2, var(--line)); color: var(--text-2); white-space: nowrap; }
 .review-what { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .review-driver .num { font-variant-numeric: tabular-nums; white-space: nowrap; }
-.brief-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 8px 0 16px; }
-.brief-kpis .kpi-value { font-size: 18px; line-height: 24px; white-space: nowrap; }
-.brief-kpis .kpi-sub { font-size: 12px; }
-.brief-top .outlook-row { padding: 4px 0; border-top: 1px solid var(--line); }
-.brief-top .kpi-label { margin-bottom: 6px; }
+.briefing { margin: 16px 0; }
+.briefing-list { display: grid; gap: 12px; }
+.card.question > h2 { font-size: 14px; line-height: 20px; font-weight: 600; color: var(--text-2); }
+.question-answer { font-size: 26px; line-height: 32px; font-weight: 600; letter-spacing: -.02em; font-variant-numeric: tabular-nums; margin-top: 4px; }
+.card.question .muted { font-size: 13px; line-height: 18px; margin-top: 2px; }
+.question-row { font-size: 13px; line-height: 20px; padding: 4px 0; border-top: 1px solid var(--line); }
+.question-row:first-of-type { margin-top: 8px; }
+.question-row .figure-label { display: inline-flex; gap: 8px; align-items: baseline; color: var(--text-2); }
+.question-row .figure-value { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.briefing-list { gap: 8px; }
+.card.question { padding-top: 14px; padding-bottom: 6px; }
+.card.question .actions { margin-top: 6px; }
