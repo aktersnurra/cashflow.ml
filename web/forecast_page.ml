@@ -33,7 +33,8 @@ let amount_of_text ~out value =
   | Some v when Float.(v > 0.) -> Some ((if out then "-" else "") ^ text)
   | _ -> None
 
-let page ~(ctx : Ctx.t) graph =
+(* A section of the Overview, under the briefing: what is ahead. *)
+let section ~(ctx : Ctx.t) ~(visible : bool Bonsai.t) graph =
   let scope, set_scope = Bonsai.state "me" graph in
   let months, set_months = Bonsai.state 3 graph in
   let what_if, set_what_if = Bonsai.state ~equal:equal_what_if no_what_if graph in
@@ -45,14 +46,14 @@ let page ~(ctx : Ctx.t) graph =
   let out, set_out = Bonsai.state true graph in
   let hover, set_hover = Bonsai.state None graph in
   let expanded, set_expanded = Bonsai.state None graph in
-  let forecast = Remote.load ~name:"forecast" ~args:(let%arr scope and months and what_if in args ~scope ~months what_if) ~ctx graph in
+  let forecast = Remote.load ~active:visible ~name:"forecast" ~args:(let%arr scope and months and what_if in args ~scope ~months what_if) ~ctx graph in
   let%arr forecast and scope and set_scope and months and set_months and what_if and set_what_if and on and set_on and text and set_text and value and set_value and out and set_out and hover and set_hover
   and expanded and set_expanded and locale = ctx.locale and session = ctx.session and navigate = ctx.navigate in
   let scopes = if Ctx.has_household session then [ ("me", Msg.label_personal locale); ("household", Msg.label_household locale) ] else [] in
   let segmented options ~active ~set = Ui.div ~cls:"segmented" (List.map options ~f:(fun (value, label) -> Ui.button ~kind:(if active value then "active" else "") label (set value))) in
   let head =
-    Ui.div ~cls:"page-head"
-      [ Vdom.Node.h1 [ Ui.text (Msg.nav_forecast locale) ];
+    Ui.div ~cls:"section-head plan-head"
+      [ Vdom.Node.h2 [ Ui.text (Msg.nav_forecast locale) ];
         Ui.div ~cls:"page-controls"
           [ (if List.is_empty scopes then Vdom.Node.none else segmented scopes ~active:(String.equal scope) ~set:set_scope);
             segmented (List.map [ 1; 3; 6 ] ~f:(fun n -> (n, Msg.forecast_months ~count:n locale))) ~active:(Int.equal months) ~set:set_months ] ]
@@ -140,7 +141,7 @@ let page ~(ctx : Ctx.t) graph =
              Chart.projection ~shape ~cash:(List.init n ~f:cash_at)
                ~earmarked:(List.map timeline ~f:(fun p -> D.value p.earmarked)) ~scenario
                ~range:(List.map f.range ~f:(fun (_, low, high) -> (D.value low, D.value high))) ~solid ~today:today_index ~overdraws ~months:months_axis ~paydays
-               ~tick:Cashflow_page.short ~today_label:(Msg.forecast_today locale) ~what_if_label:(Msg.forecast_what_if locale) ~hover ~on_hover:set_hover)
+               ~tick:Chart.short ~today_label:(Msg.forecast_today locale) ~what_if_label:(Msg.forecast_what_if locale) ~hover ~on_hover:set_hover)
         @ [
           readout;
           Ui.div ~cls:"legend"
@@ -316,7 +317,13 @@ let page ~(ctx : Ctx.t) graph =
     if List.is_empty f.accounts then
       Ui.div ~cls:"panel empty-panel"
         [ Ui.p (Msg.forecast_no_accounts locale); Ui.div ~cls:"actions" [ Ui.button ~kind:"primary" (Msg.nav_accounts locale) (navigate Route.Accounts) ] ]
-    else Ui.div ([ chart ] @ overdraw @ [ upcoming; what_if_panel; assumptions ])
+    else
+      (* The chart and its numbers, and any account that would go below zero, at a glance; the payments behind
+         the line, the what-ifs and the assumptions when asked for. *)
+      Ui.div
+        ([ chart ] @ overdraw
+        @ [ Vdom.Node.create "details" ~attrs:[ Vdom.Attr.class_ "forecast-details" ]
+              [ Vdom.Node.create "summary" [ Ui.text (Msg.forecast_details locale) ]; upcoming; what_if_panel; assumptions ] ])
   in
   let body =
     match forecast with
@@ -324,4 +331,4 @@ let page ~(ctx : Ctx.t) graph =
     | Remote.Failed _ -> Remote.view ~locale forecast ~f:(fun _ -> Vdom.Node.none)
     | Remote.Loaded json -> view (D.of_json ~locale json)
   in
-  Vdom.Node.main ~attrs:[ Vdom.Attr.class_ "page" ] [ head; body ]
+  Ui.div ~cls:"plan-section" [ head; body ]

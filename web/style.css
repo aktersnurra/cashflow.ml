@@ -778,3 +778,9 @@ main.page.advisor-page.dropping { outline: 2px dashed var(--accent); outline-off
 .advisor-composer.with-attach { grid-template-columns: auto 1fr auto; }
 .advisor-composer .desk-attach { align-self: end; }
 @media (max-width: 760px) { .advisor-composer.with-attach { grid-template-columns: auto 1fr auto; } }
+/* What is ahead, on the Overview: sections with their details folded. */
+.ahead { display: grid; gap: 24px; margin-top: 24px; }
+.plan-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
+.forecast-details, .unbudgeted { margin-top: 12px; }
+.forecast-details > summary, .unbudgeted > summary { cursor: pointer; font-size: 13px; color: var(--text-2); padding: 6px 0; }
+.forecast-details > summary:hover, .unbudgeted > summary:hover { color: var(--text); }

@@ -79,7 +79,7 @@ let card_view ~(ctx : Ctx.t) (key : string Bonsai.t) (card : J.t Bonsai.t) graph
           :: List.map (J.list (J.field "upcoming" data)) ~f:(fun u ->
                  Ui.muted (Msg.card_shortfall_item ~merchant:(J.str (J.field "merchant" u)) ~amount:(m (J.field "amount" u)) ~date:(Fmt.date_json (J.field "expected" u)) locale)))
         ~actions:
-          [ Ui.button ~kind:"primary" (Msg.action_move_money locale) (navigate Route.Add); Ui.button (Msg.action_see_forecast locale) (navigate Route.Forecast);
+          [ Ui.button ~kind:"primary" (Msg.action_move_money locale) (navigate Route.Add); Ui.button (Msg.action_see_forecast locale) (navigate Route.Home);
             done_; later ] ()
   | "unusual_spend" ->
       let category = Accounts_data.name ~locale (J.field "category" data) in
@@ -92,11 +92,11 @@ let card_view ~(ctx : Ctx.t) (key : string Bonsai.t) (card : J.t Bonsai.t) graph
           @ [ (* Past the usual whole cycle, so the bar runs over; the marker is where the usual ends. *)
               Ui.meter ~marker:(if Float.(spent > 0.) then Some (usual /. spent) else None) (if Float.(usual > 0.) then spent /. usual else 2.);
               Ui.muted (Msg.card_unusual_body ~spent:(money (J.field "spent" data)) ~usual:(money (J.field "usual" data)) locale) ])
-        ~actions:[ Ui.button (Msg.action_see_spending locale) (navigate Route.Insights); done_; later ] ()
+        ~actions:[ Ui.button (Msg.action_see_spending locale) (navigate (Route.Transactions { offset = 0; category = None })); done_; later ] ()
   | "contributions_due" ->
       Ui.card ~title:(Msg.card_contributions_title locale)
         ~body:[ Ui.muted (Msg.card_contributions_body ~remaining:(money (J.field "remaining" data)) ~contribution:(money (J.field "contribution" data)) locale) ]
-        ~actions:[ Ui.button (Msg.nav_household locale) (navigate Route.Household); done_ ] ()
+        ~actions:[ Ui.button (Msg.nav_household locale) (navigate Route.Settings); done_ ] ()
   | "settle_up" ->
       Ui.card ~title:(Msg.label_household locale)
         ~body:(List.map (J.list (J.field "owed" data)) ~f:(fun o -> Ui.p (Msg.card_settle_title ~name:(J.str (J.field "name" o)) ~amount:(money (J.field "amount" o)) locale)))
@@ -169,7 +169,7 @@ let card_view ~(ctx : Ctx.t) (key : string Bonsai.t) (card : J.t Bonsai.t) graph
                    Ui.kpi (Msg.label_spending locale) (Fmt.format_money locale ~code (J.field "spending" summary));
                    Ui.kpi ~tone:(Fmt.sign_tone (J.field "savings" summary)) (Msg.label_savings locale) (Fmt.format_money locale ~code (J.field "savings" summary)) ];
                (if J.bool (J.field "reconciled" summary) then Vdom.Node.none else Ui.muted (Msg.label_provisional locale)) ])
-        ~actions:[ Ui.button (Msg.nav_insights locale) (navigate Route.Insights) ] ()
+        ~actions:[] ()
   | _ -> Vdom.Node.none
 
 (* Overview, in the order the questions come: am I OK (safe to spend), what is worth knowing (the
@@ -204,6 +204,9 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
     Remote.load ~active:visible ~name:"spending_by_category" ~args:(let%arr scope and offset in `Assoc [ ("scope", `String scope); ("cycle_offset", `Int offset) ]) ~ctx graph
   in
   (* The accountant's briefing: the questions worth answering before they're asked. *)
+  (* What is ahead: the forecast, then goals and budgets. *)
+  let forecast = Forecast_page.section ~ctx ~visible graph in
+  let goals = Budgets_page.section ~ctx ~visible graph in
   let briefing = Briefing_view.component ~ctx ~scope ~visible ~on_ask ~selected_finding ~outlet graph in
   let feed = Remote.load ~active:visible ~name:"get_attention_feed" ~args:(Bonsai.return (`Assoc [("narrative", `Bool false)])) ~ctx graph in
   let cards =
@@ -232,7 +235,7 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
       ([body] @ (if eligible then [Ui.div ~cls:"finding-reply" [Ui.button (Msg.advisor_ask locale)
         (Effect.Many [set_captured (Some (finding_key, cards)); on_ask ~finding_key ~scope])]] else [])
        @ if selected then [outlet] else [])) graph in
-  let%arr desk and summary and outlook and categories and briefing and views and offset and set_offset and scope and set_scope and locale = ctx.locale and session = ctx.session
+  let%arr desk and forecast and goals and summary and outlook and categories and briefing and views and offset and set_offset and scope and set_scope and locale = ctx.locale and session = ctx.session
   and navigate = ctx.navigate and outlet and selected_finding and visible_cards and advisor_route in
   let cycles = match summary with Loaded json -> J.list (J.field "cycles" json) | Loading | Failed _ -> [] in
   let code = match summary with Loaded json -> J.str ~default:"SEK" (J.field "currency" json) | Loading | Failed _ -> "SEK" in
@@ -403,6 +406,8 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
      Vdom.Node.div ~attrs:(if standalone then [Vdom.Attr.create "hidden" ""] else [])
        (let urgent = Map.exists visible_cards ~f:(fun card -> List.mem urgent_kinds (J.str (J.field "kind" card)) ~equal:String.equal) in
         (* What was handed over shows where the page starts; the box waits at its foot. *)
-        if urgent then [head; desk.files; attention; body; desk.view] else [head; desk.files; body; attention; desk.view]);
+        (* What is ahead follows what needs doing, for the current period only. *)
+        let ahead = if offset = 0 then Ui.div ~cls:"ahead" [forecast; goals] else Vdom.Node.none in
+        if urgent then [head; desk.files; attention; body; ahead; desk.view] else [head; desk.files; body; attention; ahead; desk.view]);
      (if standalone then desk.files else Vdom.Node.none);
      (if standalone then outlet else Vdom.Node.none)]

@@ -5,12 +5,13 @@ open Bonsai.Let_syntax
 type goal_draft = { name : string; target : string; date : string; monthly : string }
 type editing = Not_editing | Budget of { category : string; amount : string; rollover : bool } | Goal of goal_draft
 
-let page ~(ctx : Ctx.t) graph =
+(* A section of the Overview, under the forecast: goals and budgets. *)
+let section ~(ctx : Ctx.t) ~(visible : bool Bonsai.t) graph =
   let scope, set_scope = Bonsai.state "me" graph in
   let args = let%arr scope in `Assoc [ ("scope", `String scope) ] in
-  let status = Remote.load ~name:"budget_status" ~args ~ctx graph in
-  let goals = Remote.load ~name:"savings_goals" ~args ~ctx graph in
-  let accounts = Remote.load ~name:"list_accounts" ~ctx graph in
+  let status = Remote.load ~active:visible ~name:"budget_status" ~args ~ctx graph in
+  let goals = Remote.load ~active:visible ~name:"savings_goals" ~args ~ctx graph in
+  let accounts = Remote.load ~active:visible ~name:"list_accounts" ~ctx graph in
   let editing, set_editing = Bonsai.state Not_editing graph in
   let showing_goals, set_showing_goals = Bonsai.state false graph in
   let%arr status and goals and accounts and scope and set_scope and editing and set_editing and showing_goals and set_showing_goals
@@ -82,8 +83,8 @@ let page ~(ctx : Ctx.t) graph =
     Vdom.Node.button ~attrs:[ Vdom.Attr.class_ ("tab-button" ^ if active then " active" else ""); Vdom.Attr.type_ "button"; Vdom.Attr.on_click (fun _ -> effect) ] [ Ui.text label ]
   in
   let head =
-    Ui.div ~cls:"page-head"
-      [ Vdom.Node.h1 [ Ui.text (Msg.budgets_title locale) ];
+    Ui.div ~cls:"section-head plan-head"
+      [ Vdom.Node.h2 [ Ui.text (Msg.budgets_goals_title locale) ];
         Ui.div ~cls:"page-controls"
           [ (if List.length scopes < 2 then Vdom.Node.none
              else Ui.div ~cls:"segmented" (List.map scopes ~f:(fun (value, label) -> Ui.button ~kind:(if String.equal value scope then "active" else "") label (set_scope value))));
@@ -108,8 +109,9 @@ let page ~(ctx : Ctx.t) graph =
           budget_form ~category:b.category ~name ~amount:b.amount ~rollover:b.rollover
       | _, [] -> Vdom.Node.none
       | _, unbudgeted ->
-          Ui.div
-            [ Ui.div ~cls:"section-title" [ Ui.text (Msg.budgets_no_budget locale) ];
+          (* Folded away: the categories without a budget are a choice to make, not something to read. *)
+          Vdom.Node.create "details" ~attrs:[ Vdom.Attr.class_ "unbudgeted" ]
+            [ Vdom.Node.create "summary" [ Ui.text (Msg.budgets_add locale) ];
               Ui.div ~cls:"chips"
                 (List.map unbudgeted ~f:(fun a ->
                      Vdom.Node.span ~attrs:[ Vdom.Attr.class_ "chip"; Vdom.Attr.on_click (fun _ -> set_editing (Budget { category = a.id; amount = ""; rollover = false })) ] [ Ui.text a.name ])) ]) ]
@@ -136,4 +138,4 @@ let page ~(ctx : Ctx.t) graph =
                 Ui.button (Msg.action_cancel locale) (set_editing Not_editing) ] ()
       | _ -> Ui.div ~cls:"actions" [ Ui.button (Msg.action_new_goal locale) (set_editing (Goal { name = ""; target = ""; date = ""; monthly = "" } : editing)) ]) ]
   in
-  Vdom.Node.main ~attrs:[ Vdom.Attr.class_ "page" ] ([ head; tabs ] @ if showing_goals then goals_view else categories)
+  Ui.div ~cls:"plan-section" ([ head; tabs ] @ if showing_goals then goals_view else categories)

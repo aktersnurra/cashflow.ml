@@ -732,3 +732,6 @@ desk.drop = Drop to hand them over
 desk.send = Ask
 advisor.reply = Reply
 desk.hide = Hide
+budgets.goals_title = Goals and budgets
+budgets.add = Set a budget
+forecast.details = Payments, what-ifs and assumptions

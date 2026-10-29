@@ -4,6 +4,13 @@ open! Core
 open! Bonsai_web.Cont
 module S = Virtual_dom_svg
 
+(* An axis label: 1.2k, 30k, 640. *)
+let short v =
+  if Float.(abs v >= 1000.) then
+    let k = v /. 1000. in
+    (if Float.(k = Float.round k) then Int.to_string (Float.to_int k) else sprintf "%.1f" k) ^ "k"
+  else Int.to_string (Float.iround_nearest_exn v)
+
 let svg ~width ~height children =
   S.Node.svg ~attrs:[ S.Attr.viewbox ~min_x:0. ~min_y:0. ~width ~height; Vdom.Attr.create "class" "chart"; Vdom.Attr.create "preserveAspectRatio" "none" ] children
 

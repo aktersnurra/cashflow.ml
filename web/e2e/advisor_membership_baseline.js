@@ -56,7 +56,7 @@ const until=async promise=>{let timer;try{return await Promise.race([promise,new
  if(pending)await until(acceptedHeld);else await page.getByText('first',{exact:true}).waitFor();
  await composer().fill('personal draft across initial legacy membership loss');
  const original=await page.getByTestId('selected-finding').elementHandle(),sourceCount=await page.evaluate(()=>window.sources.length);
- await nav('Plan').click();await nav('Advisor').click();await sleep(100);
+ await page.locator('.sidebar a[href="/transactions"]').click();await nav('Advisor').click();await sleep(100);
  assert.equal(await original.evaluate(e=>e===document.querySelector('[data-testid="selected-finding"]')),true,'unknown initial and repeated readiness cannot erase or revoke Home baseline');
  assert.equal(await shared().count(),1);assert.equal(posts,1);
  // Hold older real status/session replies with H while an ordinary version refresh runs.
@@ -65,7 +65,7 @@ const until=async promise=>{let timer;try{return await Promise.race([promise,new
  await until(Promise.all([oldStatusHeld,oldSessionHeld]));
  const leave=await page.request.post(base+'/api/commands/leave_household',{headers:{'x-csrf-token':credentials.a.csrf,origin:base},data:{}});assert.equal(leave.status(),200);
  afterLoss=true;
- await nav('Plan').click();await until(statusHeld);
+ await page.locator('.sidebar a[href="/transactions"]').click();await until(statusHeld);
  assert.equal(await shared().count(),1,'explicit loss has not yet been delivered to the client');
  await freshStatus();
  await shared().waitFor({state:'detached',timeout:4000});
@@ -80,12 +80,12 @@ const until=async promise=>{let timer;try{return await Promise.race([promise,new
  // Delayed obsolete metadata must neither republish the old session nor restore H baseline.
  await staleSession();await staleStatus();await sleep(100);
  const requestsAfterReload=sessionRequests;
- await nav('Household').click();assert.equal(await page.getByRole('heading',{name:'Synthetic household',exact:true,includeHidden:true}).count(),0);
+ await nav('Settings').click();assert.equal(await page.getByRole('heading',{name:'Synthetic household',exact:true,includeHidden:true}).count(),0);
  await nav('Advisor').click();await composer().waitFor();
  assert.equal(await composer().inputValue(),'personal draft across initial legacy membership loss');
  if(pending){await accepted();await page.getByText('first',{exact:true}).waitFor();}
  assert.equal(await composer().inputValue(),'personal draft across initial legacy membership loss');
- await nav('Plan').click();await nav('Advisor').click();await sleep(100);
+ await page.locator('.sidebar a[href="/transactions"]').click();await nav('Advisor').click();await sleep(100);
  assert.equal(sessionRequests,requestsAfterReload,'stale session/status cannot restore old Home baseline or cause another privacy reset');
  assert.equal(await shared().count(),0);assert.equal(await page.evaluate(()=>window.sources.length),sourceCount+(pending?1:0));
  assert.equal(await page.evaluate(()=>window.sources.filter(s=>!s.closedByApp).length),1);

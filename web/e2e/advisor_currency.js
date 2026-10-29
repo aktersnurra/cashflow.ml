@@ -13,7 +13,7 @@ const base='http://127.0.0.1:18197';const sleep=ms=>new Promise(r=>setTimeout(r,
  await p.getByText('first',{exact:true}).waitFor();await p.waitForURL(/\/advisor\//);const original=new URL(p.url()).pathname;
  assert.deepEqual(bodies.at(-1).currency,{code:'SEK',scale:0});
  await button('Stop').click();await p.getByRole('status').filter({hasText:'Answer stopped.'}).waitFor();await fetch(base+'/release');
- await nav('Household').click();await p.getByRole('switch',{name:'Enable household Advisor',exact:true}).click();
+ await nav('Settings').click();await p.getByRole('switch',{name:'Enable household Advisor',exact:true}).click();
  await p.getByRole('switch',{name:'Disable household Advisor',exact:true}).waitFor();await nav('Advisor').click();
  await history();await menuItem('New household conversation').click();await p.getByText('Household · Only you',{exact:true}).waitFor();
  await p.locator('textarea.advisor-input').fill('Household scale four');await button('Send').click();await p.getByRole('status').filter({hasText:'Answer completed.'}).waitFor();

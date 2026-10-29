@@ -17,9 +17,11 @@ let page ~(ctx : Ctx.t) ~(advisor : Advisor.controller Bonsai.t) graph =
   let edits, set_edits = Bonsai.state None graph in
   let memory = Advisor_memory.component ~locale:ctx.locale graph in
   let auto_apply = Auto_apply.component ~ctx graph in
+  (* The household is part of Settings: who is in it, what each pays in, what is owed. *)
+  let household = Household_page.page ~ctx ~advisor graph in
   let word_personal, set_word_personal = Bonsai.state "" graph in
   let word_household, set_word_household = Bonsai.state "" graph in
-  let%arr advisor and memory and auto_apply and word_personal and set_word_personal and word_household and set_word_household and edits and set_edits and session = ctx.session and locale = ctx.locale and changed = ctx.changed and notify = ctx.notify and theme = ctx.theme
+  let%arr advisor and memory and auto_apply and household and word_personal and set_word_personal and word_household and set_word_household and edits and set_edits and session = ctx.session and locale = ctx.locale and changed = ctx.changed and notify = ctx.notify and theme = ctx.theme
   and set_theme = ctx.set_theme in
   let draft = Option.value edits ~default:(draft_of_session session) in
   let set f = set_edits (Some (f draft)) in
@@ -67,6 +69,7 @@ let page ~(ctx : Ctx.t) ~(advisor : Advisor.controller Bonsai.t) graph =
                 let%bind.Effect signed_out = sign_out in
                 if signed_out then Bonsai_web.Effect.reload_page else
                   Effect.of_thunk (fun () -> Js_of_ocaml.Dom_html.window##alert (Js_of_ocaml.Js.string (Msg.signout_failed locale)))) ] ];
+      household;
       section (Msg.nav_advisor locale)
         [Advisor_view.consent ~locale ~view:advisor.view ~dispatch:advisor.dispatch ~decline:Effect.Ignore];
       memory;

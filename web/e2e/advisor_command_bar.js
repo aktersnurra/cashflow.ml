@@ -21,9 +21,9 @@ const output=process.env.ADVISOR_EVIDENCE_DIR||'/tmp/advisor-command-bar';fs.mkd
   await page.keyboard.press('Control+k');
   const palette=page.locator('.palette input');
   await palette.waitFor({timeout:5000});
-  await palette.fill('budgets');
+  await palette.fill('accounts');
   await page.locator('.palette .row-title',{hasText:/^Ask the advisor/}).waitFor({timeout:5000});
-  assert.equal(await page.locator('.palette .row-title').first().innerText(),'Go to Budgets','a page match still wins Enter');
+  assert.equal(await page.locator('.palette .row-title').first().innerText(),'Go to Accounts','a page match still wins Enter');
   await palette.fill('how much did I spend on food last month?');
   const ask=page.locator('.palette .row-title',{hasText:'Ask the advisor: how much did I spend on food last month?'});
   await ask.waitFor({timeout:5000});

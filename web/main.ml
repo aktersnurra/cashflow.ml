@@ -38,29 +38,22 @@ let navigate_to set_route route =
     [ Effect.of_thunk (fun () -> Dom_html.window##.history##pushState Js.null (Js.string "") (Js.some (Js.string (Route.to_path route))));
       set_route route ]
 
-(* The sidebar: what you look at, then where the money lives; Settings sits at the foot. *)
-let nav_groups = Route.[ [ (Home, None); (Advisor None, None) ]; [ (section_entry Money, Some Money); (section_entry Plan, Some Plan) ]; [ (Household, None) ] ]
+(* The sidebar: four places, Overview, Advisor and Money, with Settings at the foot. *)
+let nav_groups = Route.[ [ (Home, None); (Advisor None, None); (section_entry Money, Some Money) ] ]
 
-(* Statements are handed over on the Overview's desk (dropped anywhere on it, or the paperclip), so there is no
-   import tab; the advisor, where the desk's questions go, has the middle one. *)
-let tab_items = Route.[ (Home, None); (section_entry Money, Some Money); (Advisor None, None); (section_entry Plan, Some Plan); (Settings, None) ]
+(* The same four on a phone. Statements are handed over on the Overview's desk, so there is no import tab. *)
+let tab_items = Route.[ (Home, None); (section_entry Money, Some Money); (Advisor None, None); (Settings, None) ]
 
 let icon route =
   let name : Feather_icon.t =
     match route with
     | Route.Home -> Home
     | Advisor _ -> Message_circle
-    | Cashflow -> Shuffle
     | Inbox -> Inbox
     | Transactions _ -> List
     | Accounts | Account _ -> Credit_card
-    | Budgets -> Pie_chart
-    | Forecast -> Activity
-    | Household -> Users
-    | Insights -> Trending_up
     | Settings -> Settings
     | Add -> Plus_circle
-    | Import -> Upload
   in
   Feather_icon.svg ~size:(`Px 18) ~stroke:(`Name "currentColor") ~stroke_width:(`Px 2) name
 
@@ -69,11 +62,6 @@ let shortcut = function
   | "i" -> Some Route.Inbox
   | "t" -> Some Route.(Transactions { offset = 0; category = None })
   | "a" -> Some Route.Accounts
-  | "b" -> Some Route.Budgets
-  | "f" -> Some Route.Forecast
-  | "o" -> Some Route.Household
-  | "c" -> Some Route.Cashflow
-  | "n" -> Some Route.Insights
   | "s" -> Some Route.Settings
   | _ -> None
 
@@ -150,13 +138,23 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
   let membership_reload, set_membership_reload = Bonsai.state None graph in
   let authenticated = let%arr advisor in advisor.view.authenticated in
   let route_key = Bonsai.both route ctx.version in
-  let route_changed = let%arr advisor and locale and session and set_selected_finding and set_declined in
+  (* A question from the Overview's desk, waiting for the advisor to be on screen: only then can it open a new
+     conversation and send it. *)
+  let pending_question, set_pending_question = Bonsai.state None graph in
+  let route_changed = let%arr advisor and locale and session and set_selected_finding and set_declined and pending_question and set_pending_question in
     fun (route, _) ->
       Effect.Many [advisor.dispatch C.Refresh_status; (match route with
       | Route.Advisor (Some id) ->
           Effect.Many [set_declined false;
             (if Option.equal String.equal advisor.view.selected_conversation (Some id) then Effect.Ignore
              else Effect.Many [set_selected_finding None; advisor.open_conversation id])]
+      | Advisor None when Option.is_some pending_question ->
+          let text = Option.value pending_question ~default:"" in
+          let ready = match advisor.view.status with Some s -> s.available && s.consent | None -> false in
+          Effect.Many ([set_declined false; set_pending_question None;
+            (match advisor_currency session W.Personal with Some currency -> advisor.open_empty ~scope:W.Personal ~currency ~locale | None -> Effect.Ignore);
+            advisor.dispatch (C.Draft_changed text)]
+            @ if ready then [advisor.dispatch (C.Submit_draft (Api.fresh_key "advisor"))] else [])
       | Advisor None ->
           Effect.Many [set_declined false;
             (if Option.is_some advisor.view.selected_conversation || Option.is_some advisor.view.context_scope then Effect.Ignore
@@ -199,14 +197,11 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
       advisor.dispatch (C.Follow false); focus_advisor] in
   (* A question typed on the Overview's desk: a new conversation with it as the first message, sent at once
      when the advisor may answer (otherwise it waits in the composer behind the consent). *)
-  let on_question = let%arr advisor and locale and session and notify and set_selected_scope and set_selected_finding and set_declined and navigate in
+  let on_question = let%arr locale and session and notify and set_selected_scope and set_selected_finding and set_declined and set_pending_question and navigate in
     fun text -> match advisor_currency session W.Personal with
     | None -> notify (Msg.advisor_currency_unavailable locale)
-    | Some currency ->
-        let ready = match advisor.view.status with Some s -> s.available && s.consent | None -> false in
-        Effect.Many ([set_selected_scope W.Personal; set_selected_finding None; set_declined false;
-          advisor.open_empty ~scope:W.Personal ~currency ~locale; advisor.dispatch (C.Draft_changed text); navigate (Route.Advisor None)]
-          @ if ready then [advisor.dispatch (C.Submit_draft (Api.fresh_key "advisor"))] else []) in
+    | Some _ ->
+        Effect.Many [set_selected_scope W.Personal; set_selected_finding None; set_declined false; set_pending_question (Some text); navigate (Route.Advisor None)] in
   (* The desk (questions to the advisor, statements filed where they belong) is the shell's, so the Overview's
      box and the advisor's composer hand files over through the same "+". *)
   let desk = Desk.component ~ctx ~on_question graph in
@@ -235,7 +230,7 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
             Ui.muted (Msg.advisor_readonly locale);
             Advisor_view.render_body ~attach:(Some desk.attach) ~show_source:(Option.is_none selected_finding) ~turns:advisor_turns
               ~locale ~view ~dispatch:advisor.dispatch]
-       | Some s when s.consent && s.available -> [Ui.muted (Msg.advisor_household_off locale); Ui.button (Msg.nav_household locale) (navigate Route.Household)]
+       | Some s when s.consent && s.available -> [Ui.muted (Msg.advisor_household_off locale); Ui.button (Msg.nav_household locale) (navigate Route.Settings)]
        | _ -> [Advisor_view.consent ~locale ~view ~dispatch:advisor.dispatch ~decline:(set_declined true)]) in
   let access_denied = let%arr advisor in advisor.view.access_denied in
   let home_visible = let%arr authenticated and membership_reload in authenticated && Option.is_none membership_reload in
@@ -295,18 +290,12 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
   let page =
     match%sub route with
     | Home | Advisor _ -> Bonsai.return Vdom.Node.none
-    | Cashflow -> Cashflow_page.page ~ctx graph
     | Inbox -> Transactions_page.page ~ctx ~review:true ~offset:(Bonsai.return 0) ~category:(Bonsai.return None) graph
     | Transactions { offset; category } -> Transactions_page.page ~ctx ~review:false ~offset ~category graph
     | Accounts -> Accounts_page.list ~ctx graph
     | Account id -> Accounts_page.detail ~ctx ~account_id:id graph
-    | Budgets -> Budgets_page.page ~ctx graph
-    | Forecast -> Forecast_page.page ~ctx graph
-    | Household -> Household_page.page ~ctx ~advisor graph
-    | Insights -> Insights_page.page ~ctx graph
     | Settings -> Settings_page.page ~ctx ~advisor graph
     | Add -> Add_page.page ~ctx graph
-    | Import -> Import_page.page ~ctx graph
   in
   (* The question becomes the draft of a new personal conversation only if that conversation opens. *)
   let ask_advisor = let%arr new_conversation and advisor and session in

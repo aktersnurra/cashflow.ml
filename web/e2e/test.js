@@ -77,15 +77,13 @@ Bokföringsdag;Text;Belopp;Saldo
     // Palette navigation.
     await page.keyboard.press('Control+k');
     await page.waitForFunction(() => document.activeElement && document.activeElement.matches('.palette input'));
-    await page.keyboard.type('Insights');
+    await page.keyboard.type('Accounts');
     await page.keyboard.press('Enter');
-    await page.waitForSelector('.insight, .page .empty', { timeout: 10000 });
-    await page.screenshot({ path: out + '/07-insights.png', fullPage: true });
-    // Findings about this month share one note that it isn't reconciled yet, and Uncategorized is never "a finding".
-    await page.waitForTimeout(500);
-    assert.ok(await page.locator('.page:visible .provisional').count() <= 1, 'the provisional note is said once');
-    assert.doesNotMatch((await page.locator('.page:visible .insight').allInnerTexts()).join('\n'), /Uncategorized accounts for/);
-    for (const [label, file] of [['Plan', '08-budgets'], ['Overview', '09-home'], ['Household', '11-household'], ['Settings', '10-settings']]) {
+    await page.waitForSelector('h1 >> text=Accounts', { timeout: 10000 });
+    await page.screenshot({ path: out + '/07-accounts.png', fullPage: true });
+    // Four places: Overview, Advisor, Money and Settings (the household among its sections).
+    assert.deepEqual((await page.locator('.sidebar .nav-link').allInnerTexts()).map(t => t.split('\n')[0]), ['Overview', 'Advisor', 'Money', 'Settings']);
+    for (const [label, file] of [['Overview', '09-home'], ['Settings', '10-settings']]) {
       await page.click(`.sidebar >> text=${label}`);
       await page.waitForTimeout(800);
       if (label === 'Overview') {
@@ -109,16 +107,17 @@ Bokföringsdag;Text;Belopp;Saldo
     }
     // Forecast: one imported month has no recurring payments yet, so Upcoming says so; a one-off
     // draws the what-if line, and removing it takes the line away.
-    await page.click('.sidebar >> text=Plan');
-    await page.click('.section-nav >> text=Forecast');
-    await page.locator('.section-nav a[aria-current=page]', { hasText: 'Forecast' }).waitFor({ timeout: 10000 });
-    await page.locator('.sidebar .nav-link.active', { hasText: 'Plan' }).waitFor({ timeout: 10000 });
+    // It is part of the Overview now, under what is worth knowing.
+    await page.click('.sidebar >> text=Overview');
+    await page.locator('.page:visible .plan-section h2', { hasText: 'Forecast' }).waitFor({ timeout: 10000 });
     await page.waitForSelector('svg.projection >> visible=true', { timeout: 10000 });
     const kpis = await page.locator('.forecast-kpis .kpi').count();
     if (kpis !== 4 && kpis !== 3) throw new Error(`forecast: ${kpis} key numbers`);
     // No key number repeats another: the lowest point and the day before salary show once when they are one day.
     const kpiTexts = await page.locator('.forecast-kpis .kpi').evaluateAll(ks => ks.map(k => k.querySelector('.kpi-value').textContent + ' ' + k.querySelector('.kpi-sub').textContent));
     assert.equal(new Set(kpiTexts).size, kpiTexts.length, 'no repeated key number: ' + kpiTexts);
+    // The payments, what-ifs and assumptions are folded under the chart.
+    await page.locator('.page:visible .forecast-details > summary').click();
     await page.waitForSelector('text=No regular payments found yet');
     const today = await page.getAttribute('.what-if input[type=date]', 'min');
     await page.fill('.what-if input[type=date]', today);
@@ -192,9 +191,8 @@ Bokföringsdag;Text;Belopp;Saldo
     await page.click('.sidebar >> text=Översikt');
     await page.waitForTimeout(800);
     await page.screenshot({ path: out + '/12-home-sv.png', fullPage: true });
-    await page.click('.sidebar >> text=Planering');
-    await page.click('.section-nav >> text=Prognos');
-    await page.waitForSelector('h1 >> text=Prognos', { timeout: 10000 });
+    await page.click('.sidebar >> text=Översikt');
+    await page.waitForSelector('.page:visible h2 >> text=Prognos', { timeout: 10000 });
   });
   await run('phone', { width: 390, height: 844 }, async page => {
     await page.goto(base + '/');

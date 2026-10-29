@@ -14,6 +14,13 @@
   chevron at the foot of the page on a computer; dragging files over the page opens it. Both it and the advisor's
   composer are one line, like a chat app: "+" to add statements on the left, then the text, then the return key to
   send or a small square to stop on the right.
+- **Four places instead of thirteen pages:** Overview, Advisor, Money and Settings. The Overview takes what is
+  ahead (the forecast chart and its key numbers, with payments, what-ifs and assumptions folded under it; goals and
+  budgets). Money is Transactions and Accounts, with the inbox, an account and adding by hand inside them. The
+  household is a section of Settings. Insights, Cash flow and Import are gone: the briefing, the Overview's money
+  flow and the desk do their work. Old addresses lead to where things went.
+- A question typed on the desk while the advisor wasn't on screen could land in the last conversation instead of
+  a new one; it now waits until the advisor is showing, then starts its own.
 - How far your statements reach now counts only the accounts you spend from: a savings account whose statement ends
   at its last monthly transfer no longer makes the whole month look unread.
 
