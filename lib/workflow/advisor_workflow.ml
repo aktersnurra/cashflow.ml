@@ -25,7 +25,8 @@ let safety_instructions =
    irregularly: a cycle with complete false has figures only through covered_through (later days are not imported yet, \
    not zero), and right after payday they show the salary but not the bills. Never compare such a cycle's totals or \
    savings rate with whole cycles, or call them the month's result; for how it is going, use period_outlook (the same \
-   days of earlier cycles, what is still due, and the expected result, which is a projection). To say why a finished \
+   days of earlier cycles, what is still due, and the expected result, which is a projection; when you give it, say \
+   how far off such forecasts have been, from track_record). To say why a finished \
    cycle came out as it did, use explain_month and name its drivers as what they are: a yearly bill is expected, a \
    one_off is not a change in habits, a habit is spending up across a category (months running in cycles_up). A tool error \
    is not evidence: correct its arguments within the remaining limits or explain the limitation; never claim it succeeded."

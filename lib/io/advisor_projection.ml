@@ -1290,6 +1290,10 @@ let model_json ~aliases (e : T.evidence) =
                   ("goals_set_aside", num o.goals_set_aside);
                   ("unseen_spending", num o.unseen_spending);
                   ("expected_range", opt (fun (low, high) -> obj [ ("low", num low); ("high", num high) ]) o.expected_range);
+                  ( "track_record",
+                    opt
+                      (fun (t : Cashflow_core.Outlook.track) -> obj [ ("miss", num t.miss); ("forecasts", `Int t.forecasts); ("since", date t.since) ])
+                      o.track_record );
                 ]
           | Filed_inbox_result { filed; unsure; kept_on } ->
               let row (r : T.inbox_row) =

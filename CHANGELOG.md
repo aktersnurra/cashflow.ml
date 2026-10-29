@@ -20,6 +20,19 @@
   five finished months (`explain_month`).
 - Cards learn from what you do with them: a missing payment you resolved stays quiet for that series, a double
   charge you said was right mutes that merchant, and after two large purchases you resolved those cards stop.
+- **How is this worked out?** under safe to spend shows the sum line by line (saved so far, income and bills
+  still to come, goals, usual spending for the days not imported yet) and what the heading adds. Beside the
+  likely range, the forecast's track record: how far off forecasts this far ahead have been, and how many that
+  rests on. The advisor's period outlook carries it too.
+
+### Fixed
+
+- The month review explained a month only for purchases posted straight to a category: rows filed from the
+  inbox (how imports reach a category) all read as "more than usual", never as a yearly bill or a one-off.
+  The review now shows on the Overview when it has something to explain, without repeating the figures.
+- A yearly bill (or a purchase with nothing else bought in the half year before it) no longer shows as "your
+  biggest purchase in half a year".
+- A stray brace in the stylesheet dropped the desktop chat composer's own style.
 
 ### A month in progress, honestly
 

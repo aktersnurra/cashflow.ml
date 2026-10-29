@@ -30,6 +30,13 @@ type t = {
   goals_set_aside : int64;  (** the goals' monthly amounts *)
   unseen_spending : int64;  (** usual spending assumed for the days since the statements end, up to today *)
   days_to_payday : int;  (** today included *)
+  track_record : track option;  (** how far off past forecasts were, as far ahead as the cycle's end *)
+}
+
+and track = {
+  miss : int64;  (** the median size of their errors, positive *)
+  forecasts : int;  (** how many past forecasts this is measured on *)
+  since : Date.t;  (** the earliest of them *)
 }
 
 and usual = {
@@ -87,14 +94,23 @@ let make ?(goals : Forecast.goal list = []) book ~setting ~today ~covered_throug
   let expected = so_far_savings +: List.fold_left (fun sum (i : Forecast.item) -> sum +: i.amount) 0L still_due -: usual_rest in
   (* The forecast's spread at the cycle's end (or the last day it reaches before it), moved onto
      this cycle's expected result. *)
+  let upto = List.filter (fun (d, _, _) -> Date.compare d cycle.last <= 0) forecast.range in
   let expected_range =
-    let upto = List.filter (fun (d, _, _) -> Date.compare d cycle.last <= 0) forecast.range in
     match List.rev upto with
     | (d, low, high) :: _ -> (
         match List.find_opt (fun (p : Forecast.point) -> Date.equal p.date d) forecast.baseline with
         | Some p when days_covered < days_total -> Some (expected +: (low -: p.cash), expected +: (high -: p.cash))
         | _ -> None)
     | [] -> None
+  in
+  (* The track record at the same distance as the range: the miss beside its last day. *)
+  let track_record =
+    match List.rev (List.filteri (fun k _ -> k < List.length upto) forecast.misses), expected_range with
+    | miss :: _, Some _ ->
+        List.find_map
+          (function Forecast.Range_from { forecasts; since } -> Some { miss; forecasts; since } | _ -> None)
+          forecast.assumptions
+    | _ -> None
   in
   (* Safe to spend: what is left of the cycle for day-to-day spending once the bills still due are paid and
      the goals have their monthly amounts. Days since the statements end are not free: they are counted at
@@ -109,4 +125,4 @@ let make ?(goals : Forecast.goal list = []) book ~setting ~today ~covered_throug
   { cycle; covered_through = (if days_covered = 0 then None else Some after); days_covered; days_total; so_far; so_far_savings;
     usual_by_now = (if days_covered = 0 || days_covered >= days_total then None else usual_by_now book ~setting cycle ~n:days_covered transfers);
     still_due; usual_rest; expected; expected_range; safe_to_spend; goals_set_aside; unseen_spending;
-    days_to_payday = max 1 (days ~first:today ~last:cycle.last) }
+    days_to_payday = max 1 (days ~first:today ~last:cycle.last); track_record }

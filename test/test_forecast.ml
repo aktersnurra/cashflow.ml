@@ -285,6 +285,12 @@ let exact_history () =
       Alcotest.(check string) "aligned" (Date.to_string p.date) (Date.to_string d);
       Alcotest.(check (pair int64 int64)) ("no width on " ^ Date.to_string d) (p.cash, p.cash) (low, high))
     (List.filteri (fun k _ -> k < List.length f.range) f.baseline) f.range;
+  Alcotest.(check bool) "never off" true (List.length f.misses = List.length f.range && List.for_all (Int64.equal 0L) f.misses);
+  (* A cycle in progress (the next morning, a new one) says so too, beside its range: off by nothing, and how
+     many forecasts that rests on. *)
+  (match (Cashflow_core.Outlook.make i.book ~setting ~today:(Date.add_days today 1) ~covered_through:None ~forecast:f history).track_record with
+   | Some t -> Alcotest.(check (pair int64 bool)) "the cycle's track record" (0L, true) (t.miss, t.forecasts >= 10)
+   | None -> Alcotest.fail "no track record beside a range");
   Alcotest.(check (option int)) "always above zero" (Some 100) f.chance_positive;
   Alcotest.(check bool) "says what it rests on" true (List.exists (function Forecast.Range_from { forecasts; _ } -> forecasts >= 10 | _ -> false) f.assumptions);
   Alcotest.(check bool) "no season under a year" true (not (List.exists (function Forecast.Seasonal _ -> true | _ -> false) f.assumptions))
@@ -308,7 +314,10 @@ let seasons () =
   let spent first last = Int64.sub (cash_on f first) (cash_on f last) in
   Alcotest.(check bool) "a December week costs more than a November week" true (Int64.compare (spent "2026-12-01" "2026-12-08") (spent "2026-11-10" "2026-11-17") > 0);
   Alcotest.(check bool) "a range" true (f.range <> []);
-  Alcotest.(check bool) "low at most high" true (List.for_all (fun (_, low, high) -> Int64.compare low high <= 0) f.range)
+  Alcotest.(check bool) "low at most high" true (List.for_all (fun (_, low, high) -> Int64.compare low high <= 0) f.range);
+  Alcotest.(check bool) "a miss for each day of the range" true (List.length f.misses = List.length f.range);
+  Alcotest.(check bool) "off by something, further ahead" true
+    (List.for_all (fun m -> Int64.compare m 0L >= 0) f.misses && Int64.compare (List.nth f.misses (List.length f.misses - 1)) 0L > 0)
 
 let no_range_yet () =
   let checking = checking ~balance:100_000L () in

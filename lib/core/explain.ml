@@ -45,6 +45,21 @@ let purchases book ~first ~last transfers =
       && Analytics.is Expense (book.Analytics.inside t.debit_account_id))
     transfers
 
+(* The purchases that ended up in category [id]: charged to it directly, or filed into it from the inbox
+   (a reclassification from where the import put it), less those filed out of it again. *)
+let in_category ~(id : Account_id.t) ~first ~last transfers =
+  let within (t : Transfer.t) = Analytics.posted t && t.code <> Reversal && Date.compare t.value_date first >= 0 && Date.compare t.value_date last <= 0 in
+  let key (t : Transfer.t) = (t.value_date, Analytics.amount t, t.memo.description) in
+  let moved_out = Hashtbl.create 8 in
+  List.iter
+    (fun (t : Transfer.t) -> if within t && t.code = Reclassify && Account_id.equal t.credit_account_id id then Hashtbl.add moved_out (key t) ())
+    transfers;
+  List.filter
+    (fun (t : Transfer.t) ->
+      within t && Account_id.equal t.debit_account_id id
+      && (match Hashtbl.find_opt moved_out (key t) with Some () -> Hashtbl.remove moved_out (key t); false | None -> true))
+    transfers
+
 let total_by_category book ~first ~last transfers =
   Analytics.totals_by_account book Expense ~first ~last transfers |> List.map (fun ((i : Account_info.t), n) -> (i.account.id, (i, n)))
 
@@ -98,7 +113,7 @@ let explain book ~setting ~floor ~(cycle : Cycle.t) transfers =
             let id = category.account.id in
             let difference = total_in current id -: usual_of id in
             if Int64.compare difference threshold >= 0 then
-              let mine = List.filter (fun (t : Transfer.t) -> Account_id.equal t.debit_account_id id) (purchases book ~first:cycle.first ~last:cycle.last transfers) in
+              let mine = in_category ~id ~first:cycle.first ~last:cycle.last transfers in
               let specific =
                 List.filter_map
                   (fun (t : Transfer.t) ->

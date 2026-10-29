@@ -547,7 +547,8 @@ let period_outlook =
        income, spending and savings by the same day), and where it is heading: still_due lists the income, bills and \
        household contributions expected before the cycle ends, usual_rest is usual day-to-day spending for the days left, \
        and expected is the cycle's savings if the rest goes as usual, with expected_range where 8 in 10 past forecasts \
-       landed. safe_to_spend is what day-to-day spending can still take until payday (days_to_payday, today included) \
+       landed and track_record how far off those past forecasts typically were that far ahead (miss: the median \
+       size of their errors; forecasts: how many, since when). safe_to_spend is what day-to-day spending can still take until payday (days_to_payday, today included) \
        with the bills still due and the goals' monthly amounts (goals_set_aside) covered, counting usual spending for \
        the days since the statements end (unseen_spending); negative when they already aren't covered. Compare a \
        cycle in progress through this, never its so-far totals against whole cycles.";
@@ -576,7 +577,11 @@ let period_outlook =
             ("safe_to_spend", m o.safe_to_spend); ("days_to_payday", `Int o.days_to_payday);
             ("safe_per_day", m (Int64.div o.safe_to_spend (Int64.of_int (max 1 o.days_to_payday))));
             ("goals_set_aside", m o.goals_set_aside); ("unseen_spending", m o.unseen_spending);
-            ("expected_range", Json.option (fun (low, high) -> `Assoc [ ("low", m low); ("high", m high) ]) o.expected_range) ]) }
+            ("expected_range", Json.option (fun (low, high) -> `Assoc [ ("low", m low); ("high", m high) ]) o.expected_range);
+            ( "track_record",
+              Json.option
+                (fun (t : Cashflow_core.Outlook.track) -> `Assoc [ ("miss", m t.miss); ("forecasts", `Int t.forecasts); ("since", Json.date t.since) ])
+                o.track_record ) ]) }
 
 let all =
   [ Any cashflow_summary; Any period_outlook; Any spending_by_category; Any category_trend; Any net_worth; Any largest_expenses; Any runway;

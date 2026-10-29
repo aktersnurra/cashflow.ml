@@ -58,10 +58,20 @@ let double_charges book ~since ~floor transfers =
 
 (* The single biggest purchase since [since], when it is at least twice anything bought in the half year
    before it and at least [floor]: a regular bill (rent) is never news, so merchants with a series are left
-   out. One at most. *)
+   out, and so is a charge the same merchant took about a year before for about the same (a yearly bill).
+   Nothing else bought in that half year is nothing to compare with, not a reason. One at most. *)
 let large_purchase book ~since ~floor ~(series : Series.t list) transfers =
-  let regular t = let key = Analytics.merchant_key t in List.exists (fun (s : Series.t) -> s.id = "bill:" ^ key) series in
   let all = List.filter (purchase book) transfers in
+  let yearly (t : Transfer.t) =
+    let key = Analytics.merchant_key t and a = Analytics.amount t in
+    List.exists
+      (fun (p : Transfer.t) ->
+        let b = Analytics.amount p in
+        Analytics.merchant_key p = key && abs (Date.days_between ~first:p.value_date ~last:t.value_date - 365) <= 21
+        && Int64.compare (Int64.mul (Int64.abs (Int64.sub a b)) 4L) (Int64.max a b) <= 0)
+      all
+  in
+  let regular t = let key = Analytics.merchant_key t in List.exists (fun (s : Series.t) -> s.id = "bill:" ^ key) series || yearly t in
   let purchases = List.filter (fun t -> not (regular t)) all in
   let recent = List.filter (fun (t : Transfer.t) -> Date.compare t.value_date since >= 0) purchases in
   match List.sort (fun a b -> Int64.compare (Analytics.amount b) (Analytics.amount a)) recent with
@@ -74,7 +84,7 @@ let large_purchase book ~since ~floor ~(series : Series.t list) transfers =
       (* "Biggest in half a year" needs most of half a year of spending before it, bills included. *)
       let earliest = List.fold_left (fun d (t : Transfer.t) -> if within t then Date.min d t.value_date else d) biggest.value_date all in
       let history = Date.days_between ~first:earliest ~last:biggest.value_date >= 120 in
-      if history && Int64.compare amount floor >= 0 && Int64.compare amount (Int64.mul 2L largest_before) >= 0 then
+      if history && Int64.compare largest_before 0L > 0 && Int64.compare amount floor >= 0 && Int64.compare amount (Int64.mul 2L largest_before) >= 0 then
         [ Large_purchase { purchase = biggest; amount; largest_before } ]
       else []
 

@@ -475,6 +475,7 @@ let test_period_outlook () =
   Alcotest.(check bool) (Printf.sprintf "heading for about a usual cycle (17000), not 30000: %.0f" expected) true (Float.abs (expected -. 17000.) <= 1500.);
   (* Safe to spend: the salary less the rent still due and usual spending for the days since the statement
      ended (they aren't free just because they aren't imported). *)
+  Alcotest.(check bool) "a track record only beside a range" (field [ "expected_range" ] o = `Null) (field [ "track_record" ] o = `Null);
   let safe = money [ "safe_to_spend" ] and unseen = money [ "unseen_spending" ] in
   Alcotest.(check bool) "the days since the statement count at usual spending" true (unseen > 0.);
   Alcotest.(check (float 0.01)) "safe = so far + still due - unseen" (30000. -. 9000. -. unseen) safe;
@@ -543,6 +544,54 @@ let test_explain_a_month () =
       | Some e -> Alcotest.(check (pair bool int)) "an ordinary month is normal" (true, 0) (e.normal, List.length e.drivers)
       | None -> Alcotest.fail "nothing to compare with"
 
+(* The same month as it really arrives: imported, then filed from the inbox, so each purchase reaches its
+   category by a reclassification. The yearly bill and the one-off are still told apart from a habit. *)
+let test_explain_a_filed_month () =
+  let service = make_service () in
+  let alice = sign_in service "alice" in
+  let checking = open_checking service alice ~statement_backed:true "Checking" in
+  let ctx = Result.get_ok (Insights.context service alice ~scope:Analytics.Me ()) in
+  let module Cycle = Cashflow_core.Cycle in
+  let module Date = Cashflow_core.Date in
+  let reviewed = Cycle.previous ctx.setting (Cycle.cycle_of ctx.setting ctx.today) in
+  let rec back c n = if n = 0 then c else back (Cycle.previous ctx.setting c) (n - 1) in
+  let row d text kr = Printf.sprintf "%s;%s;%d,00" (Date.to_string d) text kr in
+  let day (c : Cycle.t) k = Date.add_days c.first k in
+  let month (c : Cycle.t) ~grocery = row c.first "LON" 30_000 :: List.map (fun k -> row (day c k) "ICA" (-grocery)) [ 2; 9; 16; 23 ] in
+  let rows =
+    List.concat_map (fun k -> month (back reviewed k) ~grocery:1_000) [ 6; 5; 4; 3; 2; 1 ]
+    @ month reviewed ~grocery:1_250
+    @ [ row (Date.add_days (day reviewed 10) (-365)) "IF FORSAKRING" (-4_800); row (day reviewed 10) "IF FORSAKRING" (-4_800);
+        row (day reviewed 12) "BAUHAUS" (-3_000) ]
+  in
+  let csv = String.concat "\n" ("Datum;Text;Belopp" :: rows) ^ "\n" in
+  ignore (ok_import (Cashflow_io.Import.confirm (Cashflow_io.Import.context service alice) { target = Cashflow_io.Import.Existing checking; file_name = None; content = csv; decisions = [] }));
+  let category = function
+    | "LON" -> "Salary" | "ICA" -> "Groceries" | "IF FORSAKRING" -> "Insurance" | _ -> "Shopping"
+  in
+  let rec file () =
+    match Cashflow_io.Inbox.list service alice ~limit:1 with
+    | [] -> ()
+    | v :: _ ->
+        ignore (ok (Cashflow_io.Inbox.categorize service alice ~transfer_id:v.item.transfer_id ~category_id:(account_named service alice (category v.transfer.transfer.memo.description)) ()));
+        file ()
+  in
+  file ();
+  let transfers = Insights.transfers ctx ~first:(Date.add_days reviewed.first (-400)) ~last:reviewed.last in
+  match Cashflow_core.Explain.explain (Insights.book ctx) ~setting:ctx.setting ~floor:300_00L ~cycle:reviewed transfers with
+  | None -> Alcotest.fail "nothing to compare with"
+  | Some e ->
+      let describe = function
+        | Cashflow_core.Explain.Yearly { amount; _ } -> Printf.sprintf "yearly %Ld" amount
+        | One_off { description; amount; _ } -> Printf.sprintf "one-off %s %Ld" description amount
+        | Habit { category; difference; _ } -> Printf.sprintf "habit %s %Ld" category.account.name difference
+        | Less { category; difference } -> Printf.sprintf "less %s %Ld" category.account.name difference
+        | Income_change { difference } -> Printf.sprintf "income %Ld" difference
+      in
+      Alcotest.(check (list string)) "filed from the inbox, still told apart"
+        [ "yearly 480000"; "one-off BAUHAUS 300000"; "habit Groceries 100000" ]
+        (List.map describe e.drivers)
+
 let () =
   Alcotest.run "analytics"
     [ ( "insights",
@@ -554,6 +603,7 @@ let () =
           Alcotest.test_case "forecast" `Quick test_forecast_query;
           Alcotest.test_case "period outlook" `Quick test_period_outlook;
           Alcotest.test_case "explain a month" `Quick test_explain_a_month;
+          Alcotest.test_case "explain a filed month" `Quick test_explain_a_filed_month;
           Alcotest.test_case "contribution plan" `Quick test_contribution_plan;
           Alcotest.test_case "net worth with a loan" `Quick test_net_worth_with_a_loan;
           Alcotest.test_case "goal report currency" `Quick test_goal_report_currency;
