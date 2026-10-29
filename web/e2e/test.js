@@ -148,10 +148,10 @@ Bokföringsdag;Text;Belopp;Saldo
     await page.locator('.row', { hasText: 'Answer in kronor' }).getByRole('button', { name: 'Forget' }).click();
     await page.getByText('No notes yet.').waitFor({ timeout: 10000 });
     await page.screenshot({ path: out + '/14-settings-memory.png', fullPage: true });
-    // Automatic categories: a bank account opts in per confidence level, and it persists.
+    // Automatic categories: on for every bank account at 80% unless changed; a change persists.
     await page.getByRole('heading', { name: 'Automatic categories', exact: true }).waitFor({ timeout: 10000 });
     const autoRow = page.locator('.setting-row', { hasText: 'Lönekonto' });
-    assert.equal(await autoRow.locator('select').inputValue(), 'off', 'automatic categories start off');
+    assert.equal(await autoRow.locator('select').inputValue(), '80', 'automatic categories start on, at 80');
     await autoRow.locator('select').selectOption('90');
     await page.waitForFunction(() => [...document.querySelectorAll('.setting-row')].some(r => r.textContent.includes('Lönekonto') && r.querySelector('select').value === '90'), null, { timeout: 10000 });
     await page.reload();

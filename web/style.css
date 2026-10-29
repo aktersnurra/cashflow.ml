@@ -784,3 +784,6 @@ main.page.advisor-page.dropping { outline: 2px dashed var(--accent); outline-off
 .forecast-details, .unbudgeted { margin-top: 12px; }
 .forecast-details > summary, .unbudgeted > summary { cursor: pointer; font-size: 13px; color: var(--text-2); padding: 6px 0; }
 .forecast-details > summary:hover, .unbudgeted > summary:hover { color: var(--text); }
+.question-merchant { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 0; border-top: 1px solid var(--line); }
+.question-merchant:first-of-type { border-top: 0; }
+.question-answers { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }

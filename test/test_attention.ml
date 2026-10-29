@@ -21,12 +21,18 @@ let test_feed_follows_the_data () =
   Alcotest.(check (list string)) "a new user sees the overview" [ "overview" ] (kinds service alice);
   let checking = open_checking service alice ~statement_backed:true "Checking" in
   Alcotest.(check (list string)) "a statement account asks for an import" [ "import_due"; "overview" ] (kinds service alice);
-  let csv = "Datum;Text;Belopp;Saldo\n2026-10-20;ICA;-250,00;-250,00\n" in
-  ignore (ok_import (Import.confirm (Import.context service alice) { target = Import.Existing checking; file_name = None; content = csv; decisions = [] }));
-  Alcotest.(check (list string)) "then the inbox" [ "inbox"; "overview" ] (kinds service alice);
-  let item = List.hd (Inbox.list service alice ~limit:10) in
-  ignore (ok (Inbox.categorize service alice ~transfer_id:item.item.transfer_id ~category_id:(account_named service alice "Groceries") ()));
-  Alcotest.(check (list string)) "and back to the overview" [ "overview" ] (kinds service alice)
+  let import csv = ignore (ok_import (Import.confirm (Import.context service alice) { target = Import.Existing checking; file_name = None; content = csv; decisions = [] })) in
+  import "Datum;Text;Belopp;Saldo\n2026-10-20;ICA;-250,00;-250,00\n";
+  (* One small row cashflow can't place isn't worth a question: its category changes nothing to act on. *)
+  Alcotest.(check (list string)) "a small row is not asked about" [ "overview" ] (kinds service alice);
+  import "Datum;Text;Belopp;Saldo\n2026-10-21;WOLT;-150,00;-400,00\n2026-10-22;WOLT;-160,00;-560,00\n2026-10-23;WOLT;-140,00;-700,00\n";
+  let feed = Attention.feed ~narrative:false service alice in
+  (match List.find_map (fun (Attention.Card c) -> match c.kind, c.payload with Attention.Inbox, (i : Attention.inbox) -> Some i | _ -> None) feed with
+   | Some { groups = [ g ]; _ } ->
+       Alcotest.(check (pair string int)) "a recurring merchant is, once for all its rows" ("WOLT", 3) (g.name, g.rows);
+       ignore (ok (Inbox.categorize service alice ~transfer_id:g.first ~category_id:(account_named service alice "Restaurants & cafés") ()))
+   | _ -> Alcotest.fail "expected one question, about WOLT");
+  Alcotest.(check (list string)) "one answer files them all" [ "overview" ] (kinds service alice)
 
 (* Early in a cycle the last one is reviewed, but only once the statements cover it to its end: half a cycle
    (salary in, bills not imported yet) is not a month's result. *)

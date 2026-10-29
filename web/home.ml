@@ -51,9 +51,33 @@ let card_view ~(ctx : Ctx.t) (key : string Bonsai.t) (card : J.t Bonsai.t) graph
         ~body:[ Ui.muted (if J.is_null days then Msg.card_import_never locale else Msg.card_import_days ~days:(J.int days) locale); import ]
         ~actions:[ later ] ()
   | "inbox" ->
-      Ui.card ~tone:"accent" ~title:(Msg.card_inbox_title ~count:(J.int (J.field "count" data)) locale)
-        ~body:[ Ui.muted (Msg.card_inbox_body locale) ]
-        ~actions:[ Ui.button ~kind:"primary" (Msg.action_review locale) (navigate Route.Inbox) ] ()
+      (* What the sweep couldn't place and matters: one merchant per row, answered with one tap. The answer files
+         every row from the merchant and teaches the next import. *)
+      let answer g (category : J.t) =
+        after (Api.run "categorize" (`Assoc [ ("id", J.field "id" g); ("category_id", J.field "id" category) ]))
+      in
+      let row g =
+        let code = J.str ~default:currency (J.field "currency" g) in
+        Ui.div ~cls:"question-merchant"
+          [ Ui.div
+              [ Ui.div ~cls:"row-title" [ Ui.text (J.str (J.field "name" g)) ];
+                Ui.div ~cls:"row-sub"
+                  [ Ui.text
+                      (if J.int (J.field "rows" g) = 1 then kr ~code (J.field "total" g)
+                       else Msg.card_questions_row ~rows:(Int.to_string (J.int (J.field "rows" g))) ~amount:(kr ~code (J.field "total" g)) locale) ] ];
+            Ui.div ~cls:"question-answers"
+              [ (match J.field "guess" g with
+                 | `Null -> Vdom.Node.none
+                 | guess -> Ui.button ~kind:"primary" (Accounts_data.name ~locale guess) (answer g guess));
+                Ui.button (Msg.card_questions_other locale) (navigate Route.Inbox) ] ]
+      in
+      Ui.card ~tone:"accent" ~title:(Msg.card_questions_title locale) ~body:(List.map (J.list (J.field "groups" data)) ~f:row) ()
+  | "autofiled" ->
+      Ui.card ~title:(Msg.card_autofiled_title ~filed:(Int.to_string (J.int (J.field "filed" data))) locale)
+        ~body:
+          [ (if J.int (J.field "guessed" data) > 0 then Ui.muted (Msg.card_autofiled_body ~guessed:(Int.to_string (J.int (J.field "guessed" data))) locale)
+             else Vdom.Node.none) ]
+        ~actions:[ done_ ] ()
   | "unmatched_entry" ->
       let t = J.field "transaction" data in
       let void = after (Api.run "void_pending" (`Assoc [ ("idempotency_key", `String ("void:" ^ J.str (J.field "id" t))); ("id", J.field "id" t) ])) in

@@ -291,7 +291,8 @@ let test_auto_apply_threshold () =
   let file day = Printf.sprintf "Bokföringsdag;Text;Belopp;Saldo\n2026-11-%02d;SPOTIFY;-119,00;9 393,00\n" day in
   let import day = imported (Import.confirm (Import.context service alice) (request checking (file day))) in
   let set minimum = ok (Inbox.set_auto_apply service alice ~account_id:checking ~min_confidence:minimum) in
-  Alcotest.(check (list (pair string int))) "off by default" [] (List.map (fun (id, n) -> (Account_id.to_string id, n)) (Inbox.auto_apply_settings service alice));
+  Alcotest.(check (list (pair string int))) "on by default, at 80" [ (Account_id.to_string checking, 80) ]
+    (List.map (fun (id, n) -> (Account_id.to_string id, n)) (Inbox.auto_apply_settings service alice));
   Alcotest.(check int) "mixed history waits in the inbox" 1 (import 10).inbox_count;
   set (Some 90);
   Alcotest.(check int) "a threshold above its confidence still waits" 1 (import 11).inbox_count;

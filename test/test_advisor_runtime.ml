@@ -1099,6 +1099,8 @@ let file_inbox_when_asked () =
       let owner, _, principal = login service "autofile" in
       let access = Test_service_support.sign_in service "autofile" in
       let checking = Test_service_support.open_checking service access ~statement_backed:true "Checking" in
+      (* Filing without asking turned off, so it is the advisor that is asked to. *)
+      ignore (Inbox.set_auto_apply service access ~account_id:checking ~min_confidence:None);
       let csv = "Datum;Text;Belopp;Saldo\n2026-10-20;WILLYS HEMMA;-412,00;1 000,00\n2026-10-21;MYSTERY AB;-99,00;901,00\n" in
       ignore (Test_service_support.ok_import (Import.confirm (Import.context service access) { target = Import.Existing checking; file_name = None; content = csv; decisions = [] }));
       let a = ok (R.submit runtime ~principal { (submit "autofile") with user_text = "Categorise my transactions for me, and keep doing it" }) in

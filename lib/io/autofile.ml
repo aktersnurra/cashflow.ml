@@ -5,7 +5,13 @@
    by recategorising it), but marked as cashflow's, so it teaches nothing.
 
    [classify] reads and asks the classifier, holding no transaction (it is network I/O); [file] then files
-   inside the caller's transaction, checking each row again as it is then. *)
+   inside the caller's transaction, checking each row again as it is then.
+
+   [sweep] does the same without being asked, after an import and when the Overview finds rows waiting: the
+   books shouldn't wait on a person sorting coffee. It files at each bank account's own threshold (on by
+   default), and a small row it isn't sure of is filed with its best guess and marked as guessed rather than
+   asked about: its category changes no number a person would act on. What is left, the big or recurring rows
+   cashflow can't place, is what the Overview asks about (Attention), one merchant at a time. *)
 
 module Access = Cashflow_core.Access
 module Account = Cashflow_core.Account
@@ -31,7 +37,7 @@ type row = {
   guess : (Account_info.t * int * string) option;  (** the category, how sure, and where the guess came from *)
 }
 
-type report = { filed : row list; unsure : row list; kept_on : bool }
+type report = { filed : row list; unsure : row list; kept_on : bool; guessed : row list }
 
 let row_of (t : Transfer.t) ~outflow : Statement_format.row =
   let amount = Amount.to_int64 t.amount in
@@ -89,10 +95,13 @@ let fits (bank : Account_info.t) (item : Import_store.item) ~outflow (c : Accoun
   && Option.is_none c.details.role && (not c.account.closed)
   && not (Account_id.equal c.account.id item.current_account_id)
 
-let file (service : Service.t) access ~keep_on (c : classified) =
-  let filed, unsure =
+(* [per_bank]: each bank account's own threshold (off files nothing) rather than [threshold]. [guess_below]: a
+   row under this amount (in its bank account's currency) whose best guess is not sure enough is filed with it,
+   marked as guessed. *)
+let file ?(per_bank = false) ?guess_below (service : Service.t) access ~keep_on (c : classified) =
+  let filed, unsure, guessed =
     List.fold_left
-      (fun (filed, unsure) (transfer_id, guess) ->
+      (fun (filed, unsure, guessed) (transfer_id, guess) ->
         match Import_store.find_item service.db transfer_id with
         | Some ({ status = "open"; _ } as item) -> (
             match Service.find_account service access item.bank_account_id, Service.get_transfer service access transfer_id with
@@ -100,16 +109,27 @@ let file (service : Service.t) access ~keep_on (c : classified) =
                 let outflow = Inbox.outflow item view.transfer in
                 let category = Option.bind guess (fun g -> Result.to_option (Service.find_account service access g.category_id)) in
                 let row g c = { transfer = view.transfer; outflow; guess = Some (c, g.confidence, g.source) } in
-                match guess, category with
-                | Some g, Some c when fits bank item ~outflow c && g.confidence >= threshold -> (
-                    match Inbox.categorize service access ~transfer_id ~category_id:c.account.id ~by:`Auto () with
-                    | Ok (Some (Ok _)) -> (row g c :: filed, unsure)
-                    | _ -> (filed, row g c :: unsure))
-                | Some g, Some c when fits bank item ~outflow c -> (filed, row g c :: unsure)
-                | _ -> (filed, { transfer = view.transfer; outflow; guess = None } :: unsure))
-            | _ -> (filed, unsure))
-        | _ -> (filed, unsure))
-      ([], []) c.rows
+                let threshold = if per_bank then Import_store.auto_apply_threshold service.db bank.account.id else Some threshold in
+                let small =
+                  match guess_below with Some limit -> Int64.compare (Amount.to_int64 view.transfer.amount) (limit bank.account.currency) < 0 | None -> false
+                in
+                let file_as (c : Account_info.t) = Inbox.categorize service access ~transfer_id ~category_id:c.account.id ~by:`Auto () in
+                match guess, category, threshold with
+                | Some g, Some c, Some threshold when fits bank item ~outflow c && g.confidence >= threshold -> (
+                    match file_as c with
+                    | Ok (Some (Ok _)) -> (row g c :: filed, unsure, guessed)
+                    | _ -> (filed, row g c :: unsure, guessed))
+                | Some g, Some c, Some _ when fits bank item ~outflow c && small -> (
+                    match file_as c with
+                    | Ok (Some (Ok _)) ->
+                        Import_store.set_guessed service.db transfer_id;
+                        (filed, unsure, row g c :: guessed)
+                    | _ -> (filed, row g c :: unsure, guessed))
+                | Some g, Some c, _ when fits bank item ~outflow c -> (filed, row g c :: unsure, guessed)
+                | _ -> (filed, { transfer = view.transfer; outflow; guess = None } :: unsure, guessed))
+            | _ -> (filed, unsure, guessed))
+        | _ -> (filed, unsure, guessed))
+      ([], [], []) c.rows
   in
   (* Later imports into the owner's bank accounts file at the same threshold. *)
   let kept_on =
@@ -121,4 +141,46 @@ let file (service : Service.t) access ~keep_on (c : classified) =
            else any)
          false (Service.accounts service access)
   in
-  { filed = List.rev filed; unsure = List.rev unsure; kept_on }
+  { filed = List.rev filed; unsure = List.rev unsure; kept_on; guessed = List.rev guessed }
+
+(* Under this, a row's category changes nothing a person would act on (300 in the currency). *)
+let guess_limit currency = Int64.mul 300L (Int64.of_float (10. ** float_of_int (Currency.scale currency)))
+
+(* One sweep at a time per person, and not again within [rest] unless an import asked for it. *)
+let sweeping : (string, unit) Hashtbl.t = Hashtbl.create 8
+let last_swept : (string, float) Hashtbl.t = Hashtbl.create 8
+let rest = 1800.
+
+let sweep (service : Service.t) access =
+  let user = Cashflow_core.User_id.to_string (Access.user access).id in
+  if not (Hashtbl.mem sweeping user) then begin
+    Hashtbl.replace sweeping user ();
+    Fun.protect ~finally:(fun () -> Hashtbl.remove sweeping user; Hashtbl.replace last_swept user (Unix.gettimeofday ()))
+      (fun () ->
+        let total_filed = ref 0 and total_guessed = ref 0 in
+        List.iter
+          (fun owner ->
+            (* A chunk at a time until a pass changes nothing. *)
+            let rec pass n =
+              if n > 0 then
+                let c = classify service access ~owner in
+                if c.rows <> [] then
+                  let r = file ~per_bank:true ~guess_below:guess_limit service access ~keep_on:false c in
+                  let moved = List.length r.filed + List.length r.guessed in
+                  total_filed := !total_filed + List.length r.filed;
+                  total_guessed := !total_guessed + List.length r.guessed;
+                  if moved > 0 then pass (n - 1)
+            in
+            pass 10)
+          (Access.owners access);
+        if !total_filed + !total_guessed > 0 then
+          Import_store.record_run service.db (Access.user access).id ~at:(service.now ()) ~filed:!total_filed ~guessed:!total_guessed)
+  end
+
+(* After an import, at once; when the Overview finds rows waiting, at most every half hour. *)
+let schedule_sweep ?(now = false) (service : Service.t) access =
+  let user = Cashflow_core.User_id.to_string (Access.user access).id in
+  let recent = match Hashtbl.find_opt last_swept user with Some t -> Unix.gettimeofday () -. t < rest | None -> false in
+  if (now || not recent) && not (Hashtbl.mem sweeping user) then
+    try service.schedule (fun () -> try sweep service access with exn -> Logs.err (fun m -> m "inbox sweep failed: %s" (Printexc.to_string exn)))
+    with exn -> Logs.err (fun m -> m "inbox sweep not scheduled: %s" (Printexc.to_string exn))

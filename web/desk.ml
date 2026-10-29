@@ -54,8 +54,15 @@ let component ~(ctx : Ctx.t) ~(on_question : (string -> unit Effect.t) Bonsai.t)
   and locale = ctx.locale in
   let open_box = Effect.Many [ set_opened true; focus_input ] in
   let close_box = Effect.Many [ set_opened false; Effect.of_thunk (fun () -> Option.iter (Dom_html.getElementById_opt input_id) ~f:(fun el -> el##blur)) ] in
+  (* The text as it is in the field now: Enter can come before the last keystroke has been rendered. *)
+  let current () =
+    match Dom_html.getElementById_opt input_id with
+    | Some el -> (match Js.Opt.to_option (Dom_html.CoerceTo.textarea el) with Some t -> Js.to_string t##.value | None -> draft)
+    | None -> draft
+  in
   let send () =
-    if String.is_empty (String.strip draft) then Effect.Ignore else Effect.Many [ on_question (String.strip draft); set_draft ""; set_opened false ]
+    let text = String.strip (current ()) in
+    if String.is_empty text then Effect.Ignore else Effect.Many [ on_question text; set_draft ""; set_opened false ]
   in
   let dropped event =
     let files = Option.value_map (Js.Optdef.to_option (Js.Unsafe.coerce event)##.dataTransfer) ~default:[] ~f:(fun dt -> files_of dt##.files) in

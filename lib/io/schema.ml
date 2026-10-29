@@ -354,6 +354,22 @@ ALTER TABLE users DROP COLUMN is_admin;
 -- Only what a person chose teaches the next suggestion.
 ALTER TABLE inbox_items ADD COLUMN filed_by TEXT NOT NULL DEFAULT 'person' CHECK (filed_by IN ('person', 'auto'));
 |}
+    );
+    ( 14,
+      {|
+-- A small row cashflow wasn't sure of is filed with its best guess rather than asked about; it says so.
+ALTER TABLE inbox_items ADD COLUMN guessed INTEGER NOT NULL DEFAULT 0;
+-- Filing without asking is on for every bank account unless turned off here.
+CREATE TABLE account_auto_apply_off (account_id TEXT PRIMARY KEY);
+-- What each sweep of the inbox did, for the one-line receipt on the Overview.
+CREATE TABLE autofile_runs (
+  user_id TEXT NOT NULL,
+  ran_at TEXT NOT NULL,
+  filed INTEGER NOT NULL,
+  guessed INTEGER NOT NULL,
+  PRIMARY KEY (user_id, ran_at)
+);
+|}
     ) ]
 
 let latest_version = List.fold_left (fun latest (version, _) -> max latest version) 0 migrations

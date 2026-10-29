@@ -653,6 +653,8 @@ let import_statement =
         match result with
         | `Already_imported batch -> Ok (`Assoc [ ("status", `String "already_imported"); ("import", batch_json batch) ])
         | `Imported (s : Import.summary) ->
+            (* What it couldn't place at import is swept in the background: filed, guessed, or left to ask. *)
+            Autofile.schedule_sweep ~now:true service access;
             Ok
               (`Assoc
                  [ ("status", `String "imported"); ("account", Json.account s.account); ("import", batch_json s.batch); ("inbox", `Int s.inbox_count);

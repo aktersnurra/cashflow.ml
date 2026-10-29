@@ -261,9 +261,32 @@ let upsert_threshold =
 let delete_threshold = stmt "DELETE FROM account_auto_apply WHERE account_id = ?" (Codec.account_id @-> nil) exec
 let all_thresholds = stmt "SELECT account_id, min_confidence FROM account_auto_apply ORDER BY account_id" nil (many (row Codec.(account_id @-> int @-> nil) (fun id n -> (id, n))))
 
-let auto_apply_threshold db account = run db threshold_of account
+(* Filing without asking is on unless turned off: a bank account with no setting files at [default_threshold]. *)
+let default_threshold = 80
+
+let is_off = stmt "SELECT 1 FROM account_auto_apply_off WHERE account_id = ?" (Codec.account_id @-> nil) (opt (row (int @-> nil) Fun.id))
+let turn_off = stmt "INSERT OR IGNORE INTO account_auto_apply_off (account_id) VALUES (?)" (Codec.account_id @-> nil) exec
+let turn_on = stmt "DELETE FROM account_auto_apply_off WHERE account_id = ?" (Codec.account_id @-> nil) exec
+
+let auto_apply_threshold db account =
+  if Option.is_some (run db is_off account) then None else Some (Option.value (run db threshold_of account) ~default:default_threshold)
+
 let auto_apply_thresholds db = run db all_thresholds
-let set_auto_apply_threshold db account = function Some minimum -> run db upsert_threshold account minimum | None -> run db delete_threshold account
+
+let set_auto_apply_threshold db account = function
+  | Some minimum -> run db turn_on account; run db upsert_threshold account minimum
+  | None -> run db delete_threshold account; run db turn_off account
+
+let set_guessed_stmt = stmt "UPDATE inbox_items SET guessed = 1 WHERE transfer_id = ?" Codec.(transfer_id @-> nil) exec
+let set_guessed db transfer_id = run db set_guessed_stmt transfer_id
+
+let insert_run =
+  stmt "INSERT OR REPLACE INTO autofile_runs (user_id, ran_at, filed, guessed) VALUES (?, ?, ?, ?)" Codec.(user_id @-> time @-> int @-> int @-> nil) exec
+let latest_run_stmt =
+  stmt "SELECT ran_at, filed, guessed FROM autofile_runs WHERE user_id = ? ORDER BY ran_at DESC LIMIT 1" Codec.(user_id @-> nil)
+    (opt (row Codec.(time @-> int @-> int @-> nil) (fun at filed guessed -> (at, filed, guessed))))
+let record_run db user ~at ~filed ~guessed = run db insert_run user at filed guessed
+let latest_run db user = run db latest_run_stmt user
 
 (* What triage posted for an inbox row, and which rows a triage transfer was about. *)
 let record_triage db ~item transfer = run db insert_triage item transfer

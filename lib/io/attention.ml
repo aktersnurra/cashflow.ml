@@ -33,13 +33,29 @@ type month_review = {
   text : string option;
 }
 
+(* What is left in the inbox after the sweep, as questions: one per merchant, only those that matter (big, or
+   recurring), the most money first. One answer files every row from the merchant. *)
+type question_group = {
+  name : string;
+  rows : int;
+  total : int64;  (** positive *)
+  group_currency : Currency.t;
+  first : Transfer_id.t;  (** the row an answer is given for; the rest from the merchant follow *)
+  guess : Account_info.t option;
+  outflow : bool;
+}
+
+type inbox = { count : int; groups : question_group list }
+type autofiled = { ran_at : Ptime.t; filed : int; guessed : int }
+
 type unusual = { unusual : Analytics.unusual; unusual_currency : Currency.t; scope : Analytics.scope; explanation : string option }
 
 type _ kind =
   | Invitation : Household.t kind
   | Reconciliation_mismatch : mismatch kind
   | Import_due : import_due kind
-  | Inbox : int kind
+  | Inbox : inbox kind
+  | Autofiled : autofiled kind  (** what the last sweep did *)
   | Month_review : month_review kind
   | Budget_alert : (Analytics.budget_line * Currency.t) kind
   | Shortfall : (Analytics.shortfall * Currency.t) kind
@@ -61,6 +77,7 @@ let kind_name : type a. a kind -> string = function
   | Reconciliation_mismatch -> "reconciliation_mismatch"
   | Import_due -> "import_due"
   | Inbox -> "inbox"
+  | Autofiled -> "autofiled"
   | Month_review -> "month_review"
   | Budget_alert -> "budget_alert"
   | Shortfall -> "shortfall"
@@ -83,6 +100,7 @@ let priority : type a. a kind -> int = function
   | Reconciliation_mismatch -> 10
   | Import_due -> 20
   | Inbox -> 30
+  | Autofiled -> 95
   | Unmatched_entry -> 35
   | Shortfall -> 32
   | Month_review -> 40
@@ -226,6 +244,36 @@ let status_rank = function `On_pace -> 0 | `Ahead_of_pace -> 1 | `Over_budget ->
 let status_note s = match s with `On_pace -> "on_pace" | `Ahead_of_pace -> "ahead_of_pace" | `Over_budget -> "over_budget"
 let note_rank = function "over_budget" -> 2 | "ahead_of_pace" -> 1 | _ -> 0
 
+(* The questions the inbox still holds: rows grouped by merchant, a group worth asking about when it is big
+   (1,000 in the currency in all) or recurring (three rows or more). *)
+let question_groups (service : Service.t) access =
+  let views = Inbox.list service access ~limit:2000 in
+  let groups = Hashtbl.create 32 in
+  List.iter
+    (fun (v : Inbox.item_view) ->
+      let key = if v.item.merchant_key <> "" then v.item.merchant_key else String.lowercase_ascii v.transfer.transfer.memo.description in
+      Hashtbl.replace groups key (v :: Option.value (Hashtbl.find_opt groups key) ~default:[]))
+    views;
+  Hashtbl.fold
+    (fun _ (vs : Inbox.item_view list) acc ->
+      match List.rev vs with
+      | [] -> acc
+      | first :: _ as vs ->
+          let total = List.fold_left (fun sum (v : Inbox.item_view) -> Int64.add sum (Cashflow_core.Amount.to_int64 v.transfer.transfer.amount)) 0L vs in
+          match Service.find_account service access first.item.bank_account_id with
+          | Error _ -> acc
+          | Ok bank ->
+          let currency = bank.account.currency in
+          let big = Int64.compare total (Int64.mul 1000L (Int64.of_float (10. ** float_of_int (Currency.scale currency)))) >= 0 in
+          if big || List.length vs >= 3 then
+            { name = first.transfer.transfer.memo.description; rows = List.length vs; total; group_currency = currency; first = first.item.transfer_id;
+              guess = first.suggested; outflow = Inbox.outflow first.item first.transfer.transfer }
+            :: acc
+          else acc)
+    groups []
+  |> List.sort (fun a b -> Int64.compare b.total a.total)
+  |> List.filteri (fun i _ -> i < 3)
+
 (* The feed *)
 
 let feed ?(narrative = true) (service : Service.t) access =
@@ -252,7 +300,17 @@ let feed ?(narrative = true) (service : Service.t) access =
   List.iter (fun (h : Household.t) -> add ~resolvable:false Invitation ("invitation:" ^ Household_id.to_string h.id) h) (Service.invitations service access);
   List.iter (fun (m : mismatch) -> add Reconciliation_mismatch ("mismatch:" ^ m.checkpoint.checkpoint_id) m) (mismatches service access);
   List.iter (fun (d : import_due) -> add Import_due ("import:" ^ Account_id.to_string d.account.account.id ^ ":" ^ Date.to_string today) d) (import_due service access ~today);
-  (match Inbox.count service access with 0 -> () | n -> add ~resolvable:false Inbox "inbox" n);
+  (match Inbox.count service access with
+   | 0 -> ()
+   | count ->
+       (* Rows waiting are swept in the background (at most every half hour); what is worth asking stays. *)
+       Autofile.schedule_sweep service access;
+       let groups = question_groups service access in
+       if groups <> [] then add ~resolvable:false Inbox "inbox" { count; groups });
+  (match Import_store.latest_run db user.id with
+   | Some (ran_at, filed, guessed) when Date.days_between ~first:(Date.of_instant ~utc_offset_s:0 ran_at) ~last:today <= 3 ->
+       add Autofiled ("autofile:" ^ Ptime.to_rfc3339 ran_at) { ran_at; filed; guessed }
+   | _ -> ());
   List.iter (fun (v : Service.transfer_view) -> add Unmatched_entry ("unmatched:" ^ Transfer_id.to_string v.transfer.id) v) (unmatched service access);
   (match Insights.context service access ~scope:Me ~shared () with
   | Error _ -> ()
@@ -438,7 +496,19 @@ let payload_json : type a. a kind -> a -> Yojson.Safe.t =
         [ ("account", Json.account m.account); ("date", Json.date m.checkpoint.on_date); ("statement_balance", Json.money c m.checkpoint.statement_balance);
           ("ledger_balance", Json.money c m.checkpoint.ledger_balance); ("difference", Json.money c (Int64.sub m.checkpoint.statement_balance m.checkpoint.ledger_balance)) ]
   | Import_due, d -> `Assoc [ ("account", Json.account d.account); ("last_import_at", Json.option Json.time d.last_import); ("days", Json.option (fun d -> `Int d) d.days) ]
-  | Inbox, n -> `Assoc [ ("count", `Int n) ]
+  | Inbox, i ->
+      `Assoc
+        [ ("count", `Int i.count);
+          ( "groups",
+            `List
+              (List.map
+                 (fun g ->
+                   `Assoc
+                     [ ("name", `String g.name); ("rows", `Int g.rows); ("total", Json.money g.group_currency g.total);
+                       ("currency", `String (Currency.code g.group_currency)); ("id", `String (Transfer_id.to_string g.first));
+                       ("guess", Json.option Json.account_ref g.guess); ("outflow", `Bool g.outflow) ])
+                 i.groups) ) ]
+  | Autofiled, a -> `Assoc [ ("filed", `Int a.filed); ("guessed", `Int a.guessed); ("at", Json.time a.ran_at) ]
   | Month_review, r ->
       `Assoc
         [ ("cycle", Json.cycle r.reviewed);

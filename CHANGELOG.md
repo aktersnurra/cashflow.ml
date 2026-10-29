@@ -14,6 +14,12 @@
   chevron at the foot of the page on a computer; dragging files over the page opens it. Both it and the advisor's
   composer are one line, like a chat app: "+" to add statements on the left, then the text, then the return key to
   send or a small square to stop on the right.
+- **No inbox to work through.** Filing without asking is on for every bank account (at 80% sure; change or turn it
+  off under Settings). After each import, and whenever rows are waiting, cashflow sweeps the rest in the
+  background: what it is sure of is filed; a small row (under 300) it isn't sure of is filed with its best guess
+  and marked as a guess, because its category changes nothing you'd act on. What is left and matters (big, or a
+  merchant that recurs) becomes at most three questions on the Overview, one per merchant: one tap files every row
+  from it and teaches the next import. A line says what the last sweep did.
 - **Four places instead of thirteen pages:** Overview, Advisor, Money and Settings. The Overview takes what is
   ahead (the forecast chart and its key numbers, with payments, what-ifs and assumptions folded under it; goals and
   budgets). Money is Transactions and Accounts, with the inbox, an account and adding by hand inside them. The

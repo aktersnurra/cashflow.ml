@@ -386,6 +386,8 @@ let test_autofile () =
   let service = Service.make ~now:(fun () -> now) ~classifier (Store_sqlite.open_memory ()) in
   let alice = sign_in service "alice" in
   let checking = open_checking service alice ~statement_backed:true "Checking" in
+  (* Filing without asking turned off, so it is the advisor that is asked to. *)
+  ignore (ok (Inbox.set_auto_apply service alice ~account_id:checking ~min_confidence:None));
   let csv = "Datum;Text;Belopp;Saldo\n2026-10-20;WILLYS HEMMA;-412,00;1 000,00\n2026-10-21;MYSTERY AB;-99,00;901,00\n" in
   ignore (ok_import (Import.confirm (Import.context service alice) { target = Import.Existing checking; file_name = None; content = csv; decisions = [] }));
   Alcotest.(check int) "both wait" 2 (Inbox.count service alice);
@@ -400,6 +402,36 @@ let test_autofile () =
   Alcotest.(check (list int)) "at 80" [ 80 ] (List.map snd (Inbox.auto_apply_settings service alice));
   let willys = (Option.get (Import_store.find_item service.db (List.hd report.filed).transfer.id)).merchant_key in
   Alcotest.(check bool) "learned nothing from it" true (Option.is_none (Import_store.history service.db (Access.personal alice) willys))
+
+(* Without being asked: filing is on by default, so the sure row is filed at import; the sweep then files a small
+   row it isn't sure of with its best guess (marked as such) and leaves a big one to ask about, and records what
+   it did for the Overview's receipt. *)
+let test_sweep () =
+  let classifier : Decisions.t =
+    { model = "typesafe/jev-1.14";
+      choose =
+        (fun ~state:_ questions ->
+          Ok
+            (List.map
+               (fun (q : Decisions.question) ->
+                 (q.id, { Decisions.choice = "Groceries"; probability = (if Str_compat.contains ~sub:"WILLYS" q.instructions then 0.93 else 0.41) }))
+               questions)) }
+  in
+  let service = Service.make ~now:(fun () -> now) ~classifier (Store_sqlite.open_memory ()) in
+  let alice = sign_in service "alice" in
+  let checking = open_checking service alice ~statement_backed:true "Checking" in
+  let csv = "Datum;Text;Belopp;Saldo\n2026-10-20;WILLYS HEMMA;-412,00;1 000,00\n2026-10-21;MYSTERY AB;-99,00;901,00\n2026-10-22;BIG UNKNOWN;-4 800,00;-3 899,00\n" in
+  ignore (ok_import (Import.confirm (Import.context service alice) { target = Import.Existing checking; file_name = None; content = csv; decisions = [] }));
+  Alcotest.(check int) "the sure one was filed at import" 2 (Inbox.count service alice);
+  Cashflow_io.Autofile.sweep service alice;
+  let waiting = List.map (fun (v : Inbox.item_view) -> v.transfer.transfer.memo.description) (Inbox.list service alice ~limit:10) in
+  Alcotest.(check (list string)) "the big unsure one is left to ask about" [ "BIG UNKNOWN" ] waiting;
+  Alcotest.(check int64) "the small one is in its best guess" (Int64.add 412_00L 99_00L) (balance service alice (account_named service alice "Groceries"));
+  let guessed = Sql.(run service.db (stmt "SELECT count(*) FROM inbox_items WHERE guessed = 1" nil (one (row (int @-> nil) Fun.id)))) in
+  Alcotest.(check int) "and marked as a guess" 1 guessed;
+  match Import_store.latest_run service.db (Cashflow_core.Access.user alice).id with
+  | Some (_, filed, guessed) -> Alcotest.(check (pair int int)) "the receipt" (0, 1) (filed, guessed)
+  | None -> Alcotest.fail "no receipt"
 
 (* What goes over the wire, and how answers are read. *)
 let test_decisions_wire () =
@@ -513,7 +545,8 @@ let () =
           Alcotest.test_case "layout cells outside the file" `Quick test_layout_cells_outside_the_file;
           Alcotest.test_case "decisions classifier" `Quick test_decisions_classifier;
           Alcotest.test_case "decisions wire" `Quick test_decisions_wire;
-          Alcotest.test_case "file the inbox when asked" `Quick test_autofile ] );
+          Alcotest.test_case "file the inbox when asked" `Quick test_autofile;
+          Alcotest.test_case "file the inbox without being asked" `Quick test_sweep ] );
       ( "openrouter",
         [ Alcotest.test_case "privacy policy in requests" `Quick test_openrouter_privacy_policy;
           Alcotest.test_case "advisor models" `Quick test_advisor_models;
