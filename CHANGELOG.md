@@ -14,6 +14,14 @@
   your usual swing, how much history backs it, and whether you could do anything about it. Only complete months
   are read. **Got it** puts an answer away (a materially different one comes back); **Not useful** stops that kind
   of question. The advisor can read the same briefing (`get_briefing`).
+- **The model asks too.** It reads a digest of your books (cycles, categories, the merchants that cost the most) and
+  proposes up to four more questions, each tied to a check the app runs: what a merchant cost, how a category changed,
+  a merchant that is new. Only those whose figures hold up, and that the briefing doesn't already answer, are shown,
+  ranked with the rest; the question is the model's words, every figure the app's. It is asked once per set of
+  figures, after the page has loaded.
+- **Ask advisor** on any card opens the advisor on that question, under the card, with the question and its figures
+  as the server states them.
+- Spending that started from nothing no longer reads as "crept up".
 - It replaces the weekly brief and its written summary, and the month review, large-purchase and price-change cards:
   Needs attention now holds only things to do. Design: `design/superpowers/specs/2026-10-29-accountant-briefing-design.md`.
 

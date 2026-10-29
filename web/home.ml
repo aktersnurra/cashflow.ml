@@ -204,7 +204,7 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
     Remote.load ~active:visible ~name:"spending_by_category" ~args:(let%arr scope and offset in `Assoc [ ("scope", `String scope); ("cycle_offset", `Int offset) ]) ~ctx graph
   in
   (* The accountant's briefing: the questions worth answering before they're asked. *)
-  let briefing = Briefing_view.component ~ctx ~scope ~visible graph in
+  let briefing = Briefing_view.component ~ctx ~scope ~visible ~on_ask ~selected_finding ~outlet graph in
   let feed = Remote.load ~active:visible ~name:"get_attention_feed" ~args:(Bonsai.return (`Assoc [("narrative", `Bool false)])) ~ctx graph in
   let cards =
     let%arr feed in

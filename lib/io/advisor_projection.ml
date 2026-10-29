@@ -1440,6 +1440,13 @@ let resolve_finding (service : Service.t) ~principal ~scope ~key =
           let scope_is s =
             match (scope, s) with A.Personal, Analytics.Me | Household _, Analytics.Household -> true | _ -> false
           in
+          (* A briefing question: the server states it and its figures. *)
+          if String.starts_with ~prefix:"question:" key then
+            let analytics_scope = match scope with A.Personal -> Analytics.Me | Household _ -> Analytics.Household in
+            match Briefing.find service access ~scope:analytics_scope ~key with
+            | None -> error A.Not_found
+            | Some (title, summary) -> Ok { A.kind = "briefing"; key; scope; title; summary; sampled_at = service.now () }
+          else
           let cards = Attention.feed ~narrative:false service access in
           match List.find_opt (fun (Attention.Card c) -> c.key = key) cards with
           | None -> error A.Not_found

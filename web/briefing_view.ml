@@ -2,14 +2,35 @@
    questions about the person's money worth answering before they ask, best first. Each card is the question
    as its title, the answer as one number and one short line, and what to say back: got it (this answer is
    known; a materially different one comes back) or not useful (stop asking this kind). The server ranks
-   them and computes every figure; this only words them. *)
+   them and computes every figure; this only words them, except a question the model proposed, whose title is
+   the model's (it carries no figures) and whose figures are the engine's check of it.
+
+   The figures arrive at once. When the model hasn't been asked about these books yet, a second load a moment
+   later asks it (it takes seconds), armed for one scope and version of the data. Ask opens the advisor on the
+   question, under its card, with the question and its figures as the server states them. *)
 open! Core
 open! Bonsai_web.Cont
 open Bonsai.Let_syntax
 
-let component ~(ctx : Ctx.t) ~(scope : string Bonsai.t) ~(visible : bool Bonsai.t) graph =
-  let briefing = Remote.load ~active:visible ~name:"get_briefing" ~args:(let%arr scope in `Assoc [ ("scope", `String scope) ]) ~ctx graph in
-  let%arr briefing and locale = ctx.locale and changed = ctx.changed and notify = ctx.notify in
+let component ~(ctx : Ctx.t) ~(scope : string Bonsai.t) ~(visible : bool Bonsai.t)
+    ~(on_ask : (finding_key:string -> scope:Cashflow_advisor_protocol.Wire.scope -> unit Effect.t) Bonsai.t) ~(selected_finding : string option Bonsai.t)
+    ~(outlet : Vdom.Node.t Bonsai.t) graph =
+  let armed, set_armed = Bonsai.state None graph in
+  let briefing =
+    Remote.load ~active:visible ~name:"get_briefing"
+      ~args:(let%arr scope and armed and version = ctx.version in
+             `Assoc [ ("scope", `String scope); ("propose", `Bool (Option.equal [%equal: string * int] armed (Some (scope, version)))) ])
+      ~ctx graph
+  in
+  Bonsai.Edge.on_change ~equal:phys_equal briefing
+    ~callback:(let%arr set_armed and scope and version = ctx.version and visible in fun (result : Remote.t) ->
+      match result with
+      | Loaded json when J.bool (J.field "can_propose" json) && visible ->
+          let%bind.Effect () = Effect.of_deferred_thunk (fun () -> Async_kernel.after (Time_ns.Span.of_sec 2.)) in
+          set_armed (Some (scope, version))
+      | _ -> Effect.Ignore)
+    graph;
+  let%arr briefing and locale = ctx.locale and changed = ctx.changed and notify = ctx.notify and on_ask and selected_finding and outlet and scope and session = ctx.session in
   match briefing with
   | Remote.Loaded json when not (List.is_empty (J.list (J.field "questions" json))) ->
       let code = J.str ~default:"SEK" (J.field "currency" json) in
@@ -28,6 +49,15 @@ let component ~(ctx : Ctx.t) ~(scope : string Bonsai.t) ~(visible : bool Bonsai.
         let signed x = Fmt.signed_whole locale ~code (`String (Printf.sprintf "%.2f" x)) in
         let title, value, sub, rows =
           match J.str (J.field "family" q) with
+          | "proposed" -> (
+              let g name = J.path [ "figures"; name ] a in
+              let title = J.str (f "title") in
+              match J.str (g "check") with
+              | "merchant_spend" -> (title, kr (g "total"), Msg.q_leak_sub ~count:(Int.to_string (J.int (g "count"))) ~months:(Int.to_string (J.int (g "months"))) locale, [])
+              | "category_change" -> (title, kr (g "recent"), Msg.q_change_sub ~earlier:(kr (g "earlier")) locale, [])
+              | "new_merchant" ->
+                  (title, kr (g "total"), Msg.q_new_sub ~count:(Int.to_string (J.int (g "count"))) ~date:(Fmt.date_json (g "first")) locale, [])
+              | _ -> ("", "", "", []))
           | "last_month" ->
               (* What made the difference, each said as what it is. *)
               let driver d =
@@ -39,7 +69,7 @@ let component ~(ctx : Ctx.t) ~(scope : string Bonsai.t) ~(visible : bool Bonsai.
                     row ~tag:(Msg.review_tag_habit_running ~cycles:(Int.to_string (J.int (J.field "cycles_up" d))) locale) (category (J.field "category" d)) (signed amount)
                 | "habit" -> row ~tag:(Msg.review_tag_habit locale) (category (J.field "category" d)) (signed amount)
                 | "less" -> row ~tag:(Msg.review_tag_less locale) (category (J.field "category" d)) (signed (-.amount))
-                | _ -> row ~tag:(Msg.review_tag_income locale) "" (signed amount)
+                | _ -> row (Msg.review_tag_income locale) (signed amount)
               in
               let month = Fmt.month_label locale (J.str (J.path [ "cycle"; "cycle" ] a)) in
               let more = Float.(Fmt.to_float (f "spending") >= Fmt.to_float (f "usual_spending")) in
@@ -71,10 +101,19 @@ let component ~(ctx : Ctx.t) ~(scope : string Bonsai.t) ~(visible : bool Bonsai.
           | _ -> ("", "", "", [])
         in
         let key = J.str (J.field "key" q) in
-        Ui.card ~tone:"question" ~title
-          ~body:([ Ui.div ~cls:"question-answer" [ Ui.text value ]; Ui.muted sub ] @ rows)
-          ~actions:[ Ui.button (Msg.q_got_it locale) (say key "got_it"); Ui.button (Msg.q_not_useful locale) (say key "not_useful") ]
-          ()
+        let finding_scope =
+          if String.equal scope "household" then Cashflow_advisor_protocol.Wire.Household (J.str (J.path [ "household"; "id" ] session)) else Personal
+        in
+        let selected = Option.equal String.equal selected_finding (Some key) in
+        Vdom.Node.div
+          ~attrs:[ Vdom.Attr.create "data-finding-key" key ]
+          ([ Ui.card ~tone:"question" ~title
+               ~body:([ Ui.div ~cls:"question-answer" [ Ui.text value ]; Ui.muted sub ] @ rows)
+               ~actions:
+                 [ Ui.button (Msg.advisor_ask locale) (on_ask ~finding_key:key ~scope:finding_scope); Ui.button (Msg.q_got_it locale) (say key "got_it");
+                   Ui.button (Msg.q_not_useful locale) (say key "not_useful") ]
+               () ]
+          @ if selected then [ outlet ] else [])
       in
       Ui.div ~cls:"briefing"
         [ Ui.div ~cls:"section-head" [ Vdom.Node.h2 [ Ui.text (Msg.briefing_title locale) ] ];

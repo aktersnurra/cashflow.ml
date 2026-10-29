@@ -14,9 +14,10 @@
 let ( +: ) = Int64.add
 let ( -: ) = Int64.sub
 
-type family = Last_month | Where_it_goes | Regular_bills | Drift | Leak | Fees | Normal_month | Real_savings | Season_ahead | Payday_week
+type family = Proposed | Last_month | Where_it_goes | Regular_bills | Drift | Leak | Fees | Normal_month | Real_savings | Season_ahead | Payday_week
 
 let family_name = function
+  | Proposed -> "proposed"
   | Last_month -> "last_month"
   | Where_it_goes -> "where_it_goes"
   | Regular_bills -> "regular_bills"
@@ -30,6 +31,7 @@ let family_name = function
 
 (* The first part of every key of the family. *)
 let key_prefix = function
+  | Proposed -> "ask"
   | Last_month -> "month"
   | Where_it_goes -> "where"
   | Regular_bills -> "bills"
@@ -41,14 +43,22 @@ let key_prefix = function
   | Season_ahead -> "season"
   | Payday_week -> "payday"
 
-let families = [ Last_month; Where_it_goes; Regular_bills; Drift; Leak; Fees; Normal_month; Real_savings; Season_ahead; Payday_week ]
+let families = [ Proposed; Last_month; Where_it_goes; Regular_bills; Drift; Leak; Fees; Normal_month; Real_savings; Season_ahead; Payday_week ]
 let family_of_name name = List.find_opt (fun f -> family_name f = name) families
 let family_of_key key = match String.split_on_char ':' key with prefix :: _ -> List.find_opt (fun f -> key_prefix f = prefix) families | [] -> None
 
 type bill = { bill_name : string; yearly : int64 }
 
+(* What a proposed question was checked against, with the engine's figures. *)
+type figures =
+  | Merchant_figures of { name : string; count : int; total : int64; months : int }  (** over the last [months] months *)
+  | Category_figures of { category : Account_info.t; recent : int64; earlier : int64 }
+      (** per cycle: the last three complete cycles, the three before *)
+  | New_merchant_figures of { name : string; first : Date.t; count : int; total : int64 }
+
 (* Amounts are per cycle unless the name says otherwise; all positive except where signed. *)
 type answer =
+  | Proposed of { title : string; figures : figures }  (** a question the model asked and the engine checked *)
   | Last_month of Explain.t  (** why the last complete cycle differed from the ones before it *)
   | Where_it_goes of { fixed : int64; flexible : int64; one_off : int64; top : (Account_info.t * int64) list; cycles : int }
       (** per cycle: regular bills, everything else, single large purchases; the biggest flexible categories *)
@@ -285,7 +295,9 @@ let ask (input : input) =
                if Int64.compare (Int64.mul x 100L) (Int64.mul level 115L) > 0 && Int64.compare (x -: level) input.floor > 0 then run (k + 1) else k
            in
            let k = run 0 in
-           if k >= 3 then
+           (* Spending that started from nothing is new, not creeping up: the regular bills say so. *)
+           let had_before = Int64.compare (avg (List.filteri (fun i _ -> i < List.length totals - k) totals)) 0L > 0 in
+           if k >= 3 && had_before then
              let before = List.filteri (fun i _ -> i < List.length totals - k) totals in
              let latest = List.filteri (fun i _ -> i >= List.length totals - k) totals in
              let usual = avg before and now = avg latest in
@@ -401,3 +413,133 @@ let ask (input : input) =
                key = Printf.sprintf "payday:%d" (int_of_float (ratio *. 2.)); stake; material = material stake;
                surprising = clamp ((ratio -. 1.) /. 1.5); reliable = clamp (float_of_int n /. 6.); actionable = 0.8 });
       List.rev !questions
+
+(* The model's part (design, section 4): it reads a digest of the books, proposes questions beyond the
+   families, each tied to a check the engine can run, and the engine runs it. A proposal whose figures
+   don't hold up is dropped; every number shown is the engine's. *)
+
+type check =
+  | Merchant_spend of { merchant : string; months : int }  (** what one merchant cost over 3, 6 or 12 months *)
+  | Category_change of { category : Account_id.t }  (** a category, last three cycles against the three before *)
+  | New_merchant of { merchant : string }  (** a merchant first bought from in the last three months *)
+
+type proposal = { title : string; check : check }
+
+type merchant_line = {
+  merchant : string;  (** the key a check names *)
+  name : string;
+  category : Account_info.t option;
+  count : int;
+  total : int64;
+  first : Date.t;
+  last : Date.t;
+  regular : bool;  (** a bill *)
+}
+
+type category_line = { category : Account_info.t; per_cycle : int64 list  (** oldest first *) }
+
+type digest = { cycles : (Cycle.t * Analytics.flows) list  (** oldest first *); categories : category_line list; merchants : merchant_line list }
+
+(* The last six complete cycles with income: what they took in and spent, each category's spending
+   per cycle (the twelve biggest), and the thirty merchants that cost the most. Purchases count where
+   they were filed. *)
+let digest (input : input) =
+  let cycles = List.rev (List.filteri (fun i _ -> i < 6) (List.filter (has_income input) (complete_cycles input 12))) in
+  match cycles with
+  | [] -> { cycles = []; categories = []; merchants = [] }
+  | oldest :: _ ->
+      let newest = List.nth cycles (List.length cycles - 1) in
+      let all = List.filter (within ~first:oldest.first ~last:newest.last) (purchases input) in
+      let regular = regular_merchants input in
+      let flows (c : Cycle.t) = Analytics.flows_between input.book ~first:c.first ~last:c.last input.transfers in
+      let categories =
+        List.sort_uniq (fun (a : Account_info.t) (b : Account_info.t) -> Account_id.compare a.account.id b.account.id) (List.filter_map (fun (p : purchase) -> p.category) all)
+        |> List.map (fun (cat : Account_info.t) ->
+               let in_cat (c : Cycle.t) (p : purchase) = within ~first:c.first ~last:c.last p && (match p.category with Some k -> Account_id.equal k.account.id cat.account.id | None -> false) in
+               { category = cat; per_cycle = List.map (fun c -> List.fold_left (fun s p -> if in_cat c p then s +: p.amount else s) 0L all) cycles })
+        |> List.sort (fun (a : category_line) (b : category_line) -> Int64.compare (List.fold_left ( +: ) 0L b.per_cycle) (List.fold_left ( +: ) 0L a.per_cycle))
+        |> List.filteri (fun i _ -> i < 12)
+      in
+      let groups = Hashtbl.create 64 in
+      List.iter (fun (p : purchase) -> if p.merchant <> "" then Hashtbl.replace groups p.merchant (p :: Option.value (Hashtbl.find_opt groups p.merchant) ~default:[])) all;
+      let merchants =
+        Hashtbl.fold
+          (fun merchant ps acc ->
+            let sorted = List.sort (fun (a : purchase) (b : purchase) -> Date.compare a.t.value_date b.t.value_date) ps in
+            let latest = List.nth sorted (List.length sorted - 1) in
+            { merchant; name = latest.t.memo.description; category = latest.category; count = List.length ps;
+              total = List.fold_left (fun s (p : purchase) -> s +: p.amount) 0L ps; first = (List.hd sorted).t.value_date; last = latest.t.value_date;
+              regular = List.mem merchant regular }
+            :: acc)
+          groups []
+        |> List.sort (fun (a : merchant_line) (b : merchant_line) -> Int64.compare b.total a.total)
+        |> List.filteri (fun i _ -> i < 30)
+      in
+      { cycles = List.map (fun c -> (c, flows c)) cycles; categories; merchants }
+
+(* A proposal's title is the model's words: a short question, no figures in it (the figures are the engine's). *)
+let clean_title title =
+  let t = String.trim title in
+  let t = if String.length t > 90 then String.sub t 0 90 else t in
+  if t = "" || String.exists (fun c -> c >= '0' && c <= '9') t then None else Some t
+
+let verify (input : input) ~(existing : question list) (p : proposal) =
+  let cycles = List.filter (has_income input) (complete_cycles input 12) in
+  match cycles, clean_title p.title with
+  | [], _ | _, None -> None
+  | newest :: _, Some title ->
+      let all = purchases input in
+      let recent = List.filteri (fun i _ -> i < 6) cycles in
+      let flows c = Analytics.flows_between input.book ~first:c.Cycle.first ~last:c.last input.transfers in
+      let income = avg (List.map (fun c -> (flows c).income) recent) and spending = avg (List.map (fun c -> (flows c).spending) recent) in
+      let material stake = clamp (fdiv stake (Int64.div (Int64.mul 12L (Int64.max income spending)) 20L)) in
+      let last = newest.last in
+      let covered key = List.exists (fun (q : question) -> q.key = key) existing in
+      let make ~key ~stake ~surprising ~reliable ~actionable figures =
+        (* The same subject as a question already there is not new. *)
+        if covered key then None
+        else Some { answer = Proposed { title; figures }; family = Proposed; key = "ask:" ^ key; stake; material = material stake; surprising; reliable; actionable }
+      in
+      let of_merchant m = List.filter (fun (q : purchase) -> q.merchant = m) all in
+      let same_subject prefix = List.exists (fun (q : question) -> String.starts_with ~prefix q.key) existing in
+      match p.check with
+      | Merchant_spend { merchant; months } ->
+          let months = if months <= 3 then 3 else if months <= 6 then 6 else 12 in
+          let ps = List.filter (within ~first:(Analytics.add_months last (-months)) ~last) (of_merchant merchant) in
+          let total = List.fold_left (fun s (q : purchase) -> s +: q.amount) 0L ps and count = List.length ps in
+          if count < 2 || same_subject ("leak:" ^ merchant ^ ":") then None
+          else
+            let latest = List.fold_left (fun (a : purchase) (b : purchase) -> if Date.compare b.t.value_date a.t.value_date > 0 then b else a) (List.hd ps) ps in
+            make ~key:(Printf.sprintf "merchant:%s:%d" merchant (bucket total))
+              ~stake:(Int64.div (Int64.mul total 12L) (Int64.of_int months)) ~surprising:0.7 ~reliable:(clamp (float_of_int count /. 4.)) ~actionable:0.8
+              (Merchant_figures { name = latest.t.memo.description; count; total; months })
+      | Category_change { category } -> (
+          match input.book.inside category with
+          | Some cat when cat.account.kind = Expense && List.length cycles >= 6 && not (same_subject ("drift:" ^ Account_id.to_string category ^ ":")) ->
+              let total (c : Cycle.t) =
+                List.fold_left (fun s (q : purchase) -> match q.category with Some k when Account_id.equal k.account.id category && within ~first:c.first ~last:c.last q -> s +: q.amount | _ -> s) 0L all
+              in
+              let recent3 = avg (List.map total (List.filteri (fun i _ -> i < 3) cycles)) in
+              let earlier3 = avg (List.map total (List.filteri (fun i _ -> i >= 3 && i < 6) cycles)) in
+              let diff = Int64.abs (recent3 -: earlier3) in
+              if Int64.compare diff (Int64.mul input.floor 2L) < 0 || Int64.compare (Int64.mul diff 100L) (Int64.mul earlier3 15L) < 0 then None
+              else
+                make ~key:(Printf.sprintf "category:%s:%s" (Account_id.to_string category) (Cycle.label newest)) ~stake:(Int64.mul diff 12L)
+                  ~surprising:(clamp (fdiv diff (Int64.max earlier3 input.floor))) ~reliable:0.8 ~actionable:0.8
+                  (Category_figures { category = cat; recent = recent3; earlier = earlier3 })
+          | _ -> None)
+      | New_merchant { merchant } ->
+          let ps = of_merchant merchant in
+          let sorted = List.sort (fun (a : purchase) (b : purchase) -> Date.compare a.t.value_date b.t.value_date) ps in
+          (match sorted with
+           | [] -> None
+           | first :: _ ->
+               let since = Date.days_between ~first:first.t.value_date ~last:input.today in
+               let total = List.fold_left (fun s (q : purchase) -> s +: q.amount) 0L ps and count = List.length ps in
+               if since > 92 || Int64.compare total input.floor < 0 then None
+               else
+                 let latest = List.nth sorted (count - 1) in
+                 make ~key:(Printf.sprintf "new:%s" merchant)
+                   ~stake:(if count >= 2 then Int64.div (Int64.mul total 365L) (Int64.of_int (max 30 since)) else total)
+                   ~surprising:0.8 ~reliable:(clamp (float_of_int count /. 3.)) ~actionable:0.7
+                   (New_merchant_figures { name = latest.t.memo.description; first = first.t.value_date; count; total }))

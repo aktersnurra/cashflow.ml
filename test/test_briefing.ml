@@ -13,8 +13,8 @@ open Test_service_support
 (* Nine cycles of a life, imported and filed from the inbox the way statements arrive: salary, rent and a
    streaming subscription; groceries that vary; Wolt six times a cycle (small, and it adds up); clothes that
    tripled four cycles ago and stayed there; interest on a card; one big trip to Bauhaus. *)
-let scenario () =
-  let service = make_service () in
+let scenario ?assistant () =
+  let service = match assistant with None -> make_service () | Some llm -> Service.make ~now:(fun () -> now) ~assistant:llm (Cashflow_io.Store_sqlite.open_memory ()) in
   let alice = sign_in service "alice" in
   let checking = open_checking service alice ~statement_backed:true "Checking" in
   let ctx = Result.get_ok (Insights.context service alice ~scope:Analytics.Me ()) in
@@ -50,7 +50,7 @@ let scenario () =
 
 let briefing service alice =
   let ctx = Result.get_ok (Insights.context service alice ~scope:Analytics.Me ()) in
-  Briefing.questions service alice ctx
+  fst (Briefing.questions service alice ctx)
 
 let show qs =
   if Sys.getenv_opt "SHOW_BRIEFING" <> None then
@@ -111,10 +111,74 @@ let test_what_the_person_says () =
   let after = briefing service alice in
   Alcotest.(check bool) "the leak, acknowledged, is gone" true (find Leak after = None);
   Alcotest.(check bool) "drift is muted" true (find Drift after = None);
-  Alcotest.(check bool) "the rest stays" true (find Where_it_goes after <> None)
+  Alcotest.(check bool) "the rest stays" true (find Where_it_goes after <> None);
+  (* Asking the advisor about a card: the server states the question and its figures. *)
+  let where = Option.get (find Where_it_goes after) in
+  (match Briefing.find service alice ~scope:Analytics.Me ~key:(Briefing.question_key where) with
+   | Some (title, summary) ->
+       Alcotest.(check string) "the question" "Where the money goes" title;
+       Alcotest.(check bool) ("with the figures: " ^ summary) true (Cashflow_core.Str_compat.contains ~sub:"Groceries" summary && Cashflow_core.Str_compat.contains ~sub:"SEK" summary)
+   | None -> Alcotest.fail "the advisor can't find the card");
+  Alcotest.(check bool) "nor one put away" true (Briefing.find service alice ~scope:Analytics.Me ~key:(Briefing.question_key leak) = None)
+
+(* The model proposes, the engine checks. A fake model reads the digest it is shown and proposes five questions;
+   only those whose figures hold up and that the briefing doesn't already answer survive, every figure is the
+   engine's, and the model is asked once for the same books. *)
+let test_the_model_proposes () =
+  let calls = ref 0 and shown = ref `Null in
+  (* Only the briefing's question is answered: the import asks it about categories too. *)
+  let complete ?schema:_ ~system ~user () =
+    if not (String.starts_with ~prefix:"You are a careful personal accountant" system) then Error "not this" else begin
+    incr calls;
+    shown := Yojson.Safe.from_string user;
+    let open Yojson.Safe.Util in
+    let category prefix =
+      let all = !shown |> member "categories" |> to_list in
+      match List.find_opt (fun c -> String.starts_with ~prefix (to_string (member "name" c))) all with
+      | Some c -> to_string (member "category_id" c)
+      | None -> failwith ("no category " ^ prefix ^ " in " ^ String.concat ", " (List.map (fun c -> to_string (member "name" c)) all))
+    in
+    let q title check merchant category_id months =
+      `Assoc [ ("title", `String title); ("check", `String check); ("merchant", `String merchant); ("category_id", `String category_id); ("months", `Int months) ]
+    in
+    Ok
+      (Yojson.Safe.to_string
+         (`Assoc
+           [ ( "questions",
+               `List
+                 [ q "What do groceries at ICA cost you?" "merchant_spend" "ica" "" 6;
+                   q "Is 6 months of Wolt too much?" "merchant_spend" "wolt" "" 6;
+                   q "Has Wolt become a habit?" "merchant_spend" "wolt" "" 6;
+                   q "Have restaurants gone up?" "category_change" "" (category "Restaurants") 0;
+                   q "What is this new shop?" "new_merchant" "nowhere" "" 0 ] ) ]))
+    end
+  in
+  let service, alice = scenario ~assistant:{ Cashflow_io.Llm.model = "fake"; complete } () in
+  let ctx = Result.get_ok (Insights.context service alice ~scope:Analytics.Me ()) in
+  let first, can_propose = Briefing.questions service alice ctx in
+  Alcotest.(check (pair bool int)) "not asked while the page loads" (true, 0) (can_propose, !calls);
+  Alcotest.(check bool) "nothing proposed yet" true (find Proposed first = None);
+  let _, again = Briefing.questions ~write:true service alice ctx in
+  Alcotest.(check (pair bool int)) "asked once" (false, 1) (again, !calls);
+  Alcotest.(check bool) "it was shown the books, not people" true
+    (let open Yojson.Safe.Util in
+     List.exists (fun m -> member "merchant" m = `String "wolt") (!shown |> member "merchants" |> to_list)
+     && List.mem (`String "leak:wolt:59") (!shown |> member "already_answered" |> to_list));
+  let proposed = List.filter_map (Q.verify (Briefing.input ctx) ~existing:(Q.ask (Briefing.input ctx))) (Briefing.proposals_of_json (Yojson.Safe.from_string (Result.get_ok (complete ~system:(Briefing.system ~language:"English") ~user:(Yojson.Safe.to_string !shown) ())))) in
+  (match proposed with
+   | [ { answer = Proposed { title; figures = Merchant_figures { name; count; total; months } }; _ } ] ->
+       Alcotest.(check string) "its words" "What do groceries at ICA cost you?" title;
+       Alcotest.(check (pair string int)) "the engine's figures" ("ICA", 6) (name, months);
+       Alcotest.(check bool) (Printf.sprintf "weekly shopping (%d, %Ld)" count total) true (count >= 24 && Int64.compare total 0L > 0)
+   | qs -> Alcotest.fail (Printf.sprintf "expected only the ICA question to hold up, got %d" (List.length qs)));
+  let cached, _ = Briefing.questions service alice ctx in
+  Alcotest.(check int) "the books unchanged, not asked again" 2 !calls;
+  Alcotest.(check bool) "and the checked question is in the briefing" true
+    (List.exists (fun (q : Q.question) -> match q.answer with Proposed { title = "What do groceries at ICA cost you?"; _ } -> true | _ -> false) cached)
 
 let () =
   Alcotest.run "briefing"
     [ ( "briefing",
         [ Alcotest.test_case "the questions worth answering" `Quick test_the_questions_worth_answering;
-          Alcotest.test_case "what the person says" `Quick test_what_the_person_says ] ) ]
+          Alcotest.test_case "what the person says" `Quick test_what_the_person_says;
+          Alcotest.test_case "the model proposes" `Quick test_the_model_proposes ] ) ]

@@ -723,3 +723,5 @@ q.payday.sub = om dagen · {$rest} om dagen resten av månaden
 q.month.more = Varför kostade {$month} mer
 q.month.less = Varför kostade {$month} mindre
 q.month.sub = i utgifter · en vanlig månad {$usual}
+q.change.sub = i månaden på sistone, var {$earlier}
+q.new.sub = {$count} köp sedan {$date :date}

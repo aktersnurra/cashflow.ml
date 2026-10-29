@@ -1,7 +1,7 @@
 # The accountant's briefing
 
-Status: direction agreed with the user on 2026-10-29 ("This is the correct course of the app"). Slices 1 and 2 are
-being built; slices 3 and 4 follow.
+Status: direction agreed with the user on 2026-10-29 ("This is the correct course of the app"). Slices 1–3 are
+built (slice 3 without relevance judging); slice 4 follows.
 
 ## 1. First principles
 
@@ -85,6 +85,25 @@ month review card and the weekly brief's written summary.
 2. Briefing query and the Overview section, with *Got it* / *Not useful* feeding novelty.
 3. LLM: hypothesis → verify with tools, relevance, wording; chat follow-ups from a card.
 4. Learning: what is opened, acted on or muted adjusts the factors per family.
+
+## 6a. Slice 3 as built
+
+- `Questions.digest`: the last six complete cycles (income, spending), each of the twelve biggest categories per
+  cycle, and the thirty merchants that cost the most (purchases, total, first and last date, whether a bill). With
+  the keys of the questions already answered, this is all the model sees: merchants, categories and amounts.
+- The model (strict JSON schema) proposes at most four questions, each with one check: `merchant_spend` (3, 6 or 12
+  months), `category_change` (the last three cycles against the three before) or `new_merchant`. Its title must
+  carry no digits.
+- `Questions.verify` runs the check. A proposal is dropped when its figures don't hold up (fewer than two
+  purchases; a change under 15% or twice the floor; a merchant not new) or when a family already covers the subject
+  (the leak for that merchant, the drift for that category). What survives is scored like any other question.
+- The reply is cached by a digest of what the model was shown; a failure is remembered for the same digest. The
+  Overview loads the figures first and asks for proposals in a second request (`propose`), so the model never
+  delays the page.
+- Ask on a card opens the advisor with the question as its source: `resolve_finding` takes `question:` keys and the
+  server states the question and its figures (`Briefing.describe`); the browser's copy is not trusted.
+
+Not yet: the model judging the relevance of the families' answers (the score decides), and learning (slice 4).
 
 ## 7. Non-goals
 

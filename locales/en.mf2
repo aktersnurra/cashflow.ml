@@ -724,3 +724,5 @@ q.payday.sub = a day · {$rest} a day the rest of the month
 q.month.more = Why {$month} cost more
 q.month.less = Why {$month} cost less
 q.month.sub = spent · a usual month {$usual}
+q.change.sub = a month lately, was {$earlier}
+q.new.sub = {$count} purchases since {$date :date}
