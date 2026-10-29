@@ -271,12 +271,42 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
     let main =
       match outlook with
       | Some o ->
-          let still_due =
-            List.take (J.list (J.field "still_due" o)) 3
-            |> List.map ~f:(fun i -> J.str (J.field "name" i) ^ " " ^ Fmt.signed_whole locale ~code (J.field "amount" i))
+          (* Headline: what can still be spent until payday with the bills and goals covered. Under it,
+             what that is after, where the cycle is heading, and the cycle so far beside earlier ones. *)
+          let amount path = Fmt.to_float (J.path path o) in
+          let items = J.list (J.field "still_due" o) in
+          let sum f = List.sum (module Float) items ~f:(fun i -> let a = Fmt.to_float (J.field "amount" i) in if f a then a else 0.) in
+          let kr x = whole (`String (Printf.sprintf "%.2f" (Float.abs x))) in
+          let bills = sum Float.is_negative and income = sum Float.is_positive in
+          let parts =
+            List.filter_opt
+              [ (if Float.(bills < 0.) then Some (Msg.overview_safe_bills ~amount:(kr bills) locale) else None);
+                (if Float.(income > 0.) then Some (Msg.overview_safe_income ~amount:(kr income) locale) else None);
+                (if Float.(amount [ "goals_set_aside" ] > 0.) then Some (Msg.overview_safe_goals ~amount:(kr (amount [ "goals_set_aside" ])) locale) else None);
+                (match J.field "covered_through" o with
+                 | `String _ as d when Float.(amount [ "unseen_spending" ] > 0.) ->
+                     Some (Msg.overview_safe_unseen ~date:(Fmt.date_json d) ~amount:(kr (amount [ "unseen_spending" ])) locale)
+                 | _ -> None) ]
           in
-          [ Ui.div ~cls:"figure-label" [ Ui.text (Msg.overview_expected ~date:(Fmt.date_json (J.path [ "cycle"; "last" ] o)) locale) ];
-            Ui.div ~cls:("hero " ^ Fmt.sign_tone (J.field "expected" o)) [ Ui.text (Fmt.signed_whole locale ~code (J.field "expected" o)) ];
+          let safe = J.field "safe_to_spend" o in
+          let payday = Fmt.date_json (J.path [ "cycle"; "last" ] o) in
+          let still_due =
+            List.take items 3 |> List.map ~f:(fun i -> J.str (J.field "name" i) ^ " " ^ Fmt.signed_whole locale ~code (J.field "amount" i))
+          in
+          [ Ui.div ~cls:"figure-label" [ Ui.text (Msg.overview_safe_title ~date:payday locale) ];
+            Ui.div ~cls:("hero " ^ Fmt.sign_tone safe) [ Ui.text (whole safe) ];
+            (if Float.(Fmt.to_float safe < 0.) then note (Msg.overview_safe_over ~amount:(kr (Fmt.to_float safe)) locale)
+             else
+               (* Set beside what a usual day costs, so a big number reads as room, not as a budget to use up. *)
+               let left = (match J.field "days_total" o with `Int n -> n | _ -> 0) - (match J.field "days_covered" o with `Int n -> n | _ -> 0) in
+               let usual = if left > 0 then amount [ "usual_rest" ] /. Float.of_int left else 0. in
+               if Float.(usual >= 1.) then
+                 note (Msg.overview_safe_per_day_usual ~amount:(whole (J.field "safe_per_day" o)) ~usual:(kr usual) locale)
+               else note (Msg.overview_safe_per_day ~amount:(whole (J.field "safe_per_day" o)) locale));
+            (if Float.(amount [ "goals_set_aside" ] = 0.) && Float.(Fmt.to_float safe > 0.) then note (Msg.overview_safe_no_goal locale) else Vdom.Node.none);
+            (if List.is_empty parts then Vdom.Node.none else note (Msg.overview_safe_after ~parts:(String.concat ~sep:", " parts) locale));
+            Ui.div ~cls:"figure-divider" [];
+            note (Msg.overview_heading ~amount:(Fmt.signed_whole locale ~code (J.field "expected" o)) ~date:payday locale);
             (match J.field "expected_range" o with
              | `Null -> Vdom.Node.none
              | r -> note (Msg.overview_likely ~low:(Fmt.signed_whole locale ~code (J.field "low" r)) ~high:(Fmt.signed_whole locale ~code (J.field "high" r)) locale));

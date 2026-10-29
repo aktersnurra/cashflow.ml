@@ -84,4 +84,4 @@ let period_outlook ~access ~scope ?currency () =
   Ok
     { context;
       outlook =
-        Cashflow_core.Outlook.make book ~setting:(Reporting_context.setting context) ~today ~covered_through ~forecast facts.transfers }
+        Cashflow_core.Outlook.make ~goals:facts.goals book ~setting:(Reporting_context.setting context) ~today ~covered_through ~forecast facts.transfers }

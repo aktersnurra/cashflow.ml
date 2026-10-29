@@ -1239,6 +1239,10 @@ let model_json ~aliases (e : T.evidence) =
                       (take 20 o.still_due) );
                   ("usual_rest", num o.usual_rest);
                   ("expected", num o.expected);
+                  ("safe_to_spend", num o.safe_to_spend);
+                  ("days_to_payday", `Int o.days_to_payday);
+                  ("goals_set_aside", num o.goals_set_aside);
+                  ("unseen_spending", num o.unseen_spending);
                   ("expected_range", opt (fun (low, high) -> obj [ ("low", num low); ("high", num high) ]) o.expected_range);
                 ]
           | Filed_inbox_result { filed; unsure; kept_on } ->

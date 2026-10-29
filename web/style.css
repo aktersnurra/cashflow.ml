@@ -117,6 +117,7 @@ kbd { font: 11px/16px var(--mono); padding: 0 4px; border: 1px solid var(--line-
 .trend span { color: var(--text-2); font-weight: 400; }
 .provisional { font-size: 13px; color: var(--text-3); }
 .figure-note { font-size: 13px; line-height: 19px; color: var(--text-2); margin-top: 4px; }
+.figure-divider { height: 1px; background: var(--line); margin: 12px 0 8px; }
 .insights-provisional { margin-bottom: 12px; }
 .flow h2 { margin-bottom: 8px; }
 .sankey { display: block; width: 100%; height: auto; font-family: var(--font); }

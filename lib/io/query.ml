@@ -547,7 +547,10 @@ let period_outlook =
        income, spending and savings by the same day), and where it is heading: still_due lists the income, bills and \
        household contributions expected before the cycle ends, usual_rest is usual day-to-day spending for the days left, \
        and expected is the cycle's savings if the rest goes as usual, with expected_range where 8 in 10 past forecasts \
-       landed. Compare a cycle in progress through this, never its so-far totals against whole cycles.";
+       landed. safe_to_spend is what day-to-day spending can still take until payday (days_to_payday, today included) \
+       with the bills still due and the goals' monthly amounts (goals_set_aside) covered, counting usual spending for \
+       the days since the statements end (unseen_spending); negative when they already aren't covered. Compare a \
+       cycle in progress through this, never its so-far totals against whole cycles.";
     properties = common_props;
     parse = (fun f -> let* c = Args.common f in Ok (Period_outlook c));
     encode =
@@ -570,6 +573,9 @@ let period_outlook =
                      `Assoc [ ("date", Json.date i.date); ("kind", `String (Forecast.kind_to_string i.kind)); ("name", `String i.name); ("amount", m i.amount) ])
                    o.still_due) );
             ("usual_rest", m o.usual_rest); ("expected", m o.expected);
+            ("safe_to_spend", m o.safe_to_spend); ("days_to_payday", `Int o.days_to_payday);
+            ("safe_per_day", m (Int64.div o.safe_to_spend (Int64.of_int (max 1 o.days_to_payday))));
+            ("goals_set_aside", m o.goals_set_aside); ("unseen_spending", m o.unseen_spending);
             ("expected_range", Json.option (fun (low, high) -> `Assoc [ ("low", m low); ("high", m high) ]) o.expected_range) ]) }
 
 let all =

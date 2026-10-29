@@ -472,7 +472,23 @@ let test_period_outlook () =
   let due = field [ "still_due" ] o |> (function `List l -> l | _ -> []) in
   Alcotest.(check bool) "the rent is still due" true (List.exists (fun i -> field [ "amount" ] i = `String "-9000.00") due);
   let expected = money [ "expected" ] in
-  Alcotest.(check bool) (Printf.sprintf "heading for about a usual cycle (17000), not 30000: %.0f" expected) true (Float.abs (expected -. 17000.) <= 1500.)
+  Alcotest.(check bool) (Printf.sprintf "heading for about a usual cycle (17000), not 30000: %.0f" expected) true (Float.abs (expected -. 17000.) <= 1500.);
+  (* Safe to spend: the salary less the rent still due and usual spending for the days since the statement
+     ended (they aren't free just because they aren't imported). *)
+  let safe = money [ "safe_to_spend" ] and unseen = money [ "unseen_spending" ] in
+  Alcotest.(check bool) "the days since the statement count at usual spending" true (unseen > 0.);
+  Alcotest.(check (float 0.01)) "safe = so far + still due - unseen" (30000. -. 9000. -. unseen) safe;
+  Alcotest.(check bool) "per day over the days to payday" true
+    (Float.abs ((money [ "safe_per_day" ]) *. float_of_int (match field [ "days_to_payday" ] o with `Int n -> n | _ -> 0) -. safe) < float_of_int (match field [ "days_to_payday" ] o with `Int n -> n | _ -> 1));
+  (* A goal's monthly amount is set aside first. *)
+  ignore
+    (ok_import
+       (Commands.execute service alice ~scopes:[ "ledger:write" ] Commands.save_goal
+          (`Assoc [ ("name", `String "Holiday"); ("target_amount", `String "30000"); ("monthly_amount", `String "3000") ])));
+  let o = query service alice "period_outlook" [] in
+  let money path = match field path o with `String s -> Option.get (Float.of_string_opt s) | _ -> Alcotest.fail "no figure" in
+  Alcotest.(check (float 0.01)) "the goal is set aside" 3000. (money [ "goals_set_aside" ]);
+  Alcotest.(check (float 0.01)) "and comes off what is safe to spend" (safe -. 3000.) (money [ "safe_to_spend" ])
 
 let () =
   Alcotest.run "analytics"

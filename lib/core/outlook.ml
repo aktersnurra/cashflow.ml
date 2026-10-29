@@ -24,6 +24,12 @@ type t = {
   usual_rest : int64;  (** usual day-to-day spending for the days left, positive *)
   expected : int64;  (** the cycle's savings if the rest goes as usual *)
   expected_range : (int64 * int64) option;  (** 8 in 10 past forecasts would have landed between *)
+  safe_to_spend : int64;
+      (** what day-to-day spending can still take until payday and leave the bills still due and the goals'
+          monthly amounts covered; negative when they already aren't *)
+  goals_set_aside : int64;  (** the goals' monthly amounts *)
+  unseen_spending : int64;  (** usual spending assumed for the days since the statements end, up to today *)
+  days_to_payday : int;  (** today included *)
 }
 
 and usual = {
@@ -58,7 +64,7 @@ let usual_by_now book ~setting (cycle : Cycle.t) ~n transfers =
 
 let counts (item : Forecast.item) = match item.kind with Bill | Income | Contribution -> true | Transfer | One_off -> false
 
-let make book ~setting ~today ~covered_through ~(forecast : Forecast.t) transfers =
+let make ?(goals : Forecast.goal list = []) book ~setting ~today ~covered_through ~(forecast : Forecast.t) transfers =
   let cycle = Cycle.cycle_of setting today in
   let through = Date.min today (Option.value covered_through ~default:today) in
   let days_total = days ~first:cycle.first ~last:cycle.last in
@@ -90,6 +96,17 @@ let make book ~setting ~today ~covered_through ~(forecast : Forecast.t) transfer
         | _ -> None)
     | [] -> None
   in
+  (* Safe to spend: what is left of the cycle for day-to-day spending once the bills still due are paid and
+     the goals have their monthly amounts. Days since the statements end are not free: they are counted at
+     usual spending, so an upload a week old doesn't make the money look unspent. *)
+  let goals_set_aside = List.fold_left (fun sum (g : Forecast.goal) -> sum +: Option.value g.monthly ~default:0L) 0L goals in
+  (* The days after the last covered one, today included. *)
+  let unseen_days = max 0 (Date.days_between ~first:(Date.max after (Date.add_days cycle.first (-1))) ~last:today) in
+  let unseen_days = min unseen_days (days_total - days_covered) in
+  let unseen_spending = Int64.div (Int64.mul per_cycle (Int64.of_int unseen_days)) (Int64.of_int days_total) in
+  let due = List.fold_left (fun sum (i : Forecast.item) -> sum +: i.amount) 0L still_due in
+  let safe_to_spend = so_far_savings +: due -: goals_set_aside -: unseen_spending in
   { cycle; covered_through = (if days_covered = 0 then None else Some after); days_covered; days_total; so_far; so_far_savings;
     usual_by_now = (if days_covered = 0 || days_covered >= days_total then None else usual_by_now book ~setting cycle ~n:days_covered transfers);
-    still_due; usual_rest; expected; expected_range }
+    still_due; usual_rest; expected; expected_range; safe_to_spend; goals_set_aside; unseen_spending;
+    days_to_payday = max 1 (days ~first:today ~last:cycle.last) }
