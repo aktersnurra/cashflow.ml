@@ -224,7 +224,7 @@ let render_body ~turns ~show_source ~locale ~(view : C.view) ~dispatch =
               [
                 Vdom.Attr.class_ "advisor-input";
                 Vdom.Attr.create "aria-label" (Msg.advisor_draft locale);
-                Vdom.Attr.placeholder (Msg.advisor_placeholder locale);
+                Vdom.Attr.placeholder (if has_messages then Msg.advisor_reply locale else Msg.advisor_placeholder locale);
                 Vdom.Attr.create "rows" "1";
                 Vdom.Attr.value_prop view.draft;
                 Vdom.Attr.create_hook "advisor-grow"
@@ -278,21 +278,22 @@ let render_body ~turns ~show_source ~locale ~(view : C.view) ~dispatch =
                          Vdom.Attr.create "height" "20";
                          Vdom.Attr.create "fill" (if active then "currentColor" else "none");
                          Vdom.Attr.create "stroke" "currentColor";
-                         Vdom.Attr.create "stroke-width" "2.25";
+                         Vdom.Attr.create "stroke-width" "2";
                          Vdom.Attr.create "stroke-linecap" "round";
                          Vdom.Attr.create "stroke-linejoin" "round";
                          Vdom.Attr.create "aria-hidden" "true";
                        ]
                      [
+                       (* Stop: a small filled square. Send: the return key. *)
                        (if active then
                           Vdom.Node.create_svg "rect"
                             ~attrs:
-                              [ Vdom.Attr.create "x" "6"; Vdom.Attr.create "y" "6"; Vdom.Attr.create "width" "12";
-                                Vdom.Attr.create "height" "12"; Vdom.Attr.create "rx" "2" ]
+                              [ Vdom.Attr.create "x" "6.5"; Vdom.Attr.create "y" "6.5"; Vdom.Attr.create "width" "11";
+                                Vdom.Attr.create "height" "11"; Vdom.Attr.create "rx" "2.5"; Vdom.Attr.create "stroke" "none" ]
                             []
                         else
                           Vdom.Node.create_svg "path"
-                            ~attrs:[ Vdom.Attr.create "d" "M12 19V5M5.5 11.5L12 5l6.5 6.5" ]
+                            ~attrs:[ Vdom.Attr.create "d" "M20 5v6a4 4 0 0 1-4 4H5M9 11l-4 4 4 4" ]
                             []);
                      ];
                  ]);
