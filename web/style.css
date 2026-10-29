@@ -731,13 +731,27 @@ html { touch-action: manipulation; -webkit-text-size-adjust: 100%; text-size-adj
 .card.question { padding-top: 14px; padding-bottom: 6px; }
 .card.question .actions { margin-top: 6px; }
 /* The desk: one box for questions and statements. */
-.desk { margin: 0 0 16px; }
-.desk-composer { display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 4px; padding: 4px 6px 4px 12px; border: 1px solid var(--line-strong); border-radius: 20px; background: var(--panel); transition: border-color .15s, background .15s; }
+/* Pinned to the foot of the page; only the handle shows until it is opened. */
+/* The Overview's column reaches the foot of the window, so the box rests there even on a short page. */
+.page.has-desk { display: flex; flex-direction: column; min-height: 100dvh; box-sizing: border-box; padding-bottom: 16px; }
+.page.has-desk > div:not([hidden]) { display: flex; flex-direction: column; flex: 1; }
+.desk { position: sticky; bottom: 16px; z-index: 6; display: grid; justify-items: center; gap: 6px; margin-top: auto; padding-top: 16px; pointer-events: none; }
+.desk-input:focus, .desk-input:focus-visible { outline: none; border: 0; box-shadow: none; }
+.desk > * { pointer-events: auto; }
+.desk-handle { display: grid; place-items: center; width: 40px; height: 40px; padding: 0; border: 1px solid var(--line-strong); border-radius: 20px; background: var(--panel); color: var(--text-2); cursor: pointer; touch-action: none; box-shadow: 0 4px 16px color-mix(in srgb, var(--bg) 60%, transparent); }
+.desk-handle:hover { color: var(--text); border-color: var(--text-3); }
+.desk-grabber, .desk-handle-label { display: none; }
+/* Collapsed rather than hidden: it can take the focus in the same tap that opens it (a phone shows its
+   keyboard only then). */
+.desk:not(.open) .desk-composer { opacity: 0; transform: scaleY(0); transform-origin: bottom; max-height: 0; padding-top: 0; padding-bottom: 0; border-width: 0; overflow: hidden; pointer-events: none; }
+.desk-composer { width: 100%; box-sizing: border-box; transition: opacity .18s, transform .18s; }
+.desk.open .desk-composer { box-shadow: 0 8px 32px color-mix(in srgb, var(--bg) 70%, transparent); }
+.desk-composer { display: grid; grid-template-columns: auto 1fr auto; align-items: end; gap: 4px; padding: 4px 6px; border: 1px solid var(--line-strong); border-radius: 20px; background: var(--panel); transition: border-color .15s, background .15s; }
 .desk-composer:focus-within { border-color: var(--focus); }
 .desk.dragging .desk-composer, main.page.dropping .desk-composer { border: 2px dashed var(--accent); background: var(--surface); }
 .desk-input { display: block; width: 100%; min-height: 42px; max-height: 200px; resize: none; border: 0; outline: none; background: transparent; color: var(--text); font: inherit; font-size: 16px; line-height: 24px; padding: 9px 0; }
 .desk-bottom { display: flex; align-items: center; gap: 2px; padding: 3px 0; }
-.desk-attach { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; color: var(--text-2); cursor: pointer; }
+.desk-attach { display: grid; place-items: center; width: 36px; height: 36px; margin: 3px 0; border-radius: 10px; color: var(--text); cursor: pointer; }
 .desk-attach:hover { background: var(--surface); color: var(--text); }
 .desk-attach input { display: none; }
 .desk-send { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; border: 0; background: transparent; color: var(--text); cursor: pointer; }
@@ -748,3 +762,19 @@ html { touch-action: manipulation; -webkit-text-size-adjust: 100%; text-size-adj
 main.page.advisor-page.dropping { outline: 2px dashed var(--accent); outline-offset: -8px; border-radius: 16px; }
 .advisor-page > .desk-files { margin: 0 auto 12px; max-width: 744px; }
 
+
+/* Phones: a grab bar above the tab bar to swipe up; on the keyboard while typing. */
+@media (max-width: 760px) {
+  .desk { position: fixed; left: 16px; right: 16px; bottom: calc(54px + env(safe-area-inset-bottom)); padding: 0 0 6px; }
+  .page.has-desk { padding-bottom: calc(110px + env(safe-area-inset-bottom)); }
+  html.typing .desk { bottom: calc(var(--keyboard, 0px) + 8px); }
+  .desk-handle { width: 100%; height: 28px; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+  .desk-chevron { display: none; }
+  .desk-grabber { display: block; width: 40px; height: 5px; border-radius: 3px; background: var(--text-3); opacity: .7; }
+  .desk.open .desk-grabber { opacity: .4; }
+}
+
+/* The advisor's composer with the desk's "+" on its left. */
+.advisor-composer.with-attach { grid-template-columns: auto 1fr auto; }
+.advisor-composer .desk-attach { align-self: end; }
+@media (max-width: 760px) { .advisor-composer.with-attach { grid-template-columns: auto 1fr auto; } }

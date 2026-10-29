@@ -168,7 +168,8 @@ let render_turns ~locale ~(snapshot : W.snapshot option) ~dispatch ~(decided : s
                [ text t.user_text ]
             :: List.map t.attempts ~f:attempt))
 
-let render_body ~turns ~show_source ~locale ~(view : C.view) ~dispatch =
+(* [attach]: the "+" that hands files to the desk, on the left of the composer. *)
+let render_body ~(attach : Vdom.Node.t option) ~turns ~show_source ~locale ~(view : C.view) ~dispatch =
   let text = Vdom.Node.text in
   let cls name = [ Vdom.Attr.class_ name ] in
   let button label action =
@@ -217,8 +218,9 @@ let render_body ~turns ~show_source ~locale ~(view : C.view) ~dispatch =
   let composer =
     if not generation_ready then Vdom.Node.none
     else
-      Vdom.Node.div ~attrs:(cls "advisor-composer")
-        [
+      Vdom.Node.div ~attrs:(cls (match attach with Some _ -> "advisor-composer with-attach" | None -> "advisor-composer"))
+        ((match attach with Some a -> [ a ] | None -> [])
+        @ [
           Vdom.Node.textarea
             ~attrs:
               [
@@ -301,7 +303,7 @@ let render_body ~turns ~show_source ~locale ~(view : C.view) ~dispatch =
           Vdom.Node.p
             ~attrs:[ Vdom.Attr.class_ "advisor-input-error"; Vdom.Attr.id "advisor-input-error" ]
             [ text (Msg.advisor_input_limit locale) ];
-        ]
+        ])
   in
   let actions =
     (if active && not generation_ready then [ button (Msg.advisor_stop locale) C.Stop ] else [])
@@ -359,12 +361,12 @@ let render_body ~turns ~show_source ~locale ~(view : C.view) ~dispatch =
       ])
 
 let render ~locale ~(view : C.view) ~dispatch =
-  render_body
+  render_body ~attach:None
     ~turns:(render_turns ~locale ~snapshot:view.snapshot ~dispatch ~decided:(fun _ -> None) ~decide:(fun _ _ -> Effect.Ignore) ~markdown:String.Map.empty)
     ~show_source:true ~locale ~view ~dispatch
 
 let render_inline ~locale ~(view : C.view) ~dispatch =
-  render_body
+  render_body ~attach:None
     ~turns:(render_turns ~locale ~snapshot:view.snapshot ~dispatch ~decided:(fun _ -> None) ~decide:(fun _ _ -> Effect.Ignore) ~markdown:String.Map.empty)
     ~show_source:false ~locale ~view ~dispatch
 

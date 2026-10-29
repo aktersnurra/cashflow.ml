@@ -10,6 +10,10 @@
   known, no row is ambiguous and the balance agrees. A new account or a doubtful row brings up its questions right
   there. The Import tab is gone; the advisor has its place in the phone's tab bar, and adding a transaction by hand
   is on the transactions page.
+- The box stays out of the way until wanted: a grab bar above the tab bar to swipe up (down to put it away), a
+  chevron at the foot of the page on a computer; dragging files over the page opens it. Both it and the advisor's
+  composer are one line, like a chat app: "+" to add statements on the left, then the text, then the return key to
+  send or a small square to stop on the right.
 - How far your statements reach now counts only the accounts you spend from: a savings account whose statement ends
   at its last monthly transfer no longer makes the whole month look unread.
 

@@ -205,9 +205,23 @@ Bokföringsdag;Text;Belopp;Saldo
     assert.equal(await page.locator('.tabbar >> text=Importera').count(), 0, 'no import tab');
     const desk = page.locator('.page:visible .desk');
     await desk.waitFor({ timeout: 10000 });
+    // The box waits behind a grab bar above the tab bar: a swipe up opens it with the cursor in it, a swipe down
+    // puts it away.
+    assert.equal(await desk.locator('textarea').isVisible(), false, 'hidden until swiped up');
+    const swipe = async dy => {
+      const box = await desk.locator('.desk-handle').boundingBox();
+      const x = box.x + box.width / 2, y = box.y + box.height / 2;
+      await page.mouse.move(x, y); await page.mouse.down(); await page.mouse.move(x, y + dy, { steps: 4 }); await page.mouse.up();
+    };
+    await swipe(-60);
+    await page.waitForSelector('.page:visible .desk.open');
+    assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.id), 'desk-input', 'opened with the cursor in it');
+    await page.screenshot({ path: out + '/20b-phone-desk-open.png' });
+    await swipe(60);
+    await page.waitForFunction(() => !document.querySelector('.page:not([hidden]) .desk.open'));
     await page.screenshot({ path: out + '/21-phone-import.png' });
     await desk.locator('input[type=file]').setInputFiles(out + '/savings.csv');
-    await page.waitForSelector('.desk .import-preview', { timeout: 10000 });
+    await page.waitForSelector('.desk-files .import-preview', { timeout: 10000 });
     const destination = page.locator('.import-destination');
     assert.equal(await destination.locator('select').first().inputValue(), 'new', 'no account has ****4321, so a new one');
     assert.equal(await destination.locator('input').inputValue(), 'Sparkonto', 'named from the file');
@@ -222,16 +236,16 @@ Bokföringsdag;Text;Belopp;Saldo
     let previews = 0;
     const seen = [];
     page.on('request', r => { if (r.url().includes('_statement')) seen.push(r.url().split('/').pop() + ' ' + (r.postData() || '').replace(/"content[^,]*,/, '').slice(0, 160)); if (r.url().includes('import_statement') && !(r.postData() || '').includes('"confirm":true')) previews++; });
-    const filedBefore = await page.locator('.desk .import-result.ok').count();
+    const filedBefore = await page.locator('.desk-files .import-result.ok').count();
     await page.locator('.page:visible .desk input[type=file]').setInputFiles(out + '/savings2.csv');
-    await page.waitForFunction(n => document.querySelectorAll('.desk .import-result.ok').length > n, filedBefore, { timeout: 10000 });
-    assert.equal(await page.locator('.desk .import-preview').count(), 0, 'filed without asking');
+    await page.waitForFunction(n => document.querySelectorAll('.desk-files .import-result.ok').length > n, filedBefore, { timeout: 10000 });
+    assert.equal(await page.locator('.desk-files .import-preview').count(), 0, 'filed without asking');
     await page.waitForTimeout(1500);
     assert.equal(previews, 1, 'one dry run, then filed: ' + seen.join(' | '));
     await page.screenshot({ path: out + '/24-phone-desk-filed.png', fullPage: true });
-    const receipts = await page.locator('.desk .import-result').count();
-    await page.locator('.desk .import-result').last().locator('.button', { hasText: 'Stäng' }).click();
-    await page.waitForFunction(n => document.querySelectorAll('.desk .import-result').length === n - 1, receipts, { timeout: 5000 });
+    const receipts = await page.locator('.desk-files .import-result').count();
+    await page.locator('.desk-files .import-result').last().locator('.button', { hasText: 'Stäng' }).click();
+    await page.waitForFunction(n => document.querySelectorAll('.desk-files .import-result').length === n - 1, receipts, { timeout: 5000 });
     // Adding by hand is the way round, from the transactions.
     await page.goto(base + '/transactions');
     await page.locator('.page:visible .button', { hasText: 'Lägg till' }).first().click();

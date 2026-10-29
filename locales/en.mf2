@@ -731,3 +731,4 @@ desk.attach = Add statements
 desk.drop = Drop to hand them over
 desk.send = Ask
 advisor.reply = Reply
+desk.hide = Hide

@@ -193,7 +193,7 @@ let mostly_uncategorized categories_json =
   Float.(total uncategorized > total (fun _ -> true) /. 2.)
 
 let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor_protocol.Wire.scope -> unit Effect.t) Bonsai.t)
-    ~(on_question : (string -> unit Effect.t) Bonsai.t) ~selected_finding ~outlet ~advisor_route ~(visible : bool Bonsai.t) graph =
+    ~(desk : Desk.t Bonsai.t) ~selected_finding ~outlet ~advisor_route ~(visible : bool Bonsai.t) graph =
   let captured, set_captured = Bonsai.state None graph in
   let offset, set_offset = Bonsai.state 0 graph in
   let scope, set_scope = Bonsai.state "me" graph in
@@ -204,8 +204,6 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
     Remote.load ~active:visible ~name:"spending_by_category" ~args:(let%arr scope and offset in `Assoc [ ("scope", `String scope); ("cycle_offset", `Int offset) ]) ~ctx graph
   in
   (* The accountant's briefing: the questions worth answering before they're asked. *)
-  (* The desk: questions to the advisor, statements filed where they belong. *)
-  let desk = Desk.component ~ctx ~on_question graph in
   let briefing = Briefing_view.component ~ctx ~scope ~visible ~on_ask ~selected_finding ~outlet graph in
   let feed = Remote.load ~active:visible ~name:"get_attention_feed" ~args:(Bonsai.return (`Assoc [("narrative", `Bool false)])) ~ctx graph in
   let cards =
@@ -398,12 +396,13 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
   let hosted = Map.exists visible_cards ~f:(fun card -> Option.equal String.equal selected_finding (Some (J.str (J.field "key" card)))) in
   let standalone = advisor_route && not hosted in
   (* Statements can be dropped while talking to the advisor too; what became of them shows above the conversation. *)
-  Vdom.Node.main ~attrs:[Vdom.Attr.class_ ((if standalone then "page advisor-page" else "page") ^ if desk.dragging then " dropping" else ""); desk.drop]
+  Vdom.Node.main ~attrs:[Vdom.Attr.class_ ((if standalone then "page advisor-page" else "page has-desk") ^ if desk.dragging then " dropping" else ""); desk.drop]
     [(if standalone then Vdom.Node.h1 [Ui.text (Msg.nav_advisor locale)] else Vdom.Node.none);
      (* Keep the financial surface mounted for Home continuity; an unanchored
         Advisor conversation is not a second dashboard above the chat. *)
      Vdom.Node.div ~attrs:(if standalone then [Vdom.Attr.create "hidden" ""] else [])
        (let urgent = Map.exists visible_cards ~f:(fun card -> List.mem urgent_kinds (J.str (J.field "kind" card)) ~equal:String.equal) in
-        if urgent then [head; desk.view; attention; body] else [head; desk.view; body; attention]);
+        (* What was handed over shows where the page starts; the box waits at its foot. *)
+        if urgent then [head; desk.files; attention; body; desk.view] else [head; desk.files; body; attention; desk.view]);
      (if standalone then desk.files else Vdom.Node.none);
      (if standalone then outlet else Vdom.Node.none)]

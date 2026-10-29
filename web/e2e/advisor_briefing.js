@@ -58,16 +58,23 @@ const evidence = process.env.ADVISOR_EVIDENCE_DIR || '/tmp/briefing-evidence';
   await page.screenshot({path:evidence+'/briefing-ask.png',fullPage:true});
   // One answer at a time per person: let the first finish.
   await fetch(base+'/release');
-  for(let i=0;i<100;i++){const c=await (await page.request.get(base+'/api/advisor/conversations/'+id)).json();if(!c.data.active_run)break;await new Promise(r=>setTimeout(r,100));}
+  let finished=false;
+  for(let i=0;i<300&&!finished;i++){const c=await (await page.request.get(base+'/api/advisor/conversations/'+id)).json();finished=!c.data.active_run;if(!finished)await new Promise(r=>setTimeout(r,100));}
+  assert.ok(finished,'the first answer finished');
   // The desk: a question typed on the Overview starts a conversation with it, sent at once (consent is given).
   await page.locator('.sidebar').getByRole('link',{name:'Overview',exact:true}).click();
-  const desk=page.locator('.page:visible .desk textarea');await desk.waitFor();
+  // The box waits at the foot of the page behind its handle.
+  const desk=page.locator('.page:visible .desk textarea');
+  assert.equal(await desk.isVisible(),false,'hidden until opened');
+  await page.locator('.page:visible .desk-handle').click();await desk.waitFor();
+  assert.equal(await page.evaluate(()=>document.activeElement?.id),'desk-input','opening puts the cursor in it');
   await desk.fill('Where did my money go in September?');await desk.press('Enter');
   await page.waitForURL(u=>/\/advisor\//.test(u.pathname)&&u.pathname.split('/').pop()!==id,{timeout:15000})
    .catch(async e=>{await page.screenshot({path:evidence+'/desk-question.png',fullPage:true});console.error('at',page.url());throw e;});
   const asked=await (await page.request.get(base+'/api/advisor/conversations/'+new URL(page.url()).pathname.split('/').pop())).json();
   assert.equal(asked.data.turns[0].user_text,'Where did my money go in September?');assert.equal(asked.data.source_finding,null);
   assert.equal(await desk.inputValue().catch(()=>''),'','the desk is cleared');
+  assert.equal(await page.locator('.desk.open').count(),0,'and put away');
   assert.deepEqual(errors,[]);
   console.log('PASS briefing: Ask opens the advisor under the card with the server-stated question and figures; a question on the desk starts a conversation');
  } finally { await browser.close(); }
