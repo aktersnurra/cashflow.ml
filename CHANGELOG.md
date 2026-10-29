@@ -20,10 +20,13 @@
   five finished months (`explain_month`).
 - Cards learn from what you do with them: a missing payment you resolved stays quiet for that series, a double
   charge you said was right mutes that merchant, and after two large purchases you resolved those cards stop.
-- **How is this worked out?** under safe to spend shows the sum line by line (saved so far, income and bills
-  still to come, goals, usual spending for the days not imported yet) and what the heading adds. Beside the
-  likely range, the forecast's track record: how far off forecasts this far ahead have been, and how many that
-  rests on. The advisor's period outlook carries it too.
+- The Overview reads at a glance: safe to spend, its per-day figure and days left, then where the cycle is heading
+  (with how far off forecasts this far ahead have been, as ±) and the bills to come. The sum behind the number
+  folds out under **Breakdown**; the range and the forecast's track record are on the ±. The advisor's period
+  outlook carries the track record too.
+- Cards say what, how much and when in a title and one line, in whole kronor. The month review is the month's
+  spending beside a usual one, then what made the difference as rows tagged Yearly, One-off, Habit, Less or
+  Income. The weekly brief is one row of figures and where the money went.
 
 ### Fixed
 

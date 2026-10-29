@@ -117,7 +117,6 @@ kbd { font: 11px/16px var(--mono); padding: 0 4px; border: 1px solid var(--line-
 .trend span { color: var(--text-2); font-weight: 400; }
 .provisional { font-size: 13px; color: var(--text-3); }
 .figure-note { font-size: 13px; line-height: 19px; color: var(--text-2); margin-top: 4px; }
-.review-driver { padding: 6px 0 6px 12px; border-left: 2px solid var(--line-strong); margin-top: 6px; }
 .figure-divider { height: 1px; background: var(--line); margin: 12px 0 8px; }
 .insights-provisional { margin-bottom: 12px; }
 .flow h2 { margin-bottom: 8px; }
@@ -710,3 +709,18 @@ html { touch-action: manipulation; -webkit-text-size-adjust: 100%; text-size-adj
 .workings .workings-row { font-size: 13px; line-height: 19px; padding: 2px 0; }
 .workings-row .num { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .workings .workings-total { border-top: 1px solid var(--line); margin-top: 4px; padding-top: 6px; color: var(--text); font-weight: 600; }
+.outlook-row { align-items: baseline; font-size: 14px; line-height: 22px; }
+.outlook-row .figure-label { color: var(--text-2); }
+.outlook-row .figure-value { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.figure-aside { margin-left: 6px; font-size: 12px; color: var(--text-3); }
+.figure-aside-line { margin-top: -10px; text-align: right; font-size: 12px; color: var(--text-3); }
+.figure-foot { margin-top: 6px; font-size: 12px; color: var(--text-3); }
+.review-driver { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: baseline; padding: 6px 0; border-left: 0; border-top: 1px solid var(--line); margin-top: 0; }
+.review-tag { font-size: 11px; line-height: 16px; padding: 1px 7px; border-radius: 999px; background: var(--surface-2, var(--line)); color: var(--text-2); white-space: nowrap; }
+.review-what { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.review-driver .num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.brief-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 8px 0 16px; }
+.brief-kpis .kpi-value { font-size: 18px; line-height: 24px; white-space: nowrap; }
+.brief-kpis .kpi-sub { font-size: 12px; }
+.brief-top .outlook-row { padding: 4px 0; border-top: 1px solid var(--line); }
+.brief-top .kpi-label { margin-bottom: 6px; }
