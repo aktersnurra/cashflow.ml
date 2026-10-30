@@ -3,32 +3,37 @@
    Sankey icon supplies teal actions and mint/gold/coral chart hues; text and semantic states
    use contrast-adjusted shades rather than the artwork's literal colours.
 
-   Type: Linux Libertine, else the platform's UI font. 13 (labels, meta) / 14 (body, controls) /
-   16 (section headings) / 24 (page title) / 34 (the one key figure). Lining, tabular figures
-   wherever amounts line up.
+   Type: the platform's own UI font (SF Pro on Apple, else Inter or the system's). Six sizes, 12 / 14 / 16 /
+   20 / 28 / 40, and seven spaces, 4 / 8 / 12 / 16 / 24 / 32 / 48 (--t*, --s*). Lining, tabular figures
+   wherever amounts line up. Neutrals with one accent for actions; amber only for what needs doing.
    Shape: radius 6 (controls) / 10 (panels) / 12 (overlays); no shadows except on overlays.
 
    Theme: light unless the system or the user (data-theme on <html>, see theme.ml) says dark. */
 :root {
-  --bg: #fbf8f2; --sidebar: #f3efe7; --panel: #fffdf8; --surface: #f3efe6; --surface-2: #e9e3d8; --line: #e4dfd4; --line-strong: #d1cabc;
-  --text: #1b211d; --text-2: #4d6055; --text-3: #5b685f;
+  --bg: #f7f5f0; --sidebar: #efece5; --panel: #ffffff; --surface: #efece5; --surface-2: #e7e3db; --line: #e6e2d9; --line-strong: #d6d1c6;
+  --text: #181c1a; --text-2: #464f4a; --text-3: #5b645e;
   --accent: #146b69; --accent-hover: #0f5655; --on-accent: #fffdf8; --focus: #147b78;
   --positive: #216e52; --negative: #ac382f; --warning: #855b12;
-  --tint-red: #fae9e2; --tint-green: #e3f0e6; --tint-amber: #fbefd6; --tint-blue: #e1efec;
+  --tint-red: #fae9e2; --tint-green: #e3f0e6; --tint-amber: #f8edd8; --tint-blue: #e2efec;
   --s-ink: #3a5046; --c1: #247d7f; --c2: #56896c; --c3: #9d741f; --c4: #bc503c; --c5: #687f77; --c-other: #7d897e; --c-transfer: #7a857c;
   --c-savings: #4f8964; --in-transfer: #6d7d72; --in-savings: #4d8279;
   --income: #56896c; --spending: #bc503c; --line-chart: #146b69; --area: #e1efec;
   --overlay-shadow: 0 16px 48px rgba(27,33,29,.14), 0 0 0 1px rgba(27,33,29,.06); --scrim: rgba(27,33,29,.25);
-  --font: "Linux Libertine O", "Linux Libertine", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, "Segoe UI", Roboto, sans-serif;
+  --display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter Display", "Inter", system-ui, sans-serif;
+  /* One scale and one rhythm: six sizes, seven spaces. */
+  --t12: 12px; --t14: 14px; --t16: 16px; --t20: 20px; --t28: 28px; --t40: 40px;
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px; --s7: 48px;
+  --r1: 8px; --r2: 14px; --r3: 999px;
   --mono: ui-monospace, "SF Mono", Menlo, monospace;
   color-scheme: light;
 }
 :root[data-theme="dark"] {
-  --bg: #111412; --sidebar: #0d100e; --panel: #1b201c; --surface: #222923; --surface-2: #2b342d; --line: #323d34; --line-strong: #49564b;
-  --text: #f4eddf; --text-2: #bcc6bc; --text-3: #9eab9f;
-  --accent: #91d5c1; --accent-hover: #b0e3d1; --on-accent: #0d211b; --focus: #6dcab7;
+  --bg: #0f1110; --sidebar: #0c0e0d; --panel: #181b19; --surface: #1d211e; --surface-2: #262b28; --line: #262b28; --line-strong: #343a36;
+  --text: #f1eee7; --text-2: #b3bbb5; --text-3: #949e96;
+  --accent: #8fd3c0; --accent-hover: #b0e3d1; --on-accent: #0d211b; --focus: #6dcab7;
   --positive: #a4d6b8; --negative: #f28d7c; --warning: #f2c66d;
-  --tint-red: #38251f; --tint-green: #203329; --tint-amber: #342c19; --tint-blue: #1c3531;
+  --tint-red: #38251f; --tint-green: #203329; --tint-amber: #2a2416; --tint-blue: #1b2e29;
   --s-ink: #f4eddf; --c1: #41b1ac; --c2: #b0d9bf; --c3: #f2c66d; --c4: #f5866b; --c5: #9bb5ac; --c-other: #8c9a8d; --c-transfer: #738078;
   --c-savings: #8bcca5; --in-transfer: #9eab9f; --in-savings: #79c6b7;
   --income: #b0d9bf; --spending: #f5866b; --line-chart: #91d5c1; --area: #20352f;
@@ -37,11 +42,11 @@
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #111412; --sidebar: #0d100e; --panel: #1b201c; --surface: #222923; --surface-2: #2b342d; --line: #323d34; --line-strong: #49564b;
-    --text: #f4eddf; --text-2: #bcc6bc; --text-3: #9eab9f;
-    --accent: #91d5c1; --accent-hover: #b0e3d1; --on-accent: #0d211b; --focus: #6dcab7;
+    --bg: #0f1110; --sidebar: #0c0e0d; --panel: #181b19; --surface: #1d211e; --surface-2: #262b28; --line: #262b28; --line-strong: #343a36;
+    --text: #f1eee7; --text-2: #b3bbb5; --text-3: #949e96;
+    --accent: #8fd3c0; --accent-hover: #b0e3d1; --on-accent: #0d211b; --focus: #6dcab7;
     --positive: #a4d6b8; --negative: #f28d7c; --warning: #f2c66d;
-    --tint-red: #38251f; --tint-green: #203329; --tint-amber: #342c19; --tint-blue: #1c3531;
+    --tint-red: #38251f; --tint-green: #203329; --tint-amber: #2a2416; --tint-blue: #1b2e29;
     --s-ink: #f4eddf; --c1: #41b1ac; --c2: #b0d9bf; --c3: #f2c66d; --c4: #f5866b; --c5: #9bb5ac; --c-other: #8c9a8d; --c-transfer: #738078;
     --c-savings: #8bcca5; --in-transfer: #9eab9f; --in-savings: #79c6b7;
     --income: #b0d9bf; --spending: #f5866b; --line-chart: #91d5c1; --area: #20352f;
@@ -811,3 +816,96 @@ main.page.advisor-page.dropping { outline: 2px dashed var(--accent); outline-off
 /* A briefing card's answers stay on one line. */
 .card.question .actions { gap: 2px; flex-wrap: nowrap; }
 .card.question .actions .button { padding: 0 8px; font-size: 13px; white-space: nowrap; }
+
+/* ===== The Overview (design of 2026-10-30): one number, a few banners, a quiet list, what is ahead. =====
+   Built from the tokens only. Space separates; hairlines only between rows. */
+.page.has-desk { max-width: 1040px; }
+.slot { display: contents; }
+.page.has-desk .page-head { justify-content: flex-start; margin-bottom: var(--s3); }
+.page.has-desk .page-head h1 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+summary { list-style: none; } summary::-webkit-details-marker { display: none; }
+.overview-hero .num, .stats .num, .wk-head .num, .spark-caption.num { font-variant-numeric: tabular-nums lining-nums; letter-spacing: -.01em; }
+.overview-hero .hero, .overview-hero .hero-sub, .stats .stat-value { text-align: left; }
+/* The period: a quiet control, not a box. */
+.has-desk .page-head .period { border: 0; background: none; height: 32px; }
+.has-desk .page-head .period-label { border: 0; min-width: 0; padding: 0 var(--s1); font-weight: 600; font-size: var(--t16); }
+
+/* The number. */
+.overview-hero { padding-top: var(--s2); }
+.hero-label { font-size: var(--t14); color: var(--text-2); }
+.overview-hero .hero { font: 600 var(--t40)/1.1 var(--display); letter-spacing: -.03em; margin: var(--s1) 0 var(--s2); }
+.hero-sub { font-size: var(--t14); color: var(--text-2); }
+.overview-hero .workings { margin-top: var(--s3); font-size: var(--t14); }
+.stats { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s4); margin-top: var(--s5); padding-top: var(--s4); border-top: 1px solid var(--line); }
+.stat-label { font-size: var(--t12); color: var(--text-3); }
+.stat-value { font-size: var(--t16); font-weight: 500; margin-top: 2px; }
+.stat-aside { font-size: var(--t12); color: var(--text-3); font-weight: 400; margin-left: var(--s1); }
+.overview-hero .figure-foot { font-size: var(--t12); color: var(--text-3); margin-top: var(--s3); }
+.overview-hero .figure-foot + .figure-foot { margin-top: 0; }
+.overview-hero .workings > summary { color: var(--text-2); }
+.overview-hero .workings > summary::after { content: " ›"; color: var(--text-3); }
+.overview-hero .workings[open] > summary::after { content: " ⌄"; }
+
+/* What needs doing: slim tinted banners, only when there is something. */
+.has-desk .attention { margin-top: var(--s5); }
+.has-desk .attention-list { display: grid; gap: var(--s2); background: none; border: 0; border-radius: 0; overflow: visible; }
+.has-desk .attention-list > * { min-width: 0; }
+.has-desk .attention-list .card { display: block; margin: 0; padding: var(--s3) var(--s4); border: 0; border-radius: var(--r2); background: var(--tint); }
+.has-desk .attention-list .card::before { display: none; }
+.has-desk .attention-list .card > h2 { font-size: var(--t14); font-weight: 600; line-height: 1.4; }
+.has-desk .attention-list .card .muted { font-size: var(--t12); color: var(--text-2); }
+.has-desk .attention-list .card .actions { margin-top: var(--s2); gap: var(--s1); }
+.has-desk .attention-list .button, .has-desk .finding-reply .button { height: 32px; padding: 0 var(--s3); border: 0; border-radius: var(--r3); background: color-mix(in srgb, var(--text) 7%, transparent); font-size: var(--t14); }
+.has-desk .attention-list .button.primary { background: var(--accent); color: var(--on-accent); }
+.has-desk .finding-reply { margin-top: var(--s1); }
+
+/* Worth knowing: a quiet list; a row opens to what is behind it and what to say back. */
+.briefing { margin-top: var(--s6); }
+.section-title { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s3); margin-bottom: var(--s1); }
+.section-title h2 { font-size: var(--t14); font-weight: 600; color: var(--text-2); }
+.section-link { font-size: var(--t14); font-weight: 500; color: var(--accent); }
+.briefing-list { display: block; }
+.wk-row { border-bottom: 1px solid var(--line); }
+.briefing-list > :last-child .wk-row { border-bottom: 0; }
+.wk-head { display: flex; align-items: center; gap: var(--s3); min-height: 64px; padding: var(--s3) 0; cursor: pointer; }
+.wk-main { flex: 1; min-width: 0; }
+.wk-title { margin: 0; font-size: var(--t16); font-weight: 500; line-height: 1.35; }
+.wk-sub { font-size: var(--t14); color: var(--text-3); line-height: 1.4; }
+.wk-value { font-size: var(--t16); font-weight: 500; white-space: nowrap; }
+.wk-head > svg { flex: none; color: var(--text-3); transition: transform .2s; }
+.wk-row[open] .wk-head > svg { transform: rotate(90deg); }
+.wk-detail { padding: 0 0 var(--s4); }
+.wk-lines { background: var(--surface); border-radius: var(--r2); padding: var(--s1) var(--s4); }
+.wk-lines .question-row { font-size: var(--t14); padding: var(--s2) 0; border-top: 1px solid var(--line); margin: 0; }
+.wk-lines .question-row:first-child { border-top: 0; }
+.wk-actions { display: flex; flex-wrap: wrap; gap: var(--s2); margin-top: var(--s3); }
+.wk-actions .button { height: 36px; padding: 0 var(--s4); border: 0; border-radius: var(--r3); background: var(--surface); font-size: var(--t14); }
+.wk-actions .button.primary { background: var(--accent); color: var(--on-accent); }
+.wk-actions .button.quiet { background: none; color: var(--text-2); padding: 0 var(--s2); }
+
+/* What is ahead: a sparkline that opens into the forecast; goals behind one quiet row. */
+.has-desk .ahead { display: grid; gap: var(--s6); margin-top: var(--s6); }
+.ahead-details > summary, .goals-details > summary { cursor: pointer; }
+.spark-block { margin-top: var(--s2); }
+.spark { display: block; width: 100%; height: 88px; }
+.spark-band { fill: color-mix(in srgb, var(--accent) 14%, transparent); }
+.spark-line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.spark-line.ahead { stroke-dasharray: 4 4; }
+.spark-today { stroke: var(--line-strong); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.spark-dot { fill: var(--accent); }
+.spark-caption { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--s1) var(--s3); margin-top: var(--s2); font-size: var(--t14); color: var(--text-2); }
+.spark-caption span { white-space: nowrap; }
+.ahead-details[open] .spark-block { display: none; }
+.ahead-details[open] > summary { margin-bottom: var(--s3); }
+.plan-controls { margin-bottom: var(--s3); }
+.goals-details[open] > summary { margin-bottom: var(--s3); }
+.has-desk .books-links { margin-top: var(--s7); }
+
+/* A computer: two columns, each laid out on its own, so nothing on one side moves the other. */
+.overview-cols { display: block; }
+@media (min-width: 1000px) {
+  .overview-cols { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: var(--s7); align-items: start; }
+  /* The side column starts level with the main one. */
+  .has-desk .overview-side .ahead, .overview-side .ahead > :first-child .section-title { margin-top: 0; }
+}
+}

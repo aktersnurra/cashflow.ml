@@ -4,6 +4,13 @@
 
 ### Your accountant's briefing
 
+- **A calmer Overview.** One number leads: what you can spend until payday, large, with a line under it saying how
+  that compares with usual; the workings fold under it, and a row of quiet stats (where you're heading, bills,
+  income) sits below. Things that need you are tinted banners under it, not cards with headings. The briefing is a
+  list of rows (a title, a figure, a chevron) that open to their lines and actions. On a computer the forecast and
+  goals sit in a narrow column to the right: a sparkline of your balance (history, today, the road ahead with its
+  range) with the lowest point under it; tapping either opens its full controls. One type scale, one spacing scale,
+  pill buttons, and warmer, higher-contrast neutrals in both themes.
 - **One desk.** The Overview opens with one box: *Ask, or drop statements*. A question goes to the advisor as a new
   conversation. Statements dropped anywhere on the page (or on the advisor page, or picked with the paperclip, several
   at once) are read, matched to their account and filed without a button when nothing needs you: the account is

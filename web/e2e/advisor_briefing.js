@@ -42,6 +42,7 @@ const evidence = process.env.ADVISOR_EVIDENCE_DIR || '/tmp/briefing-evidence';
   await page.goto(base+'/');
   const card=page.locator(`[data-finding-key="${drift.key}"]`);
   await card.getByText(category+' has crept up',{exact:true}).waitFor().catch(async e=>{await page.screenshot({path:evidence+'/briefing-missing.png',fullPage:true});throw e;});
+  await card.locator('summary').click();  // the row opens to its actions
   await card.getByRole('button',{name:'Ask advisor',exact:true}).click();
   await page.getByRole('button',{name:'Enable Advisor',exact:true}).click();
   const composer=page.getByRole('textbox',{name:'Message advisor',exact:true});await composer.waitFor();

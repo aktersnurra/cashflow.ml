@@ -7,6 +7,8 @@ type editing = Not_editing | Budget of { category : string; amount : string; rol
 
 (* A section of the Overview, under the forecast: goals and budgets. *)
 let section ~(ctx : Ctx.t) ~(visible : bool Bonsai.t) graph =
+  (* Open or closed is the page's to keep, so a re-render never closes what the reader opened. *)
+  let opened, set_opened = Bonsai.state false graph in
   let scope, set_scope = Bonsai.state "me" graph in
   let args = let%arr scope in `Assoc [ ("scope", `String scope) ] in
   let status = Remote.load ~active:visible ~name:"budget_status" ~args ~ctx graph in
@@ -14,7 +16,7 @@ let section ~(ctx : Ctx.t) ~(visible : bool Bonsai.t) graph =
   let accounts = Remote.load ~active:visible ~name:"list_accounts" ~ctx graph in
   let editing, set_editing = Bonsai.state Not_editing graph in
   let showing_goals, set_showing_goals = Bonsai.state false graph in
-  let%arr status and goals and accounts and scope and set_scope and editing and set_editing and showing_goals and set_showing_goals
+  let%arr opened and set_opened and status and goals and accounts and scope and set_scope and editing and set_editing and showing_goals and set_showing_goals
   and locale = ctx.locale and changed = ctx.changed and notify = ctx.notify and session = ctx.session in
   let code json = J.str ~default:"SEK" (J.field "currency" json) in
   let save name args =
@@ -83,9 +85,8 @@ let section ~(ctx : Ctx.t) ~(visible : bool Bonsai.t) graph =
     Vdom.Node.button ~attrs:[ Vdom.Attr.class_ ("tab-button" ^ if active then " active" else ""); Vdom.Attr.type_ "button"; Vdom.Attr.on_click (fun _ -> effect) ] [ Ui.text label ]
   in
   let head =
-    Ui.div ~cls:"section-head plan-head"
-      [ Vdom.Node.h2 [ Ui.text (Msg.budgets_goals_title locale) ];
-        Ui.div ~cls:"page-controls"
+    Ui.div ~cls:"plan-controls"
+      [ Ui.div ~cls:"page-controls"
           [ (if List.length scopes < 2 then Vdom.Node.none
              else Ui.div ~cls:"segmented" (List.map scopes ~f:(fun (value, label) -> Ui.button ~kind:(if String.equal value scope then "active" else "") label (set_scope value))));
             (match status with
@@ -138,4 +139,10 @@ let section ~(ctx : Ctx.t) ~(visible : bool Bonsai.t) graph =
                 Ui.button (Msg.action_cancel locale) (set_editing Not_editing) ] ()
       | _ -> Ui.div ~cls:"actions" [ Ui.button (Msg.action_new_goal locale) (set_editing (Goal { name = ""; target = ""; date = ""; monthly = "" } : editing)) ]) ]
   in
-  Ui.div ~cls:"plan-section" ([ head; tabs ] @ if showing_goals then goals_view else categories)
+  (* Folded behind one quiet row: goals and budgets are set now and then, not read every day. *)
+  Ui.div ~cls:"plan-section"
+    [ Vdom.Node.create "details" ~attrs:([ Vdom.Attr.class_ "goals-details" ] @ if opened then [ Vdom.Attr.create "open" "" ] else [])
+        ([ Vdom.Node.create "summary" ~attrs:[ Vdom.Attr.on_click (fun _ -> Effect.Many [ Effect.Prevent_default; set_opened (not opened) ]) ]
+             [ Ui.div ~cls:"section-title" [ Vdom.Node.h2 [ Ui.text (Msg.budgets_goals_title locale) ]; Ui.span ~cls:"section-link" [ Ui.text (Msg.budgets_open locale) ] ] ];
+           head; tabs ]
+        @ if showing_goals then goals_view else categories) ]

@@ -35,6 +35,8 @@ let amount_of_text ~out value =
 
 (* A section of the Overview, under the briefing: what is ahead. *)
 let section ~(ctx : Ctx.t) ~(visible : bool Bonsai.t) graph =
+  (* Open or closed is the page's to keep, so a re-render never closes what the reader opened. *)
+  let opened, set_opened = Bonsai.state false graph in
   let scope, set_scope = Bonsai.state "me" graph in
   let months, set_months = Bonsai.state 3 graph in
   let what_if, set_what_if = Bonsai.state ~equal:equal_what_if no_what_if graph in
@@ -47,14 +49,13 @@ let section ~(ctx : Ctx.t) ~(visible : bool Bonsai.t) graph =
   let hover, set_hover = Bonsai.state None graph in
   let expanded, set_expanded = Bonsai.state None graph in
   let forecast = Remote.load ~active:visible ~name:"forecast" ~args:(let%arr scope and months and what_if in args ~scope ~months what_if) ~ctx graph in
-  let%arr forecast and scope and set_scope and months and set_months and what_if and set_what_if and on and set_on and text and set_text and value and set_value and out and set_out and hover and set_hover
+  let%arr opened and set_opened and forecast and scope and set_scope and months and set_months and what_if and set_what_if and on and set_on and text and set_text and value and set_value and out and set_out and hover and set_hover
   and expanded and set_expanded and locale = ctx.locale and session = ctx.session and navigate = ctx.navigate in
   let scopes = if Ctx.has_household session then [ ("me", Msg.label_personal locale); ("household", Msg.label_household locale) ] else [] in
   let segmented options ~active ~set = Ui.div ~cls:"segmented" (List.map options ~f:(fun (value, label) -> Ui.button ~kind:(if active value then "active" else "") label (set value))) in
-  let head =
-    Ui.div ~cls:"section-head plan-head"
-      [ Vdom.Node.h2 [ Ui.text (Msg.nav_forecast locale) ];
-        Ui.div ~cls:"page-controls"
+  let controls =
+    Ui.div ~cls:"plan-controls"
+      [ Ui.div ~cls:"page-controls"
           [ (if List.is_empty scopes then Vdom.Node.none else segmented scopes ~active:(String.equal scope) ~set:set_scope);
             segmented (List.map [ 1; 3; 6 ] ~f:(fun n -> (n, Msg.forecast_months ~count:n locale))) ~active:(Int.equal months) ~set:set_months ] ]
   in
@@ -325,10 +326,58 @@ let section ~(ctx : Ctx.t) ~(visible : bool Bonsai.t) graph =
         @ [ Vdom.Node.create "details" ~attrs:[ Vdom.Attr.class_ "forecast-details" ]
               [ Vdom.Node.create "summary" [ Ui.text (Msg.forecast_details locale) ]; upcoming; what_if_panel; assumptions ] ])
   in
+  (* Closed, the forecast is a sparkline and two facts: the cash so far (solid), the line ahead (dashed) inside
+     the range past forecasts landed in, today marked; the lowest point and where it ends. Open, it is all of it. *)
+  let spark (f : D.t) =
+    let code = f.currency in
+    let timeline = f.history @ f.baseline in
+    let n = List.length timeline in
+    let cash = List.map timeline ~f:(fun (p : D.point) -> D.value p.cash) in
+    let lows = List.map f.range ~f:(fun (_, l, _) -> D.value l) and highs = List.map f.range ~f:(fun (_, _, h) -> D.value h) in
+    let all = cash @ lows @ highs in
+    let lo = Option.value (List.min_elt all ~compare:Float.compare) ~default:0. and hi = Option.value (List.max_elt all ~compare:Float.compare) ~default:1. in
+    let w = 340. and h = 88. in
+    let x i = if n <= 1 then 0. else Float.of_int i *. w /. Float.of_int (n - 1) in
+    let y v = if Float.(hi = lo) then h /. 2. else 6. +. (hi -. v) /. (hi -. lo) *. (h -. 12.) in
+    let today = List.length f.history in
+    let path pts = String.concat ~sep:" " (List.mapi pts ~f:(fun i (px, py) -> Printf.sprintf "%s%.1f %.1f" (if i = 0 then "M" else "L") px py)) in
+    let past = List.filteri cash ~f:(fun i _ -> i <= today) |> List.mapi ~f:(fun i v -> (x i, y v)) in
+    let ahead = List.filteri cash ~f:(fun i _ -> i >= today) |> List.mapi ~f:(fun i v -> (x (today + i), y v)) in
+    let index_of d = List.findi timeline ~f:(fun _ (p : D.point) -> String.equal p.date d) |> Option.map ~f:fst in
+    let band =
+      let edge pick = List.filter_map f.range ~f:(fun (d, l, hgh) -> Option.map (index_of d) ~f:(fun i -> (x i, y (D.value (pick l hgh))))) in
+      match edge (fun _ h -> h), List.rev (edge (fun l _ -> l)) with
+      | (_ :: _ as top), bottom -> Some (path (top @ bottom) ^ " Z")
+      | [], _ -> None
+    in
+    let svg_attr k v = Vdom.Attr.create k v in
+    let node tag attrs = Vdom.Node.create_svg tag ~attrs [] in
+    let last = List.last timeline in
+    let nice d = Mf2_runtime.format_date locale (Fmt.date d) in
+    Ui.div ~cls:"spark-block"
+      [ Vdom.Node.create_svg "svg"
+          ~attrs:[ Vdom.Attr.class_ "spark"; svg_attr "viewBox" "0 0 340 88"; svg_attr "preserveAspectRatio" "none"; svg_attr "aria-hidden" "true" ]
+          (List.filter_opt
+             [ Option.map band ~f:(fun d -> node "path" [ svg_attr "d" d; Vdom.Attr.class_ "spark-band" ]);
+               (if n > 0 then Some (node "line" [ svg_attr "x1" (Printf.sprintf "%.1f" (x today)); svg_attr "x2" (Printf.sprintf "%.1f" (x today)); svg_attr "y1" "2"; svg_attr "y2" "86"; Vdom.Attr.class_ "spark-today" ]) else None);
+               (if List.length past > 1 then Some (node "path" [ svg_attr "d" (path past); Vdom.Attr.class_ "spark-line" ]) else None);
+               (if List.length ahead > 1 then Some (node "path" [ svg_attr "d" (path ahead); Vdom.Attr.class_ "spark-line ahead" ]) else None);
+               Option.map (List.nth cash today) ~f:(fun v ->
+                   node "circle" [ svg_attr "cx" (Printf.sprintf "%.1f" (x today)); svg_attr "cy" (Printf.sprintf "%.1f" (y v)); svg_attr "r" "3.5"; Vdom.Attr.class_ "spark-dot" ]) ]);
+        Ui.div ~cls:"spark-caption num"
+          [ Ui.span [ Ui.text (Msg.ahead_lowest ~amount:(Fmt.whole locale ~code f.lowest) ~date:(nice f.lowest_date) locale) ];
+            (match last with Some p when not (String.equal p.date f.lowest_date) -> Ui.span [ Ui.text (Msg.ahead_end ~date:(nice p.date) ~amount:(Fmt.whole locale ~code p.cash) locale) ] | _ -> Vdom.Node.none) ] ]
+  in
   let body =
     match forecast with
     | Remote.Loading -> Ui.div ~cls:"loading" [ Ui.div ~cls:"shimmer" []; Ui.muted (Msg.forecast_loading locale) ]
     | Remote.Failed _ -> Remote.view ~locale forecast ~f:(fun _ -> Vdom.Node.none)
-    | Remote.Loaded json -> view (D.of_json ~locale json)
+    | Remote.Loaded json ->
+        let f = D.of_json ~locale json in
+        Vdom.Node.create "details" ~attrs:([ Vdom.Attr.class_ "ahead-details" ] @ if opened then [ Vdom.Attr.create "open" "" ] else [])
+          [ Vdom.Node.create "summary" ~attrs:[ Vdom.Attr.on_click (fun _ -> Effect.Many [ Effect.Prevent_default; set_opened (not opened) ]) ]
+              [ Ui.div ~cls:"section-title" [ Vdom.Node.h2 [ Ui.text (Msg.ahead_title locale) ]; Ui.span ~cls:"section-link" [ Ui.text (Msg.nav_forecast locale) ] ];
+                (if List.is_empty f.accounts then Ui.muted (Msg.forecast_no_accounts locale) else spark f) ];
+            controls; view f ]
   in
-  Ui.div ~cls:"plan-section" [ head; body ]
+  Ui.div ~cls:"plan-section" [ body ]

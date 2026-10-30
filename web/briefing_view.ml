@@ -107,15 +107,21 @@ let component ~(ctx : Ctx.t) ~(scope : string Bonsai.t) ~(visible : bool Bonsai.
         let selected = Option.equal String.equal selected_finding (Some key) in
         Vdom.Node.div
           ~attrs:[ Vdom.Attr.create "data-finding-key" key ]
-          ([ Ui.card ~tone:"question" ~title
-               ~body:([ Ui.div ~cls:"question-answer" [ Ui.text value ]; Ui.muted sub ] @ rows)
-               ~actions:
-                 [ Ui.button (Msg.advisor_ask locale) (on_ask ~finding_key:key ~scope:finding_scope); Ui.button (Msg.q_got_it locale) (say key "got_it");
-                   Ui.button (Msg.q_not_useful locale) (say key "not_useful") ]
-               () ]
+          (* A quiet row: the question and its number; opened, what is behind it and what to say back. *)
+          ([ Vdom.Node.create "details"
+               ~attrs:([ Vdom.Attr.class_ "wk-row" ] @ if selected then [ Vdom.Attr.create "open" "" ] else [])
+               [ Vdom.Node.create "summary" ~attrs:[ Vdom.Attr.class_ "wk-head" ]
+                   [ Ui.div ~cls:"wk-main" [ Vdom.Node.h3 ~attrs:[ Vdom.Attr.class_ "wk-title" ] [ Ui.text title ]; Ui.div ~cls:"wk-sub" [ Ui.text sub ] ];
+                     Ui.div ~cls:"wk-value num" [ Ui.text value ];
+                     Feather_icon.svg ~size:(`Px 16) ~stroke:(`Name "currentColor") ~stroke_width:(`Px 2) Chevron_right ];
+                 Ui.div ~cls:"wk-detail"
+                   ((if List.is_empty rows then [] else [ Ui.div ~cls:"wk-lines" rows ])
+                   @ [ Ui.div ~cls:"wk-actions"
+                         [ Ui.button ~kind:"primary" (Msg.advisor_ask locale) (on_ask ~finding_key:key ~scope:finding_scope);
+                           Ui.button (Msg.q_got_it locale) (say key "got_it"); Ui.button ~kind:"quiet" (Msg.q_not_useful locale) (say key "not_useful") ] ]) ] ]
           @ if selected then [ outlet ] else [])
       in
       Ui.div ~cls:"briefing"
-        [ Ui.div ~cls:"section-head" [ Vdom.Node.h2 [ Ui.text (Msg.briefing_title locale) ] ];
+        [ Ui.div ~cls:"section-title" [ Vdom.Node.h2 [ Ui.text (Msg.briefing_title locale) ] ];
           Ui.div ~cls:"briefing-list" (List.map (J.list (J.field "questions" json)) ~f:card) ]
   | _ -> Vdom.Node.none

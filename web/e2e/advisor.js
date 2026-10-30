@@ -56,12 +56,13 @@ const sleep = ms => new Promise(r => setTimeout(r,ms));
   await button('Send').scrollIntoViewIfNeeded();
   const initialHistoryLength=await page.evaluate(()=>history.length);
   const finding=page.getByTestId('selected-finding');
-  const original=await finding.elementHandle();const before=await finding.boundingBox();
+  const original=await finding.elementHandle();const before=await finding.boundingBox();const scrolledBefore=await page.evaluate(()=>scrollY);
   await button('Send').focus();await page.keyboard.press('Enter');
   await page.getByText('first',{exact:true}).waitFor();
   assert.equal((await state()).released,false,'actual generated text renders before provider gate release');
-  const after=await finding.boundingBox();
-  assert.deepEqual([after.x,after.y,after.width],[before.x,before.y,before.width]);
+  // The page may follow the answer down; the card itself keeps its place in the page.
+  const after=await finding.boundingBox();const scrolledAfter=await page.evaluate(()=>scrollY);
+  assert.deepEqual([after.x,after.y+scrolledAfter,after.width],[before.x,before.y+scrolledBefore,before.width]);
   assert.equal(await original.evaluate(el=>el===document.querySelector('[data-testid="selected-finding"]')),true);
   assert.equal(await page.locator('[data-advisor-controller]').count(),1);
   assert.equal((await state()).provider_starts,1);assert.equal(posts,1);

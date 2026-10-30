@@ -90,7 +90,7 @@ Bokföringsdag;Text;Belopp;Saldo
       await page.waitForTimeout(800);
       if (label === 'Overview') {
         assert.ok(feedCalls > feedBefore, 'Home reloads when it is shown again');
-        // Rows are waiting in the inbox: what needs doing comes before the figures, and the chart of where the money
+        // Rows are waiting in the inbox: what needs doing shows under the figures, and the chart of where the money
         // went, still nearly all Uncategorized, waits until they are sorted.
         // This month is still empty; the one before holds the imported rows.
         await page.locator('.page:visible .period .icon-button').first().click();
@@ -101,7 +101,8 @@ Bokföringsdag;Text;Belopp;Saldo
           const at = sel => { const el = page.querySelector(sel); return el ? [...page.querySelectorAll('*')].indexOf(el) : -1; };
           return { attention: at('.attention'), figures: at('.figures'), flow: at('.flow') };
         });
-        assert.ok(order.attention >= 0 && order.attention < order.figures, 'attention before the figures: ' + JSON.stringify(order));
+        // What needs doing sits directly under the number, as banners.
+        assert.ok(order.attention >= 0 && order.figures >= 0 && order.attention > order.figures, 'banners under the figures: ' + JSON.stringify(order));
         assert.equal(order.flow, -1, 'no chart while spending is mostly uncategorized');
         await page.locator('.page:visible .period .icon-button').last().click();
       }
@@ -111,7 +112,7 @@ Bokföringsdag;Text;Belopp;Saldo
     // draws the what-if line, and removing it takes the line away.
     // It is part of the Overview now, under what is worth knowing.
     await page.click('.topbar >> text=Overview');
-    await page.locator('.page:visible .plan-section h2', { hasText: 'Forecast' }).waitFor({ timeout: 10000 });
+    await page.locator('.page:visible .ahead-details > summary').click();
     await page.waitForSelector('svg.projection >> visible=true', { timeout: 10000 });
     const kpis = await page.locator('.forecast-kpis .kpi').count();
     if (kpis !== 4 && kpis !== 3) throw new Error(`forecast: ${kpis} key numbers`);
@@ -195,7 +196,7 @@ Bokföringsdag;Text;Belopp;Saldo
     await page.waitForTimeout(800);
     await page.screenshot({ path: out + '/12-home-sv.png', fullPage: true });
     await page.click('.topbar >> text=Översikt');
-    await page.waitForSelector('.page:visible h2 >> text=Prognos', { timeout: 10000 });
+    await page.waitForSelector('.page:visible h2 >> text=Framåt', { timeout: 10000 });
   });
   await run('phone', { width: 390, height: 844 }, async page => {
     await page.goto(base + '/');

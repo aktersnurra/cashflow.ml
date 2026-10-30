@@ -341,17 +341,32 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
                           (Msg.overview_track ~amount:(whole (J.field "miss" t)) ~count:(Int.to_string (J.int (J.field "forecasts" t)))
                              ~date:(Fmt.date_json (J.field "since" t)) locale)) ])
           in
-          [ Ui.div ~cls:"figure-label" [ Ui.text (Msg.overview_safe_title ~date:payday locale) ];
-            Ui.div ~cls:("hero " ^ Fmt.sign_tone safe) [ Ui.text (whole safe) ];
-            (if Float.(Fmt.to_float safe < 0.) then note (Msg.overview_safe_over ~amount:(kr (Fmt.to_float safe)) locale)
-             else note (Msg.overview_safe_sub ~amount:(whole (J.field "safe_per_day" o)) ~days:(Int.to_string (J.int (J.field "days_to_payday" o))) locale));
+          (* The one number, one line under it (per day, days left, what a usual day costs), its sum folded,
+             and two small figures under a hairline. *)
+          let left = (match J.field "days_total" o with `Int n -> n | _ -> 0) - (match J.field "days_covered" o with `Int n -> n | _ -> 0) in
+          let usual_day = if left > 0 then amount [ "usual_rest" ] /. Float.of_int left else 0. in
+          let stat ?(hint = "") ?(aside = "") label value =
+            Vdom.Node.div ~attrs:(Vdom.Attr.class_ "stat" :: (if String.is_empty hint then [] else [ Vdom.Attr.title hint ]))
+              [ Ui.div ~cls:"stat-label" [ Ui.text label ];
+                Ui.div ~cls:"stat-value num" [ Ui.text value; (if String.is_empty aside then Vdom.Node.none else Ui.span ~cls:"stat-aside" [ Ui.text aside ]) ] ]
+          in
+          ignore figure;
+          [ Ui.div ~cls:"hero-label" [ Ui.text (Msg.overview_safe_title ~date:payday locale) ];
+            Ui.div ~cls:("hero num " ^ Fmt.sign_tone safe) [ Ui.text (whole safe) ];
+            Ui.div ~cls:"hero-sub num"
+              [ Ui.text
+                  (if Float.(Fmt.to_float safe < 0.) then Msg.overview_safe_over ~amount:(kr (Fmt.to_float safe)) locale
+                   else if Float.(usual_day >= 1.) then
+                     Msg.overview_safe_sub_usual ~amount:(whole (J.field "safe_per_day" o)) ~days:(Int.to_string (J.int (J.field "days_to_payday" o))) ~usual:(kr usual_day) locale
+                   else Msg.overview_safe_sub ~amount:(whole (J.field "safe_per_day" o)) ~days:(Int.to_string (J.int (J.field "days_to_payday" o))) locale) ];
             workings;
-            Ui.div ~cls:"figure-divider" [];
-            figure ~hint:range_hint
-              ~aside:(match J.field "track_record" o with `Null -> "" | t -> "±" ^ whole (J.field "miss" t))
-              (Msg.overview_row_heading locale) (Fmt.signed_whole locale ~code (J.field "expected" o));
-            (if Float.(bills < 0.) then figure (Msg.overview_row_bills locale) (signed bills) else Vdom.Node.none);
-            (if Float.(income > 0.) then figure (Msg.overview_row_income locale) (signed income) else Vdom.Node.none);
+            Ui.div ~cls:"stats"
+              [ stat ~hint:range_hint
+                  ~aside:(match J.field "track_record" o with `Null -> "" | t -> "±" ^ whole (J.field "miss" t))
+                  (Msg.overview_row_heading locale) (Fmt.signed_whole locale ~code (J.field "expected" o));
+                (if Float.(bills < 0.) then stat (Msg.overview_row_bills locale) (signed bills)
+                 else if Float.(income > 0.) then stat (Msg.overview_row_income locale) (signed income)
+                 else Vdom.Node.none) ];
             (match J.field "covered_through" o with
              | `Null -> Ui.div ~cls:"figure-foot" [ Ui.text (Msg.overview_nothing_yet locale) ]
              | d -> Ui.div ~cls:"figure-foot" [ Ui.text (Msg.overview_through ~date:(Fmt.date_json d) locale) ]) ]
@@ -363,6 +378,8 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
              | false, (`String _ as d) -> note (Msg.overview_covered_through ~date:(Fmt.date_json d) locale)
              | _ -> Vdom.Node.none) ]
     in
+    if Option.is_some outlook then Ui.div ~cls:"overview-hero" (main @ [ (if J.bool (J.field "reconciled" c) then Vdom.Node.none else Ui.div ~cls:"figure-foot" [ Ui.text (Msg.label_provisional locale) ]) ])
+    else
     Ui.div ~cls:"panel figures"
       [ Ui.div ~cls:"figures-main"
           (main @ [ (if J.bool (J.field "reconciled" c) then Vdom.Node.none else Ui.div ~cls:"provisional" [ Ui.text (Msg.label_provisional locale) ]) ]);
@@ -394,17 +411,22 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
         Ui.div ~cls:"panel empty-panel"
           [ Ui.p (Msg.overview_empty locale) ]
     | Loaded _, Some c ->
-        Ui.div
-          [ figures c; (if offset = 0 then briefing else Vdom.Node.none);
-            Remote.view ~locale categories ~f:(fun json -> if mostly_uncategorized json then Vdom.Node.none else flow c json) ]
+        figures c
   in
+  (* Where the money went, as a flow: for a month that is over, where it answers the question. *)
+  let flow_view =
+    match summary, selected with
+    | Loaded _, Some c when offset <> 0 && not Float.(Fmt.to_float (J.field "income" c) = 0. && Fmt.to_float (J.field "spending" c) = 0.) ->
+        Remote.view ~locale categories ~f:(fun json -> if mostly_uncategorized json then Vdom.Node.none else flow c json)
+    | _ -> Vdom.Node.none
+  in
+  let briefing_view = if offset = 0 then briefing else Vdom.Node.none in
   let attention =
     match Map.data views with
     | [] -> Vdom.Node.none
     | items ->
-        Ui.div ~cls:"attention"
-          [ Ui.div ~cls:"section-head" [ Vdom.Node.h2 [ Ui.text (Msg.overview_attention locale) ]; Ui.span ~cls:"count" [ Ui.text (Int.to_string (List.length items)) ] ];
-            Ui.div ~cls:"attention-list" items ]
+        (* What needs doing, as slim banners straight under the number; no heading needed. *)
+        Ui.div ~cls:"attention" [ Ui.div ~cls:"attention-list" items ]
   in
   let hosted = Map.exists visible_cards ~f:(fun card -> Option.equal String.equal selected_finding (Some (J.str (J.field "key" card)))) in
   let standalone = advisor_route && not hosted in
@@ -427,6 +449,16 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
            Overview, the desk is there for the next question. *)
         let in_briefing = match selected_finding with Some k -> String.is_prefix k ~prefix:"question:" | None -> false in
         let box = if advisor_route && (hosted || in_briefing) then Vdom.Node.none else desk.view in
-        if urgent then [head; desk.files; attention; body; ahead; books; box] else [head; desk.files; body; attention; ahead; books; box]);
+        ignore urgent;
+        (* Each part keeps its place in the page whether it shows or not: a part that appears must not shift the
+           ones after it, or they are rebuilt and a section the reader opened closes again. *)
+        let slot node = Ui.div ~cls:"slot" [node] in
+        (* Two columns on a computer, each laid out on its own: what is read on the left, what is ahead on the
+           right; one column on a phone. *)
+        [head; slot desk.files;
+         Ui.div ~cls:"overview-cols"
+           [ Ui.div ~cls:"overview-main" [slot body; slot attention; slot briefing_view; slot flow_view];
+             Ui.div ~cls:"overview-side" [ahead] ];
+         books; slot box]);
      (if standalone then desk.files else Vdom.Node.none);
      (if standalone then outlet else Vdom.Node.none)]
