@@ -93,7 +93,8 @@ let test_the_feed_learns () =
     [ true ] (List.map (fun k -> Cashflow_core.Str_compat.contains ~sub:"elgiganten" k) (doubles ()))
 
 (* And quiet when nothing is wrong: a salary not imported yet isn't missing, the same lunch three days running
-   is a habit, ordinary spending has no "biggest purchase", and nor does a yearly insurance paid a year ago. *)
+   is a habit, ordinary spending has no "biggest purchase", nor does a yearly insurance paid a year ago, and a
+   bill that stopped isn't "unpaid": the statements can't tell that. *)
 let test_events_stay_quiet () =
   let service = make_service () in
   let alice = sign_in service "alice" in
@@ -103,6 +104,8 @@ let test_events_stay_quiet () =
     String.concat "\n"
       ([ "Datum;Text;Belopp"; "2026-06-25;LON;30000,00"; "2026-07-24;LON;30000,00"; "2026-08-25;LON;30000,00";
          "2025-09-01;IF FORSAKRING;-4800,00"; "2026-09-01;IF FORSAKRING;-4900,00";
+         (* A monthly bill that stopped: cancelled or paid another way, as far as the statements can tell. *)
+         "2026-05-28;HYRA;-9000,00"; "2026-06-28;HYRA;-9000,00"; "2026-07-28;HYRA;-9000,00";
          "2026-09-21;LUNCH;-120,00"; "2026-09-22;LUNCH;-120,00"; "2026-09-23;LUNCH;-120,00"; "2026-09-24;PRESSBYRAN;-450,00" ]
       @ monthly)
     ^ "\n"

@@ -145,21 +145,10 @@ let card_view ~(ctx : Ctx.t) (key : string Bonsai.t) (card : J.t Bonsai.t) graph
         ~actions:[ Ui.button (Msg.action_keep locale) (after (act ~key:card_key ~action:"resolve")); later ] ()
   (* Things in the statements that need you: what, how much, when, and what to do about it. *)
   | "missing_payment" ->
+      (* Only income: what the statements don't show is the one thing worth a look. *)
       let name = J.str (J.field "name" data) and amount = kr (J.field "amount" data) and date = Fmt.date_json (J.field "expected" data) in
-      if J.bool (J.field "income" data) then
-        Ui.card ~tone:"warning" ~title:(Msg.card_missing_income_title ~name locale) ~body:[ Ui.muted (Msg.card_missing_income_body ~amount ~date locale) ]
-          ~actions:[ Ui.button (Msg.action_paid_elsewhere locale) (after (act ~key:card_key ~action:"resolve")); later ] ()
-      else
-        let cadence =
-          String.lowercase
-            (match J.str (J.field "cadence" data) with
-             | "weekly" -> Msg.forecast_cadence_weekly locale
-             | "quarterly" -> Msg.forecast_cadence_quarterly locale
-             | "yearly" -> Msg.forecast_cadence_yearly locale
-             | _ -> Msg.forecast_cadence_monthly locale)
-        in
-        Ui.card ~tone:"warning" ~title:(Msg.card_missing_bill_title ~name locale) ~body:[ Ui.muted (Msg.card_missing_bill_body ~amount ~cadence ~date locale) ]
-          ~actions:[ Ui.button (Msg.action_paid_elsewhere locale) (after (act ~key:card_key ~action:"resolve")); later ] ()
+      Ui.card ~tone:"warning" ~title:(Msg.card_missing_income_title ~name locale) ~body:[ Ui.muted (Msg.card_missing_income_body ~amount ~date locale) ]
+        ~actions:[ Ui.button (Msg.action_paid_elsewhere locale) (after (act ~key:card_key ~action:"resolve")); later ] ()
   | "double_charge" ->
       Ui.card ~tone:"warning"
         ~title:(Msg.card_double_charge_title ~merchant:(J.str (J.field "merchant" data)) locale)

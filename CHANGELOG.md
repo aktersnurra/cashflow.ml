@@ -20,6 +20,9 @@
   and marked as a guess, because its category changes nothing you'd act on. What is left and matters (big, or a
   merchant that recurs) becomes at most three questions on the Overview, one per merchant: one tap files every row
   from it and teaches the next import. A line says what the last sweep did.
+- A bill missing from your statements is no longer flagged: the statements can't tell an unpaid bill from one you
+  cancelled or paid another way. A salary missing from statements that reach past its day still is, worded as what
+  is known ("isn't in your statements").
 - **One page.** The Overview is the app: no sidebar and no tab bar. A slim bar on top leads back to it, to the
   advisor's conversations and to Settings, with search beside them (icons only on a phone). Transactions and
   accounts open from where they come up (a category in where your money went, a question, an account in a card),

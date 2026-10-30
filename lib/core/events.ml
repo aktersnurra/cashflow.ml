@@ -8,7 +8,7 @@
 
 type t =
   | Missing of { series : Series.t; expected : Date.t }
-      (** a regular income or bill expected (with a few days' grace) before the statements end, not there *)
+      (** a regular income expected (with a few days' grace) before the statements end, not in them *)
   | Double_charge of { merchant : string; amount : int64; first : Transfer.t; second : Transfer.t }
   | Large_purchase of { purchase : Transfer.t; amount : int64; largest_before : int64 }
       (** at least twice the largest single purchase of the half year before it *)
@@ -20,14 +20,16 @@ let grace = function Analytics.Weekly -> 2 | Monthly -> 4 | Quarterly -> 7 | Yea
 
 let interval = function Analytics.Weekly -> 7 | Monthly -> 30 | Quarterly -> 91 | Yearly -> 365
 
-(* Late but within one interval: a series more than an interval overdue has stopped (the forecast leaves
-   it out), which is not news to act on today. Only series seen at least three times are trusted. *)
+(* Income only: the statements are all cashflow sees, and a bill missing from them most likely means it was
+   cancelled or paid another way; that is not a problem to raise (the forecast drops a series that stopped).
+   A salary missing from statements that reach past its day is worth a look. Late but within one interval: a
+   series more than an interval overdue has stopped. Only series seen at least three times are trusted. *)
 let missing ~covered_through (series : Series.t list) =
   List.filter_map
     (fun (s : Series.t) ->
       match s.kind with
-      | Transfer -> None
-      | Bill | Income ->
+      | Transfer | Bill -> None
+      | Income ->
           let due = Date.add_days s.next_expected (grace s.cadence) in
           if s.occurrences >= 3 && Date.compare due covered_through < 0
              && Date.days_between ~first:s.next_expected ~last:covered_through <= interval s.cadence
