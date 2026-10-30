@@ -12,7 +12,7 @@ const until=async promise=>{let timer;try{return await Promise.race([promise,new
  const credentials=await(await fetch(base+'/fixture/session')).json();
  await page.context().addCookies([{name:'cashflow_session',value:credentials.a.token,url:base}]);
  await page.addInitScript(()=>{const Native=window.EventSource;window.sources=[];window.EventSource=class extends Native{constructor(...args){super(...args);this.closedByApp=false;window.sources.push(this);}close(){this.closedByApp=true;super.close();}};});
- const button=name=>page.getByRole('button',{name,exact:true}),nav=name=>page.locator('.sidebar').getByRole('link',{name,exact:true});
+ const button=name=>page.getByRole('button',{name,exact:true}),nav=name=>page.locator('.topbar').getByRole('link',{name,exact:true});
  const composer=()=>page.getByRole('textbox',{name:'Message advisor',exact:true});
  const shared=()=>page.getByRole('heading',{name:'Shared bills may run short before payday',exact:true,includeHidden:true});
  const state=async()=>(await fetch(base+'/state')).json();
@@ -56,7 +56,7 @@ const until=async promise=>{let timer;try{return await Promise.race([promise,new
  if(pending)await until(acceptedHeld);else await page.getByText('first',{exact:true}).waitFor();
  await composer().fill('personal draft across initial legacy membership loss');
  const original=await page.getByTestId('selected-finding').elementHandle(),sourceCount=await page.evaluate(()=>window.sources.length);
- await page.locator('.sidebar a[href="/transactions"]').click();await nav('Advisor').click();await sleep(100);
+ await page.locator('.topbar a[href="/settings"]').click();await nav('Advisor').click();await sleep(100);
  assert.equal(await original.evaluate(e=>e===document.querySelector('[data-testid="selected-finding"]')),true,'unknown initial and repeated readiness cannot erase or revoke Home baseline');
  assert.equal(await shared().count(),1);assert.equal(posts,1);
  // Hold older real status/session replies with H while an ordinary version refresh runs.
@@ -65,7 +65,7 @@ const until=async promise=>{let timer;try{return await Promise.race([promise,new
  await until(Promise.all([oldStatusHeld,oldSessionHeld]));
  const leave=await page.request.post(base+'/api/commands/leave_household',{headers:{'x-csrf-token':credentials.a.csrf,origin:base},data:{}});assert.equal(leave.status(),200);
  afterLoss=true;
- await page.locator('.sidebar a[href="/transactions"]').click();await until(statusHeld);
+ await page.locator('.topbar a[href="/settings"]').click();await until(statusHeld);
  assert.equal(await shared().count(),1,'explicit loss has not yet been delivered to the client');
  await freshStatus();
  await shared().waitFor({state:'detached',timeout:4000});
@@ -85,7 +85,7 @@ const until=async promise=>{let timer;try{return await Promise.race([promise,new
  assert.equal(await composer().inputValue(),'personal draft across initial legacy membership loss');
  if(pending){await accepted();await page.getByText('first',{exact:true}).waitFor();}
  assert.equal(await composer().inputValue(),'personal draft across initial legacy membership loss');
- await page.locator('.sidebar a[href="/transactions"]').click();await nav('Advisor').click();await sleep(100);
+ await page.locator('.topbar a[href="/settings"]').click();await nav('Advisor').click();await sleep(100);
  assert.equal(sessionRequests,requestsAfterReload,'stale session/status cannot restore old Home baseline or cause another privacy reset');
  assert.equal(await shared().count(),0);assert.equal(await page.evaluate(()=>window.sources.length),sourceCount+(pending?1:0));
  assert.equal(await page.evaluate(()=>window.sources.filter(s=>!s.closedByApp).length),1);

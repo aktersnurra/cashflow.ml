@@ -62,7 +62,7 @@ const evidence = process.env.ADVISOR_EVIDENCE_DIR || '/tmp/briefing-evidence';
   for(let i=0;i<300&&!finished;i++){const c=await (await page.request.get(base+'/api/advisor/conversations/'+id)).json();finished=!c.data.active_run;if(!finished)await new Promise(r=>setTimeout(r,100));}
   assert.ok(finished,'the first answer finished');
   // The desk: a question typed on the Overview starts a conversation with it, sent at once (consent is given).
-  await page.locator('.sidebar').getByRole('link',{name:'Overview',exact:true}).click();
+  await page.locator('.topbar').getByRole('link',{name:'Overview',exact:true}).click();
   // The box waits at the foot of the page behind its handle.
   const desk=page.locator('.page:visible .desk textarea');
   assert.equal(await desk.isVisible(),false,'hidden until opened');

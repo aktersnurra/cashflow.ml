@@ -5,7 +5,7 @@ const base='http://127.0.0.1:18197';const sleep=ms=>new Promise(r=>setTimeout(r,
 (async()=>{const browser=await chromium.launch();try{
  const p=await browser.newPage();const sessions=await(await fetch(base+'/fixture/session')).json();
  await p.context().addCookies([{name:'cashflow_session',value:sessions.a.token,url:base}]);
- const button=name=>p.getByRole('button',{name,exact:true});const nav=name=>p.locator('.sidebar').getByRole('link',{name,exact:true});
+ const button=name=>p.getByRole('button',{name,exact:true});const nav=name=>p.locator('.topbar').getByRole('link',{name,exact:true});
  const history=async()=>{const trigger=p.locator('.advisor-title-button');if(await trigger.getAttribute('aria-expanded')!=='true')await trigger.click();};
  const menuItem=name=>p.getByRole('menuitem',{name,exact:true});
  const bodies=[];p.on('request',r=>{if(r.method()==='POST'&&r.url().endsWith('/api/advisor/turns'))bodies.push(JSON.parse(r.postData()).data);});

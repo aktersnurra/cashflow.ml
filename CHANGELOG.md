@@ -20,6 +20,10 @@
   and marked as a guess, because its category changes nothing you'd act on. What is left and matters (big, or a
   merchant that recurs) becomes at most three questions on the Overview, one per merchant: one tap files every row
   from it and teaches the next import. A line says what the last sweep did.
+- **One page.** The Overview is the app: no sidebar and no tab bar. A slim bar on top leads back to it, to the
+  advisor's conversations and to Settings, with search beside them (icons only on a phone). Transactions and
+  accounts open from where they come up (a category in where your money went, a question, an account in a card),
+  from search, or from the links at the foot of the Overview.
 - **Four places instead of thirteen pages:** Overview, Advisor, Money and Settings. The Overview takes what is
   ahead (the forecast chart and its key numbers, with payments, what-ifs and assumptions folded under it; goals and
   budgets). Money is Transactions and Accounts, with the inbox, an account and adding by hand inside them. The

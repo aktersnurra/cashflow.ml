@@ -65,7 +65,19 @@ kbd { font: 11px/16px var(--mono); padding: 0 4px; border: 1px solid var(--line-
 @media (prefers-reduced-motion: reduce) { *, *::before { animation: none !important; transition: none !important; } }
 
 /* Shell: a compact sidebar, stable and boring. */
-.shell { display: grid; grid-template-columns: 216px 1fr; min-height: 100dvh; }
+.shell { display: block; min-height: 100dvh; --topbar: 52px; }
+/* The one bar: back to the Overview on the left; search, the advisor's conversations and Settings on the right. */
+.topbar { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; justify-content: space-between; gap: 8px; height: var(--topbar); padding: 0 16px; box-sizing: border-box;
+  background: color-mix(in srgb, var(--bg) 88%, transparent); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); border-bottom: 1px solid var(--line); }
+.topbar-actions { display: flex; align-items: center; gap: 2px; }
+.topbar a, .topbar-search { display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 10px; border-radius: 8px; border: 0; background: transparent; color: var(--text-2); font: 500 14px/20px var(--font); cursor: pointer; }
+.topbar a:hover, .topbar-search:hover { background: var(--surface-2); color: var(--text); }
+.topbar a.active { color: var(--text); }
+.topbar-home { font-weight: 600; color: var(--text) !important; }
+.topbar .badge { display: none; }
+.books-links { display: flex; justify-content: center; gap: 10px; margin: 28px 0 8px; font-size: 13px; color: var(--text-3); }
+.books-links a { color: var(--text-2); }
+.books-links a:hover { color: var(--text); }
 .sidebar { position: sticky; top: 0; height: 100dvh; padding: 14px 10px; display: flex; flex-direction: column; gap: 2px; background: var(--sidebar); border-right: 1px solid var(--line); }
 .brand { display: flex; align-items: center; justify-content: space-between; padding: 0 2px 0 8px; font-size: 14px; font-weight: 600; letter-spacing: -.01em; }
 .nav-gap { height: 14px; flex: none; }
@@ -527,7 +539,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
 .finding-reply { margin: 8px 0 16px; }
 .advisor-outlet { min-width: 0; margin: 16px 0 24px; padding: 12px 0 0; overflow-wrap: anywhere; }
 .advisor-navigation { position: relative; display: flex; align-items: center; gap: 12px; min-width: 0; margin: 0 0 20px; padding: 6px 0; background: var(--bg); z-index: 3; }
-.advisor-page .advisor-navigation { position: sticky; top: 0; }
+.advisor-page .advisor-navigation { position: sticky; top: var(--topbar); }
 .advisor-navigation[data-menu-open] { z-index: 40; }
 .advisor-title-button, .advisor-actions-button, .advisor-sheet-close { border: 0; border-radius: 8px; background: transparent; color: var(--text); cursor: pointer; font: inherit; }
 .advisor-title-button { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 8px; margin-left: -8px; font: 600 16px/24px var(--font); text-align: left; }
@@ -682,9 +694,9 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
     background: var(--surface); border-color: var(--line); box-shadow: 0 -8px 24px color-mix(in srgb, var(--bg) 70%, transparent); }
   .advisor-composer-bottom { justify-content: flex-end; }
   .advisor-conversation .advisor-input { padding: 9px 8px; font-size: 16px; line-height: 24px; }
-  /* Docked on the tab bar (54px high) with nothing showing through between them. On the advisor page it is
-     fixed there, however short the conversation, and the conversation leaves room for it. */
-  .advisor-composer-area { bottom: calc(54px + env(safe-area-inset-bottom)); padding: 8px 0 8px; background: linear-gradient(to bottom, transparent, var(--chat-paper) 16px); }
+  /* Docked at the foot of the screen. On the advisor page it is fixed there, however short the conversation,
+     and the conversation leaves room for it. */
+  .advisor-composer-area { bottom: env(safe-area-inset-bottom); padding: 8px 0 8px; background: linear-gradient(to bottom, transparent, var(--chat-paper) 16px); }
   .advisor-page .advisor-composer-area { position: fixed; left: 16px; right: 16px; z-index: 5; }
   .advisor-page .advisor-conversation { padding-bottom: 168px; }
   .advisor-status:empty, .advisor-status { margin-top: 4px; }
@@ -765,7 +777,7 @@ main.page.advisor-page.dropping { outline: 2px dashed var(--accent); outline-off
 
 /* Phones: a grab bar above the tab bar to swipe up; on the keyboard while typing. */
 @media (max-width: 760px) {
-  .desk { position: fixed; left: 16px; right: 16px; bottom: calc(54px + env(safe-area-inset-bottom)); padding: 0 0 6px; }
+  .desk { position: fixed; left: 16px; right: 16px; bottom: calc(8px + env(safe-area-inset-bottom)); padding: 0 0 6px; }
   .page.has-desk { padding-bottom: calc(110px + env(safe-area-inset-bottom)); }
   html.typing .desk { bottom: calc(var(--keyboard, 0px) + 8px); }
   .desk-handle { width: 100%; height: 28px; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
@@ -787,3 +799,15 @@ main.page.advisor-page.dropping { outline: 2px dashed var(--accent); outline-off
 .question-merchant { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 0; border-top: 1px solid var(--line); }
 .question-merchant:first-of-type { border-top: 0; }
 .question-answers { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+
+/* Phones: the bar shows its icons only, and leaves room for the notch. */
+@media (max-width: 760px) {
+  .shell { --topbar: calc(48px + env(safe-area-inset-top)); }
+  .topbar { padding: env(safe-area-inset-top) 8px 0; }
+  .topbar .label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .topbar a, .topbar-search { width: 40px; justify-content: center; padding: 0; }
+  .advisor-page .advisor-navigation { top: var(--topbar); padding-top: 10px; }
+}
+/* A briefing card's answers stay on one line. */
+.card.question .actions { gap: 2px; flex-wrap: nowrap; }
+.card.question .actions .button { padding: 0 8px; font-size: 13px; white-space: nowrap; }

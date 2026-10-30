@@ -17,7 +17,7 @@ const output=process.env.ADVISOR_EVIDENCE_DIR||'/tmp/advisor-command-bar';fs.mkd
   page.on('pageerror',e=>errors.push(e.message));
   page.on('request',q=>{if(q.method()==='POST'&&q.url()===base+'/api/advisor/turns')posts++;});
   await page.goto(base+'/');
-  await page.locator('.sidebar').waitFor({timeout:10000});
+  await page.locator('.topbar').waitFor({timeout:10000});
   await page.keyboard.press('Control+k');
   const palette=page.locator('.palette input');
   await palette.waitFor({timeout:5000});
@@ -41,7 +41,7 @@ const output=process.env.ADVISOR_EVIDENCE_DIR||'/tmp/advisor-command-bar';fs.mkd
   await fresh.addCookies([{name:'cashflow_session',value:sessions.c.token,url:base}]);
   const second=await fresh.newPage();
   await second.goto(base+'/');
-  await second.locator('.sidebar').waitFor({timeout:10000});
+  await second.locator('.topbar').waitFor({timeout:10000});
   await second.keyboard.press('Control+k');
   await second.locator('.palette input').fill('is my rent too high?');
   await second.locator('.palette input').press('Enter');

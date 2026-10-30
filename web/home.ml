@@ -272,9 +272,6 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
   let head =
     Ui.div ~cls:"page-head"
       [ Vdom.Node.h1 [ Ui.text (Msg.nav_home locale) ];
-        Vdom.Node.a ~attrs:([Vdom.Attr.class_ "advisor-mobile-link button"; Vdom.Attr.href "/advisor";
-          Vdom.Attr.on_click (fun _ -> Effect.Many [Effect.Prevent_default; navigate (Route.Advisor None)])]
-          @ if advisor_route then [Vdom.Attr.create "aria-current" "page"] else []) [Ui.text (Msg.nav_advisor locale)];
         Ui.div ~cls:"page-controls"
           [ (if List.is_empty scopes then Vdom.Node.none
              else Ui.div ~cls:"segmented" (List.map scopes ~f:(fun (value, label) -> Ui.button ~kind:(if String.equal value scope then "active" else "") label (set_scope value))));
@@ -432,6 +429,15 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
         (* What was handed over shows where the page starts; the box waits at its foot. *)
         (* What is ahead follows what needs doing, for the current period only. *)
         let ahead = if offset = 0 then Ui.div ~cls:"ahead" [forecast; goals] else Vdom.Node.none in
-        if urgent then [head; desk.files; attention; body; ahead; desk.view] else [head; desk.files; body; attention; ahead; desk.view]);
+        (* The rest of the books, for when they are wanted: every transaction, and the accounts. *)
+        let books =
+          let go r label = Vdom.Node.a ~attrs:[Vdom.Attr.href (Route.to_path r); Vdom.Attr.on_click (fun _ -> Effect.Many [Effect.Prevent_default; navigate r])] [Ui.text label] in
+          Ui.div ~cls:"books-links"
+            [go (Route.Transactions { offset = 0; category = None }) (Msg.overview_all_transactions locale); Ui.span [Ui.text "·"]; go Route.Accounts (Msg.nav_accounts locale)] in
+        (* While in a conversation under a card, its composer is the box: the desk steps aside. Back on the
+           Overview, the desk is there for the next question. *)
+        let in_briefing = match selected_finding with Some k -> String.is_prefix k ~prefix:"question:" | None -> false in
+        let box = if advisor_route && (hosted || in_briefing) then Vdom.Node.none else desk.view in
+        if urgent then [head; desk.files; attention; body; ahead; books; box] else [head; desk.files; body; attention; ahead; books; box]);
      (if standalone then desk.files else Vdom.Node.none);
      (if standalone then outlet else Vdom.Node.none)]

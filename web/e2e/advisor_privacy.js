@@ -115,7 +115,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
      assert.notEqual((await state()).tool_hashes[1],first);
      await fetch(base+'/release');await page.getByRole('status').filter({hasText:'Answer complete'}).waitFor();
      const s=await snap(id);assert.equal(s.turns[0].attempts[0].segments.filter(x=>x.type==='Evidence_segment').length,2);
-     await page.locator('.sidebar').getByRole('link',{name:'Settings',exact:true}).click();
+     await page.locator('.topbar').getByRole('link',{name:'Settings',exact:true}).click();
      await page.locator('select:visible').first().selectOption('sv');await button('Save').click();
      await page.getByRole('heading',{name:'Inställningar',exact:true}).waitFor();
      // Saving a language renames the seeded categories (translated names), so only that step re-baselines the digest.

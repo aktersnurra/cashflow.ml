@@ -739,3 +739,4 @@ card.questions.row = {$rows} betalningar · {$amount}
 card.questions.other = Något annat
 card.autofiled.title = Bokförde {$filed} transaktioner åt dig
 card.autofiled.body = {$guessed} små är bästa gissningar; ändra under Pengar.
+overview.all_transactions = Alla transaktioner

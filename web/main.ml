@@ -38,11 +38,10 @@ let navigate_to set_route route =
     [ Effect.of_thunk (fun () -> Dom_html.window##.history##pushState Js.null (Js.string "") (Js.some (Js.string (Route.to_path route))));
       set_route route ]
 
-(* The sidebar: four places, Overview, Advisor and Money, with Settings at the foot. *)
-let nav_groups = Route.[ [ (Home, None); (Advisor None, None); (section_entry Money, Some Money) ] ]
-
-(* The same four on a phone. Statements are handed over on the Overview's desk, so there is no import tab. *)
-let tab_items = Route.[ (Home, None); (section_entry Money, Some Money); (Advisor None, None); (Settings, None) ]
+(* There is one page, the Overview: everything else is reached from it. A slim bar on top leads back to it, to
+   the advisor's conversations and to Settings, with search (the palette) beside them; transactions and accounts
+   open from where they come up (a category, an account, a question) or from search. *)
+let top_items = Route.[ (Advisor None, None); (Settings, None) ]
 
 let icon route =
   let name : Feather_icon.t =
@@ -305,7 +304,7 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
   let palette_view = Palette.component ~ctx ~ask:ask_advisor ~open_:palette ~close:(let%arr set_palette in set_palette false) graph in
   let inbox_count = let%arr session in J.int (J.field "inbox_count" session) in
   let%arr page and home and route and locale and navigate and toast and pending_g and set_pending_g and set_palette and palette_view and inbox_count
-  and set_route and theme and set_theme in
+  and set_route in
   (* Back and forward buttons. *)
   Dom_html.window##.onpopstate :=
     Dom_html.handler (fun _ ->
@@ -321,6 +320,7 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
     Vdom.Node.a
       ~attrs:
         ([ Vdom.Attr.class_ (cls ^ if active then " active" else ""); Vdom.Attr.href (Route.to_path r);
+           Vdom.Attr.create "aria-label" (match section with Some s -> Route.section_title locale s | None -> Route.title locale r);
           Vdom.Attr.on_click (fun _ -> Effect.Many [ Effect.Prevent_default; navigate r ]) ]
          @ if active then [Vdom.Attr.create "aria-current" (if Option.is_some section then "true" else "page")] else [])
       [ Ui.span ~cls:"icon" [ icon r ]; Ui.span ~cls:"label" [ Ui.text (match section with Some s -> Route.section_title locale s | None -> Route.title locale r) ];
@@ -363,26 +363,17 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
   Vdom.Node.div
     ~attrs:[ Vdom.Attr.class_ "shell"; Vdom.Attr.Global_listeners.keydown on_key ]
     [ Vdom.Node.create "nav"
-        ~attrs:[ Vdom.Attr.class_ "sidebar" ]
-        ([ Ui.div ~cls:"brand"
-             [ Ui.span [ Ui.text (Msg.app_name locale) ];
-               Vdom.Node.button
+        ~attrs:[ Vdom.Attr.class_ "topbar"; Vdom.Attr.create "aria-label" (Msg.app_name locale) ]
+        [ link ~cls:"topbar-home" (Route.Home, None);
+          Ui.div ~cls:"topbar-actions"
+            ([ Vdom.Node.button
                  ~attrs:
-                   [ Vdom.Attr.class_ "button icon-button"; Vdom.Attr.type_ "button"; Vdom.Attr.title (Msg.command_placeholder locale ^ " (⌘K)");
+                   [ Vdom.Attr.class_ "topbar-search"; Vdom.Attr.type_ "button"; Vdom.Attr.title (Msg.command_placeholder locale ^ " (⌘K)");
                      Vdom.Attr.create "aria-label" (Msg.command_placeholder locale); Vdom.Attr.on_click (fun _ -> set_palette true) ]
-                 [ Feather_icon.svg ~size:(`Px 16) ~stroke:(`Name "currentColor") ~stroke_width:(`Px 2) Search ] ] ]
-        @ List.concat_map nav_groups ~f:(fun routes -> Ui.div ~cls:"nav-gap" [] :: List.map routes ~f:(link ~cls:"nav-link"))
-        @ [ Ui.div ~cls:"sidebar-foot"
-              [ link ~cls:"nav-link" (Route.Settings, None);
-                Vdom.Node.button
-                  ~attrs:
-                    [ Vdom.Attr.class_ "button icon-button"; Vdom.Attr.type_ "button"; Vdom.Attr.title (Msg.palette_flip_theme locale);
-                      Vdom.Attr.create "aria-label" (Msg.palette_flip_theme locale); Vdom.Attr.on_click (fun _ -> set_theme (Theme.flipped theme)) ]
-                  [ Feather_icon.svg ~size:(`Px 16) ~stroke:(`Name "currentColor") ~stroke_width:(`Px 2)
-                      (if (match theme with Theme.Light -> false | Dark -> true | System -> Theme.system_is_dark ()) then Sun else Moon) ] ] ]);
+                 [ Feather_icon.svg ~size:(`Px 18) ~stroke:(`Name "currentColor") ~stroke_width:(`Px 2) Search ] ]
+            @ List.map top_items ~f:(link ~cls:"topbar-link")) ];
       Ui.div ~cls:"content" [Vdom.Node.div
         ~attrs:(if (match route with Route.Home | Advisor _ -> true | _ -> false) then [] else [Vdom.Attr.create "hidden" ""]) [home]; section_strip; page];
-      Vdom.Node.create "nav" ~attrs:[ Vdom.Attr.class_ "tabbar" ] (List.map tab_items ~f:(link ~cls:"tab"));
       palette_view;
       (match toast with Some message -> Ui.div ~cls:"toast" [ Ui.text message ] | None -> Vdom.Node.none) ]
 

@@ -40,8 +40,8 @@ Bokföringsdag;Text;Belopp;Saldo
     await page.waitForSelector('.page .panel, .page .empty', { timeout: 15000 });
     await page.screenshot({ path: out + '/01-home-empty.png' });
     // Open a checking account through the form.
-    await page.click('.sidebar >> text=Money');
-    await page.click('.section-nav >> text=Accounts');
+    // One page: the accounts are a link at the foot of the Overview.
+    await page.click('.books-links >> text=Accounts');
     await page.click('text=Open account');
     await page.fill('.sheet input >> nth=0', 'Lönekonto');
     await page.click('.sheet .button.primary');
@@ -82,9 +82,11 @@ Bokföringsdag;Text;Belopp;Saldo
     await page.waitForSelector('h1 >> text=Accounts', { timeout: 10000 });
     await page.screenshot({ path: out + '/07-accounts.png', fullPage: true });
     // Four places: Overview, Advisor, Money and Settings (the household among its sections).
-    assert.deepEqual((await page.locator('.sidebar .nav-link').allInnerTexts()).map(t => t.split('\n')[0]), ['Overview', 'Advisor', 'Money', 'Settings']);
+    // One page: a bar on top leads back to the Overview, to the advisor and to Settings; nothing else to navigate.
+    assert.equal(await page.locator('.sidebar, .tabbar').count(), 0, 'no sidebar or tab bar');
+    assert.deepEqual(await page.locator('.topbar a').evaluateAll(as => as.map(a => a.getAttribute('aria-label'))), ['Overview', 'Advisor', 'Settings']);
     for (const [label, file] of [['Overview', '09-home'], ['Settings', '10-settings']]) {
-      await page.click(`.sidebar >> text=${label}`);
+      await page.click(`.topbar >> text=${label}`);
       await page.waitForTimeout(800);
       if (label === 'Overview') {
         assert.ok(feedCalls > feedBefore, 'Home reloads when it is shown again');
@@ -108,7 +110,7 @@ Bokföringsdag;Text;Belopp;Saldo
     // Forecast: one imported month has no recurring payments yet, so Upcoming says so; a one-off
     // draws the what-if line, and removing it takes the line away.
     // It is part of the Overview now, under what is worth knowing.
-    await page.click('.sidebar >> text=Overview');
+    await page.click('.topbar >> text=Overview');
     await page.locator('.page:visible .plan-section h2', { hasText: 'Forecast' }).waitFor({ timeout: 10000 });
     await page.waitForSelector('svg.projection >> visible=true', { timeout: 10000 });
     const kpis = await page.locator('.forecast-kpis .kpi').count();
@@ -129,7 +131,7 @@ Bokföringsdag;Text;Belopp;Saldo
     await page.click('.what-if .chip >> text=Sofa');
     await page.waitForSelector('svg.projection .line.what-if', { state: 'detached', timeout: 10000 });
     // Advisor memory: notes the user writes are added, edited and forgotten from Settings.
-    await page.click('.sidebar >> text=Settings');
+    await page.click('.topbar >> text=Settings');
     const noteInput = page.getByPlaceholder('For example: answer in whole kronor');
     await noteInput.waitFor({ timeout: 10000 });
     await page.getByText('No notes yet.').waitFor();
@@ -160,15 +162,16 @@ Bokföringsdag;Text;Belopp;Saldo
     // Switch to Swedish in Settings; the whole UI follows.
     await page.selectOption('.setting-row select >> nth=0', 'sv');
     await page.click('.table-foot .button.primary');
-    await page.waitForSelector('.sidebar >> text=Pengar', { timeout: 10000 });
+    await page.waitForSelector('.topbar >> text=Översikt', { timeout: 10000 });
     await page.getByRole('heading', { name: 'Minne', exact: true }).waitFor({ timeout: 10000 });
     await page.getByRole('heading', { name: 'Automatiska kategorier', exact: true }).waitFor({ timeout: 10000 });
     await page.getByPlaceholder('Till exempel: svara i hela kronor').waitFor();
     // The starter categories follow too, with nothing reloaded: they are stored once, in English,
     // and the browser names them in the reader's language.
-    await page.click('.sidebar >> text=Pengar');
-    await page.click('.section-nav >> text=Konton');
-    await page.locator('.row-title', { hasText: /^Mat & hushåll$/ }).first().waitFor({ timeout: 10000 });
+    await page.click('.topbar >> text=Översikt');
+    await page.click('.page:visible .books-links >> text=Konton');
+    await page.waitForSelector('h1 >> text=Konton', { timeout: 10000 });
+    await page.locator('.page:visible .row-title', { hasText: /^Mat & hushåll$/ }).first().waitFor({ timeout: 10000 });
     // Categories nothing has moved through yet wait, folded, under one line.
     const unused = page.locator('.page:visible .unused-categories');
     assert.equal(await unused.count(), 2, 'spending and income each fold their unused categories');
@@ -188,10 +191,10 @@ Bokföringsdag;Text;Belopp;Saldo
     assert.equal(await groceriesOption.locator('.row-sub').textContent(), 'Utgiftskategori', 'its kind in Swedish too');
     await page.screenshot({ path: out + '/16-inbox-picker-sv.png' });
     await page.keyboard.press('Escape');
-    await page.click('.sidebar >> text=Översikt');
+    await page.click('.topbar >> text=Översikt');
     await page.waitForTimeout(800);
     await page.screenshot({ path: out + '/12-home-sv.png', fullPage: true });
-    await page.click('.sidebar >> text=Översikt');
+    await page.click('.topbar >> text=Översikt');
     await page.waitForSelector('.page:visible h2 >> text=Prognos', { timeout: 10000 });
   });
   await run('phone', { width: 390, height: 844 }, async page => {
@@ -230,7 +233,7 @@ Bokföringsdag;Text;Belopp;Saldo
     await page.waitForSelector('h1 >> text=Sparkonto', { timeout: 10000 });
     await page.screenshot({ path: out + '/23-phone-account.png', fullPage: true });
     // A statement for an account it knows is just filed: no preview, no button.
-    await page.click('.tabbar >> text=Översikt');
+    await page.click('.topbar a[href="/"]');
     let previews = 0;
     const seen = [];
     page.on('request', r => { if (r.url().includes('_statement')) seen.push(r.url().split('/').pop() + ' ' + (r.postData() || '').replace(/"content[^,]*,/, '').slice(0, 160)); if (r.url().includes('import_statement') && !(r.postData() || '').includes('"confirm":true')) previews++; });
@@ -248,7 +251,6 @@ Bokföringsdag;Text;Belopp;Saldo
     await page.goto(base + '/transactions');
     await page.locator('.page:visible .button', { hasText: 'Lägg till' }).first().click();
     await page.waitForSelector('.add-form', { timeout: 10000 });
-    await page.click('.tabbar >> text=Pengar');
     await page.waitForSelector('.section-nav');
     const strip = await page.locator('.section-nav').boundingBox();
     assert.ok(strip.x >= 0 && strip.width <= 390, 'the section strip fits the phone width');

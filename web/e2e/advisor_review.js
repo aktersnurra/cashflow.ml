@@ -10,7 +10,7 @@ assert.ok(['name','route','route-history','enable','enable-pending','mobile','re
  const sessions=await(await fetch(base+'/fixture/session')).json();
  await page.context().addCookies([{name:'cashflow_session',value:sessions.a.token,url:base}]);
  await page.addInitScript(()=>{const Native=window.EventSource;window.sources=[];window.maxSources=0;window.EventSource=class extends Native{constructor(...a){super(...a);this.closedByApp=false;window.sources.push(this);window.maxSources=Math.max(window.maxSources,window.sources.filter(s=>!s.closedByApp).length);}close(){this.closedByApp=true;super.close();}};});
- const button=name=>page.getByRole('button',{name,exact:true}),nav=name=>page.locator('.sidebar').getByRole('link',{name,exact:true});
+ const button=name=>page.getByRole('button',{name,exact:true}),nav=name=>page.locator('.topbar').getByRole('link',{name,exact:true});
  const composer=()=>page.getByRole('textbox',{name:'Message advisor',exact:true});
  const api=(path,data)=>page.request.post(base+path,{headers:{'x-csrf-token':sessions.a.csrf,origin:base},data});
  const state=async()=>(await fetch(base+'/state')).json();
@@ -49,7 +49,7 @@ assert.ok(['name','route','route-history','enable','enable-pending','mobile','re
   if(kind==='leave')await nav('Settings').click();const before=statuses;
   if(kind==='disable'){await nav('Settings').click();await page.getByRole('switch',{name:'Disable household Advisor',exact:true}).click();await page.getByRole('switch',{name:'Enable household Advisor',exact:true}).waitFor();}
   else {const response=kind==='leave'?await api('/api/commands/leave_household',{}):await api('/api/advisor/consent',{enabled:false,household_id:readiness.household.household_id});assert.equal(response.status(),200);}
-  if(kind==='leave'){await page.locator('select:visible').first().selectOption('en');await button('Save').click();}else if(kind!=='disable')await page.locator('.sidebar a[href="/transactions"]').click();
+  if(kind==='leave'){await page.locator('select:visible').first().selectOption('en');await button('Save').click();}else if(kind!=='disable')await page.locator('.topbar a[href="/settings"]').click();
   for(let i=0;i<100&&((kind!=='disable'&&!denials)||statuses<=before);i++)await sleep(20);
   assert.ok(statuses>before,'ordinary route/version refresh must fetch NEW readiness after cached success');if(kind!=='disable')assert.ok(denials>0,'authorized snapshot must deny completed thread');
   await page.getByText(/Access to this conversation has ended/).waitFor({state:'attached'});
@@ -65,16 +65,16 @@ assert.ok(['name','route','route-history','enable','enable-pending','mobile','re
    await history();await page.getByRole('menuitem',{name:'New conversation',exact:true}).click();await page.getByText('What would you like to understand about your money?',{exact:true}).waitFor();
    let release,ready,id;const held=new Promise(r=>ready=r);
    await page.route('**/api/advisor/turns',async route=>{const response=await route.fetch();id=(await response.json()).data.ids.conversation_id;release=()=>route.fulfill({response});ready();});
-   await send('Deferred different conversation');await until(held);await page.locator('.sidebar a[href="/transactions"]').click();
+   await send('Deferred different conversation');await until(held);await page.locator('.topbar a[href="/settings"]').click();
    const loaded=page.waitForResponse(r=>r.url().includes('/api/advisor/conversations/'+id)&&r.status()===200);await release();await loaded;
-   assert.equal(new URL(page.url()).pathname,'/transactions');await page.evaluate(()=>window.history.go(-2));await page.waitForURL(base+original);
+   assert.equal(new URL(page.url()).pathname,'/settings');await page.evaluate(()=>window.history.go(-2));await page.waitForURL(base+original);
    await page.locator('.advisor-user-message').getByText('Original history conversation',{exact:true}).waitFor();assert.equal(new URL(page.url()).pathname,original,'explicit history selection supersedes pending acceptance');assert.equal(posts,2);assert.equal((await state()).provider_starts,2);
   }else if(kind==='route'){
    let release,ready;const held=new Promise(r=>ready=r);
    await page.route('**/api/advisor/turns',async route=>{const response=await route.fetch();assert.equal(response.status(),202);release=()=>route.fulfill({response});ready();});
-   await send('Delayed first acceptance');await until(held);await page.locator('.sidebar a[href="/transactions"]').click();assert.equal(new URL(page.url()).pathname,'/transactions');
+   await send('Delayed first acceptance');await until(held);await page.locator('.topbar a[href="/settings"]').click();assert.equal(new URL(page.url()).pathname,'/settings');
    await release();for(let i=0;i<100&&await page.evaluate(()=>window.sources.length)===0;i++)await sleep(20);
-   assert.equal(new URL(page.url()).pathname,'/transactions','acceptance never redirects temporary financial page');
+   assert.equal(new URL(page.url()).pathname,'/settings','acceptance never redirects temporary financial page');
    const entries=await page.evaluate(()=>history.length);await nav('Advisor').click();await page.waitForURL(/\/advisor\//,{timeout:4000});
    assert.equal(await page.evaluate(()=>history.length),entries+1,'explicit return pushes once; deferred acceptance only replaces');assert.equal(posts,1);assert.equal((await state()).provider_starts,1);
   }else{
@@ -85,7 +85,7 @@ assert.ok(['name','route','route-history','enable','enable-pending','mobile','re
    if(kind==='personal-leave'||kind==='personal-leave-error'||kind==='personal-change'){
     // A missing legacy readiness member is unknown, not a confirmed membership revocation.
     const legacy=route=>route.fulfill({status:200,contentType:'application/json',json:{available:true,consent:true}});
-    await page.route('**/api/advisor/status',legacy);await page.locator('.sidebar a[href="/transactions"]').click();await nav('Advisor').click();await sleep(100);
+    await page.route('**/api/advisor/status',legacy);await page.locator('.topbar a[href="/settings"]').click();await nav('Advisor').click();await sleep(100);
     assert.equal(await source.evaluate(e=>e===document.querySelector('[data-testid="selected-finding"]')),true,'unknown legacy metadata cannot reset Home');
     await page.unroute('**/api/advisor/status',legacy);
     let oldFeed,feedReady;const feedHeld=new Promise(r=>feedReady=r);
@@ -97,7 +97,7 @@ assert.ok(['name','route','route-history','enable','enable-pending','mobile','re
     let freshSession,sessionReady;const sessionHeld=new Promise(r=>sessionReady=r);
     let firstSession=true;const holdSession=async route=>{if(!firstSession)return route.continue();firstSession=false;if(kind==='personal-change')assert.equal((await api('/api/commands/create_household',{name:'Replacement synthetic household'})).status(),200);const response=await route.fetch();const current=(await response.json()).household;if(kind==='personal-change'){assert.ok(current);assert.notEqual(current.id,oldMembership);}else assert.equal(current,null);freshSession=()=>route.fulfill({response});sessionReady();};
     await page.route('**/api/session*',holdSession);
-    await page.locator('.sidebar a[href="/transactions"]').click();await until(sessionHeld);
+    await page.locator('.topbar a[href="/settings"]').click();await until(sessionHeld);
     assert.equal(await page.getByRole('heading',{name:'Shared bills may run short before payday',exact:true,includeHidden:true}).count(),0,'old household feed gone before session reload completes');
     await freshSession();await page.unroute('**/api/session*',holdSession);
     // Home stays mounted but only loads its figures while it is showing, so return to it for the fresh feed.

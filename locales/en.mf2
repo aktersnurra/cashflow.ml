@@ -740,3 +740,4 @@ card.questions.row = {$rows} payments · {$amount}
 card.questions.other = Something else
 card.autofiled.title = Filed {$filed} transactions for you
 card.autofiled.body = {$guessed} small ones are best guesses; change any under Money.
+overview.all_transactions = All transactions
