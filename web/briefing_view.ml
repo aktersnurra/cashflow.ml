@@ -47,17 +47,17 @@ let component ~(ctx : Ctx.t) ~(scope : string Bonsai.t) ~(visible : bool Bonsai.
         let n name = Int.to_string (J.int (f name)) in
         let category v = Accounts_data.name ~locale v in
         let signed x = Fmt.signed_whole locale ~code (`String (Printf.sprintf "%.2f" x)) in
-        let title, value, sub, rows =
+        let title, value, unit, sub, rows =
           match J.str (J.field "family" q) with
           | "proposed" -> (
               let g name = J.path [ "figures"; name ] a in
               let title = J.str (f "title") in
               match J.str (g "check") with
-              | "merchant_spend" -> (title, kr (g "total"), Msg.q_leak_sub ~count:(Int.to_string (J.int (g "count"))) ~months:(Int.to_string (J.int (g "months"))) locale, [])
-              | "category_change" -> (title, kr (g "recent"), Msg.q_change_sub ~earlier:(kr (g "earlier")) locale, [])
+              | "merchant_spend" -> (title, kr (g "total"), "", Msg.q_leak_sub ~count:(Int.to_string (J.int (g "count"))) ~months:(Int.to_string (J.int (g "months"))) locale, [])
+              | "category_change" -> (title, kr (g "recent"), Msg.q_change_unit locale, Msg.q_change_sub ~earlier:(kr (g "earlier")) locale, [])
               | "new_merchant" ->
-                  (title, kr (g "total"), Msg.q_new_sub ~count:(Int.to_string (J.int (g "count"))) ~date:(Fmt.date_json (g "first")) locale, [])
-              | _ -> ("", "", "", []))
+                  (title, kr (g "total"), "", Msg.q_new_sub ~count:(Int.to_string (J.int (g "count"))) ~date:(Fmt.date_json (g "first")) locale, [])
+              | _ -> ("", "", "", "", []))
           | "last_month" ->
               (* What made the difference, each said as what it is. *)
               let driver d =
@@ -73,32 +73,41 @@ let component ~(ctx : Ctx.t) ~(scope : string Bonsai.t) ~(visible : bool Bonsai.
               in
               let month = Fmt.month_label locale (J.str (J.path [ "cycle"; "cycle" ] a)) in
               let more = Float.(Fmt.to_float (f "spending") >= Fmt.to_float (f "usual_spending")) in
+              (* Under the title, what made most of the difference. *)
+              let named d =
+                match J.str (J.field "kind" d) with
+                | "yearly" | "one_off" -> Some (J.str (J.field "description" d))
+                | "habit" | "less" -> Some (category (J.field "category" d))
+                | _ -> None
+              in
               ( (if more then Msg.q_month_more ~month locale else Msg.q_month_less ~month locale), kr (f "spending"),
-                Msg.q_month_sub ~usual:(kr (f "usual_spending")) locale, List.map (J.list (f "drivers")) ~f:driver )
+                Msg.q_month_unit ~usual:(kr (f "usual_spending")) locale,
+                String.concat ~sep:", " (List.take (List.filter_map (J.list (f "drivers")) ~f:named) 2),
+                List.map (J.list (f "drivers")) ~f:driver )
           | "where_it_goes" ->
-              ( Msg.q_where_title locale, kr (f "flexible"), Msg.q_where_sub ~fixed:(kr (f "fixed")) ~one_off:(kr (f "one_off")) locale,
+              ( Msg.q_where_title locale, kr (f "flexible"), Msg.q_where_unit locale, Msg.q_where_sub ~fixed:(kr (f "fixed")) ~one_off:(kr (f "one_off")) locale,
                 List.map (J.list (f "top")) ~f:(fun t -> row (category (J.field "category" t)) (kr (J.field "total" t))) )
           | "regular_bills" ->
               let fresh = J.list (f "fresh") and raised = J.list (f "raised") in
               let named b = J.str (J.field "name" b) in
-              ( Msg.q_bills_title locale, kr (f "yearly"), Msg.q_bills_sub ~count:(n "count") locale,
+              ( Msg.q_bills_title locale, kr (f "yearly"), Msg.q_bills_unit locale, Msg.q_bills_sub ~count:(n "count") locale,
                 List.map fresh ~f:(fun b -> row ~tag:(Msg.q_new locale) (named b) (kr (J.field "yearly" b)))
                 @ List.map raised ~f:(fun b -> row ~tag:(Msg.q_raised ~amount:(kr (J.field "rise" b)) locale) (named b) (kr (J.field "yearly" b)))
                 @ (if List.is_empty fresh && List.is_empty raised then List.map (J.list (f "biggest")) ~f:(fun b -> row (named b) (kr (J.field "yearly" b))) else []) )
           | "drift" ->
-              ( Msg.q_drift_title ~category:(category (f "category")) locale, kr (f "recent"),
+              ( Msg.q_drift_title ~category:(category (f "category")) locale, kr (f "recent"), Msg.q_drift_unit locale,
                 Msg.q_drift_sub ~usual:(kr (f "usual")) ~cycles:(n "cycles") locale, [] )
-          | "leak" -> (Msg.q_leak_title ~name:(J.str (f "name")) locale, kr (f "total"), Msg.q_leak_sub ~count:(n "count") ~months:(n "months") locale, [])
-          | "fees" -> (Msg.q_fees_title locale, kr (J.field "stake" q), Msg.q_fees_sub ~amount:(kr (f "total")) ~months:(n "months") locale, [])
+          | "leak" -> (Msg.q_leak_title ~name:(J.str (f "name")) locale, kr (f "total"), "", Msg.q_leak_sub ~count:(n "count") ~months:(n "months") locale, [])
+          | "fees" -> (Msg.q_fees_title locale, kr (J.field "stake" q), Msg.q_fees_unit locale, Msg.q_fees_sub ~amount:(kr (f "total")) ~months:(n "months") locale, [])
           | "normal_month" ->
               let months = match f "months_covered" with `Float x -> Float.to_string_hum ~decimals:1 ~strip_zero:true x | `Int x -> Int.to_string x | _ -> "0" in
-              (Msg.q_normal_title locale, kr (f "baseline"), Msg.q_normal_sub ~months locale, [])
-          | "real_savings" -> (Msg.q_savings_title locale, kr (f "usual"), Msg.q_savings_sub ~one_offs:(kr (f "one_offs")) locale, [])
+              (Msg.q_normal_title locale, kr (f "baseline"), Msg.q_normal_unit locale, Msg.q_normal_sub ~months locale, [])
+          | "real_savings" -> (Msg.q_savings_title locale, kr (f "usual"), Msg.q_savings_unit locale, Msg.q_savings_sub ~one_offs:(kr (f "one_offs")) locale, [])
           | "season_ahead" ->
-              ( Msg.q_season_title ~month:(Fmt.month_label locale (J.str (J.path [ "cycle"; "cycle" ] a))) locale, kr (f "last_year"),
+              ( Msg.q_season_title ~month:(Fmt.month_label locale (J.str (J.path [ "cycle"; "cycle" ] a))) locale, kr (f "last_year"), Msg.q_season_unit locale,
                 Msg.q_season_sub ~usual:(kr (f "usual")) locale, [] )
-          | "payday_week" -> (Msg.q_payday_title locale, kr (f "first_week"), Msg.q_payday_sub ~rest:(kr (f "rest")) locale, [])
-          | _ -> ("", "", "", [])
+          | "payday_week" -> (Msg.q_payday_title locale, kr (f "first_week"), Msg.q_payday_unit locale, Msg.q_payday_sub ~rest:(kr (f "rest")) locale, [])
+          | _ -> ("", "", "", "", [])
         in
         let key = J.str (J.field "key" q) in
         let finding_scope =
@@ -112,7 +121,7 @@ let component ~(ctx : Ctx.t) ~(scope : string Bonsai.t) ~(visible : bool Bonsai.
                ~attrs:([ Vdom.Attr.class_ "wk-row" ] @ if selected then [ Vdom.Attr.create "open" "" ] else [])
                [ Vdom.Node.create "summary" ~attrs:[ Vdom.Attr.class_ "wk-head" ]
                    [ Ui.div ~cls:"wk-main" [ Vdom.Node.h3 ~attrs:[ Vdom.Attr.class_ "wk-title" ] [ Ui.text title ]; Ui.div ~cls:"wk-sub" [ Ui.text sub ] ];
-                     Ui.div ~cls:"wk-value num" [ Ui.text value ];
+                     Ui.div ~cls:"wk-value num" [ Ui.text value; (if String.is_empty unit then Vdom.Node.none else Ui.div ~cls:"wk-unit" [ Ui.text unit ]) ];
                      Feather_icon.svg ~size:(`Px 16) ~stroke:(`Name "currentColor") ~stroke_width:(`Px 2) Chevron_right ];
                  Ui.div ~cls:"wk-detail"
                    ((if List.is_empty rows then [] else [ Ui.div ~cls:"wk-lines" rows ])

@@ -51,7 +51,7 @@ const until=async promise=>{let timer;try{return await Promise.race([promise,new
  for(let i=0;i<100&&legacyResponses===0;i++)await sleep(20);
  assert.ok(legacyResponses>0);
  const source=page.locator('[data-finding-key]').filter({has:page.getByRole('heading',{name:'Bills may run short before payday',exact:true})});
- await source.getByRole('button',{name:'Ask advisor',exact:true}).click();await button('Enable Advisor').click();
+ await source.locator('summary').click();await source.getByRole('button',{name:'Ask advisor',exact:true}).click();await button('Enable Advisor').click();
  await composer().fill('Personal thread from initial legacy readiness');await button('Send').click();
  if(pending)await until(acceptedHeld);else await page.getByText('first',{exact:true}).waitFor();
  await composer().fill('personal draft across initial legacy membership loss');

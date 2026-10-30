@@ -827,8 +827,21 @@ summary { list-style: none; } summary::-webkit-details-marker { display: none; }
 .overview-hero .num, .stats .num, .wk-head .num, .spark-caption.num { font-variant-numeric: tabular-nums lining-nums; letter-spacing: -.01em; }
 .overview-hero .hero, .overview-hero .hero-sub, .stats .stat-value { text-align: left; }
 /* The period: a quiet control, not a box. */
-.has-desk .page-head .period { border: 0; background: none; height: 32px; }
-.has-desk .page-head .period-label { border: 0; min-width: 0; padding: 0 var(--s1); font-weight: 600; font-size: var(--t16); }
+/* The month is the page's title; the arrows beside it are quiet, and the scope sits at the other end. */
+.page.has-desk .page-head { justify-content: space-between; margin-bottom: var(--s5); }
+.has-desk .page-head .page-controls { display: contents; }
+.has-desk .page-head .period { order: -1; border: 0; background: none; height: 36px; margin-left: calc(-1 * var(--s2)); }
+.has-desk .page-head .period-label { order: -1; border: 0; min-width: 0; padding: 0 var(--s2); font-family: var(--display); font-weight: 650; font-size: var(--t20); letter-spacing: -.01em; color: var(--text); }
+.has-desk .page-head .period .icon-button { color: var(--text-3); }
+.has-desk .page-head .period .icon-button:first-of-type { order: 1; }
+.has-desk .page-head .period .icon-button:last-of-type { order: 2; }
+.has-desk .page-head .segmented { background: none; padding: 0; gap: var(--s1); }
+.has-desk .page-head .segmented .button { height: 28px; padding: 0 var(--s2); border-radius: var(--r3); font-size: var(--t12); color: var(--text-3); }
+.has-desk .page-head .segmented .button.active { background: var(--surface-2); box-shadow: none; color: var(--text); }
+/* The bar on top: icons only, no rule under it. */
+.topbar { border-bottom-color: transparent; }
+.topbar .label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.topbar a, .topbar-search { width: 40px; justify-content: center; padding: 0; }
 
 /* The number. */
 .overview-hero { padding-top: var(--s2); }
@@ -893,8 +906,19 @@ summary { list-style: none; } summary::-webkit-details-marker { display: none; }
 .spark-line.ahead { stroke-dasharray: 4 4; }
 .spark-today { stroke: var(--line-strong); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .spark-dot { fill: var(--accent); }
-.spark-caption { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--s1) var(--s3); margin-top: var(--s2); font-size: var(--t14); color: var(--text-2); }
-.spark-caption span { white-space: nowrap; }
+.page.has-desk { padding-top: var(--s4); }
+@media (max-width: 760px) {
+  .page.has-desk .page-head { margin-bottom: var(--s3); row-gap: var(--s1); }
+  /* The page fades out under the grab bar instead of running into it. */
+  .desk:not(.open) .desk-handle { height: 36px; background: linear-gradient(color-mix(in srgb, var(--bg) 0%, transparent), var(--bg) 70%); }
+}
+.wk-unit { margin-top: 2px; font-size: var(--t12); font-weight: 400; color: var(--text-3); }
+.workings-foot { margin-top: var(--s2); font-size: var(--t12); color: var(--text-3); }
+.spark-caption { display: flex; justify-content: space-between; gap: var(--s3); margin-top: var(--s2); }
+.spark-fact { display: grid; gap: 2px; }
+.spark-fact:last-child { text-align: right; }
+.spark-label { font-size: var(--t12); color: var(--text-3); white-space: nowrap; }
+.spark-amount { font-size: var(--t14); font-weight: 600; color: var(--text); white-space: nowrap; }
 .ahead-details[open] .spark-block { display: none; }
 .ahead-details[open] > summary { margin-bottom: var(--s3); }
 .plan-controls { margin-bottom: var(--s3); }
@@ -904,8 +928,35 @@ summary { list-style: none; } summary::-webkit-details-marker { display: none; }
 /* A computer: two columns, each laid out on its own, so nothing on one side moves the other. */
 .overview-cols { display: block; }
 @media (min-width: 1000px) {
-  .overview-cols { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: var(--s7); align-items: start; }
-  /* The side column starts level with the main one. */
+  .overview-cols { display: grid; grid-template-columns: minmax(0, 1fr) 340px; column-gap: var(--s7); align-items: start; }
+  .overview-main, .overview-side { display: contents; }
+  /* The number spans two rows: the banners take the first on the right, so what is ahead follows them
+     straight away rather than waiting for the number to end. */
+  .slot-body > * { grid-column: 1; grid-row: 1 / span 2; }
+  .slot-attention > * { grid-column: 2; grid-row: 1; }
+  .slot-briefing > *, .slot-flow > * { grid-column: 1; grid-row: 3; }
+  .overview-side .ahead { grid-column: 2; grid-row: 2 / span 2; }
+  /* A conversation under a banner needs the width: the banners move under the number while it is open. */
+  .overview-cols:has(.slot-attention [data-testid="selected-finding"]) .slot-attention > * { grid-column: 1; grid-row: 3; margin-top: var(--s5); }
+  .overview-cols:has(.slot-attention [data-testid="selected-finding"]) :is(.slot-briefing, .slot-flow) > * { grid-row: 4; }
+  .overview-cols:has(.slot-attention [data-testid="selected-finding"]) .overview-side .ahead { grid-row: 1 / span 4; }
+  /* Nothing needs doing: what is ahead moves up beside the number. */
+  .overview-cols:not(:has(.attention)) .overview-side .ahead { grid-row: 1 / span 3; }
+  .has-desk .slot-attention .attention { margin-top: 0; margin-bottom: var(--s6); }
   .has-desk .overview-side .ahead, .overview-side .ahead > :first-child .section-title { margin-top: 0; }
 }
+/* Banners: a dot, the title and one line; they open to the rest and its actions. */
+.has-desk .attention-list .card.banner { padding: 0; }
+.banner > summary { list-style: none; display: grid; grid-template-columns: 8px minmax(0, 1fr) 18px; gap: var(--s3); align-items: center; padding: var(--s3) var(--s4); cursor: pointer; }
+.banner > summary::-webkit-details-marker { display: none; }
+.banner-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--mark); }
+.banner-main { min-width: 0; }
+.banner-main h2 { margin: 0; font-size: var(--t14); font-weight: 600; line-height: 1.4; }
+.banner-sub { margin: 2px 0 0; font-size: 13px; line-height: 1.45; color: var(--text-2); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.banner[open] .banner-sub { -webkit-line-clamp: unset; }
+.banner-chevron { color: var(--text-3); transition: transform .15s; }
+.banner[open] .banner-chevron { transform: rotate(90deg); }
+.banner-detail { padding: 0 var(--s4) var(--s3) calc(var(--s4) + 8px + var(--s3)); }
+.banner-detail > .muted { margin: 0 0 var(--s1); }
+.banner-detail .question-merchant:first-child { padding-top: 0; }
 }

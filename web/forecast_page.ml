@@ -327,33 +327,64 @@ let section ~(ctx : Ctx.t) ~(visible : bool Bonsai.t) graph =
               [ Vdom.Node.create "summary" [ Ui.text (Msg.forecast_details locale) ]; upcoming; what_if_panel; assumptions ] ])
   in
   (* Closed, the forecast is a sparkline and two facts: the cash so far (solid), the line ahead (dashed) inside
-     the range past forecasts landed in, today marked; the lowest point and where it ends. Open, it is all of it. *)
+     the range past forecasts landed in, today marked; the lowest point and where it ends. The line is the
+     balance averaged over a month around each day, so payday's saw-tooth gives way to the trend; the lowest
+     point under it is the real one. *)
   let spark (f : D.t) =
     let code = f.currency in
     let timeline = f.history @ f.baseline in
     let n = List.length timeline in
-    let cash = List.map timeline ~f:(fun (p : D.point) -> D.value p.cash) in
-    let lows = List.map f.range ~f:(fun (_, l, _) -> D.value l) and highs = List.map f.range ~f:(fun (_, _, h) -> D.value h) in
-    let all = cash @ lows @ highs in
+    let smooth values =
+      let a = Array.of_list values in
+      let m = Array.length a in
+      List.init m ~f:(fun i ->
+          let first = Int.max 0 (i - 15) and last = Int.min (m - 1) (i + 15) in
+          let sum = ref 0. in
+          for j = first to last do sum := !sum +. a.(j) done;
+          !sum /. Float.of_int (last - first + 1))
+    in
+    let cash = smooth (List.map timeline ~f:(fun (p : D.point) -> D.value p.cash)) in
+    let index_of d = List.findi timeline ~f:(fun _ (p : D.point) -> String.equal p.date d) |> Option.map ~f:fst in
+    let range = List.filter_map f.range ~f:(fun (d, l, h) -> Option.map (index_of d) ~f:(fun i -> (i, D.value l, D.value h))) in
+    let range =
+      List.zip_exn range (List.zip_exn (smooth (List.map range ~f:(fun (_, l, _) -> l))) (smooth (List.map range ~f:(fun (_, _, h) -> h))))
+      |> List.map ~f:(fun ((i, _, _), (l, h)) -> (i, l, h))
+    in
+    let all = cash @ List.concat_map range ~f:(fun (_, l, h) -> [ l; h ]) in
     let lo = Option.value (List.min_elt all ~compare:Float.compare) ~default:0. and hi = Option.value (List.max_elt all ~compare:Float.compare) ~default:1. in
     let w = 340. and h = 88. in
     let x i = if n <= 1 then 0. else Float.of_int i *. w /. Float.of_int (n - 1) in
     let y v = if Float.(hi = lo) then h /. 2. else 6. +. (hi -. v) /. (hi -. lo) *. (h -. 12.) in
     let today = List.length f.history in
-    let path pts = String.concat ~sep:" " (List.mapi pts ~f:(fun i (px, py) -> Printf.sprintf "%s%.1f %.1f" (if i = 0 then "M" else "L") px py)) in
-    let past = List.filteri cash ~f:(fun i _ -> i <= today) |> List.mapi ~f:(fun i v -> (x i, y v)) in
-    let ahead = List.filteri cash ~f:(fun i _ -> i >= today) |> List.mapi ~f:(fun i v -> (x (today + i), y v)) in
-    let index_of d = List.findi timeline ~f:(fun _ (p : D.point) -> String.equal p.date d) |> Option.map ~f:fst in
+    (* A point a week, and the ends: few enough for a calm curve. *)
+    let weekly pts = List.filteri pts ~f:(fun k _ -> k % 7 = 0 || k = List.length pts - 1) in
+    (* Through every point, with the curve's tangents from its neighbours (Catmull-Rom). *)
+    let path pts =
+      match pts with
+      | [] -> ""
+      | (x0, y0) :: _ ->
+          let a = Array.of_list pts in
+          let m = Array.length a in
+          let at k = a.(Int.clamp_exn k ~min:0 ~max:(m - 1)) in
+          let segment k =
+            let (x1, y1) = at (k - 1) and (x2, y2) = at k and (x3, y3) = at (k + 1) and (x4, y4) = at (k + 2) in
+            Printf.sprintf "C%.1f %.1f %.1f %.1f %.1f %.1f" (x2 +. ((x3 -. x1) /. 6.)) (y2 +. ((y3 -. y1) /. 6.)) (x3 -. ((x4 -. x2) /. 6.)) (y3 -. ((y4 -. y2) /. 6.)) x3 y3
+          in
+          String.concat ~sep:" " (Printf.sprintf "M%.1f %.1f" x0 y0 :: List.init (m - 1) ~f:segment)
+    in
+    let points first last = List.filteri cash ~f:(fun i _ -> i >= first && i <= last) |> List.mapi ~f:(fun k v -> (x (first + k), y v)) |> weekly in
+    let past = points 0 today and ahead = points today (n - 1) in
     let band =
-      let edge pick = List.filter_map f.range ~f:(fun (d, l, hgh) -> Option.map (index_of d) ~f:(fun i -> (x i, y (D.value (pick l hgh))))) in
-      match edge (fun _ h -> h), List.rev (edge (fun l _ -> l)) with
-      | (_ :: _ as top), bottom -> Some (path (top @ bottom) ^ " Z")
+      let edge pick = weekly (List.map range ~f:(fun (i, l, hgh) -> (x i, y (pick l hgh)))) in
+      match edge (fun _ h -> h), edge (fun l _ -> l) with
+      | (_ :: _ as top), bottom -> Some (path top ^ " L" ^ String.chop_prefix_if_exists ~prefix:"M" (path (List.rev bottom)) ^ " Z")
       | [], _ -> None
     in
     let svg_attr k v = Vdom.Attr.create k v in
     let node tag attrs = Vdom.Node.create_svg tag ~attrs [] in
-    let last = List.last timeline in
+    let last = List.last f.baseline in
     let nice d = Mf2_runtime.format_date locale (Fmt.date d) in
+    let fact label amount = Ui.div ~cls:"spark-fact" [ Ui.span ~cls:"spark-label" [ Ui.text label ]; Ui.span ~cls:"spark-amount" [ Ui.text amount ] ] in
     Ui.div ~cls:"spark-block"
       [ Vdom.Node.create_svg "svg"
           ~attrs:[ Vdom.Attr.class_ "spark"; svg_attr "viewBox" "0 0 340 88"; svg_attr "preserveAspectRatio" "none"; svg_attr "aria-hidden" "true" ]
@@ -365,8 +396,10 @@ let section ~(ctx : Ctx.t) ~(visible : bool Bonsai.t) graph =
                Option.map (List.nth cash today) ~f:(fun v ->
                    node "circle" [ svg_attr "cx" (Printf.sprintf "%.1f" (x today)); svg_attr "cy" (Printf.sprintf "%.1f" (y v)); svg_attr "r" "3.5"; Vdom.Attr.class_ "spark-dot" ]) ]);
         Ui.div ~cls:"spark-caption num"
-          [ Ui.span [ Ui.text (Msg.ahead_lowest ~amount:(Fmt.whole locale ~code f.lowest) ~date:(nice f.lowest_date) locale) ];
-            (match last with Some p when not (String.equal p.date f.lowest_date) -> Ui.span [ Ui.text (Msg.ahead_end ~date:(nice p.date) ~amount:(Fmt.whole locale ~code p.cash) locale) ] | _ -> Vdom.Node.none) ] ]
+          [ fact (Msg.ahead_lowest ~date:(nice f.lowest_date) locale) (Fmt.whole locale ~code f.lowest);
+            (match last with
+             | Some p when not (String.equal p.date f.lowest_date) -> fact (nice p.date) (Fmt.whole locale ~code p.cash)
+             | _ -> Vdom.Node.none) ] ]
   in
   let body =
     match forecast with

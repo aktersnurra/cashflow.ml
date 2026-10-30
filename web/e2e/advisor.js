@@ -47,6 +47,7 @@ const sleep = ms => new Promise(r => setTimeout(r,ms));
   await button('Not now').click();assert.equal(posts,0);assert.equal((await state()).provider_starts,0);
   await nav('Overview').click();
   const unusual=page.locator('[data-finding-key^="unusual:"]');
+  await unusual.locator('summary').click();  // the banner opens to what can be done
   await unusual.getByRole('button',{name:'Ask advisor',exact:true}).click();
   await button('Enable Advisor').click();await composer().waitFor();
   await page.waitForFunction(()=>document.activeElement?.tagName==='TEXTAREA');

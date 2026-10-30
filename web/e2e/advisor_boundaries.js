@@ -22,6 +22,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   const nav=name=>page.locator('.topbar').getByRole('link',{name,exact:true});
   const state=async()=>(await fetch(base+'/state')).json();
   await cookie('a');await page.goto(base);
+  await page.locator('[data-finding-key^="shortfall:"] summary').click();
   await page.locator('[data-finding-key^="shortfall:"]').getByRole('button',{name:'Ask advisor',exact:true}).click();
   await button('Enable Advisor').click();await page.locator('textarea.advisor-input').fill('Explain the shortfall');await button('Send').click();
   await page.getByText(/first héj <img/).waitFor();assert.equal((await state()).released,false);
