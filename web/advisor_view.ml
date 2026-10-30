@@ -168,7 +168,8 @@ let render_turns ~locale ~(snapshot : W.snapshot option) ~dispatch ~(decided : s
                [ text t.user_text ]
             :: List.map t.attempts ~f:attempt))
 
-let render_body ~turns ~show_source ~locale ~(view : C.view) ~dispatch =
+(* [attach]: the "+" that hands files to the desk, on the left of the composer. *)
+let render_body ~(attach : Vdom.Node.t option) ~turns ~show_source ~locale ~(view : C.view) ~dispatch =
   let text = Vdom.Node.text in
   let cls name = [ Vdom.Attr.class_ name ] in
   let button label action =
@@ -217,14 +218,15 @@ let render_body ~turns ~show_source ~locale ~(view : C.view) ~dispatch =
   let composer =
     if not generation_ready then Vdom.Node.none
     else
-      Vdom.Node.div ~attrs:(cls "advisor-composer")
-        [
+      Vdom.Node.div ~attrs:(cls (match attach with Some _ -> "advisor-composer with-attach" | None -> "advisor-composer"))
+        ((match attach with Some a -> [ a ] | None -> [])
+        @ [
           Vdom.Node.textarea
             ~attrs:
               [
                 Vdom.Attr.class_ "advisor-input";
                 Vdom.Attr.create "aria-label" (Msg.advisor_draft locale);
-                Vdom.Attr.placeholder (Msg.advisor_placeholder locale);
+                Vdom.Attr.placeholder (if has_messages then Msg.advisor_reply locale else Msg.advisor_placeholder locale);
                 Vdom.Attr.create "rows" "1";
                 Vdom.Attr.value_prop view.draft;
                 Vdom.Attr.create_hook "advisor-grow"
@@ -278,21 +280,22 @@ let render_body ~turns ~show_source ~locale ~(view : C.view) ~dispatch =
                          Vdom.Attr.create "height" "20";
                          Vdom.Attr.create "fill" (if active then "currentColor" else "none");
                          Vdom.Attr.create "stroke" "currentColor";
-                         Vdom.Attr.create "stroke-width" "1.5";
+                         Vdom.Attr.create "stroke-width" "2";
                          Vdom.Attr.create "stroke-linecap" "round";
-                         Vdom.Attr.create "stroke-linejoin" "miter";
+                         Vdom.Attr.create "stroke-linejoin" "round";
                          Vdom.Attr.create "aria-hidden" "true";
                        ]
                      [
+                       (* Stop: a small filled square. Send: the return key. *)
                        (if active then
                           Vdom.Node.create_svg "rect"
                             ~attrs:
-                              [ Vdom.Attr.create "x" "6"; Vdom.Attr.create "y" "6"; Vdom.Attr.create "width" "12";
-                                Vdom.Attr.create "height" "12"; Vdom.Attr.create "rx" "2" ]
+                              [ Vdom.Attr.create "x" "6.5"; Vdom.Attr.create "y" "6.5"; Vdom.Attr.create "width" "11";
+                                Vdom.Attr.create "height" "11"; Vdom.Attr.create "rx" "2.5"; Vdom.Attr.create "stroke" "none" ]
                             []
                         else
                           Vdom.Node.create_svg "path"
-                            ~attrs:[ Vdom.Attr.create "d" "M9 6h8v8H4M8 10l-4 4 4 4" ]
+                            ~attrs:[ Vdom.Attr.create "d" "M20 5v6a4 4 0 0 1-4 4H5M9 11l-4 4 4 4" ]
                             []);
                      ];
                  ]);
@@ -300,7 +303,7 @@ let render_body ~turns ~show_source ~locale ~(view : C.view) ~dispatch =
           Vdom.Node.p
             ~attrs:[ Vdom.Attr.class_ "advisor-input-error"; Vdom.Attr.id "advisor-input-error" ]
             [ text (Msg.advisor_input_limit locale) ];
-        ]
+        ])
   in
   let actions =
     (if active && not generation_ready then [ button (Msg.advisor_stop locale) C.Stop ] else [])
@@ -358,12 +361,12 @@ let render_body ~turns ~show_source ~locale ~(view : C.view) ~dispatch =
       ])
 
 let render ~locale ~(view : C.view) ~dispatch =
-  render_body
+  render_body ~attach:None
     ~turns:(render_turns ~locale ~snapshot:view.snapshot ~dispatch ~decided:(fun _ -> None) ~decide:(fun _ _ -> Effect.Ignore) ~markdown:String.Map.empty)
     ~show_source:true ~locale ~view ~dispatch
 
 let render_inline ~locale ~(view : C.view) ~dispatch =
-  render_body
+  render_body ~attach:None
     ~turns:(render_turns ~locale ~snapshot:view.snapshot ~dispatch ~decided:(fun _ -> None) ~decide:(fun _ _ -> Effect.Ignore) ~markdown:String.Map.empty)
     ~show_source:false ~locale ~view ~dispatch
 

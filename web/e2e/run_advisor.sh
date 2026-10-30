@@ -114,7 +114,6 @@ product command-bar advisor_command_bar.js
 product proposal advisor_proposal.js --privacy-mode propose
 product categorize advisor_categorize.js --privacy-mode propose-categorize
 product goal advisor_goal.js --privacy-mode propose-goal
-product weekly-brief weekly_brief.js --weekly-brief
 product goal-change advisor_goal_change.js --privacy-mode propose-update-goal
 product entry advisor_entry.js --privacy-mode propose-entry
 product presentation advisor_presentation.js
@@ -122,6 +121,7 @@ ADVISOR_CHAT_PAUSED=1 product presentation-paused advisor_presentation.js
 product smoothness advisor_smoothness.js
 product boundaries advisor_boundaries.js --browser-text
 product session-race advisor_session_race.js
+product briefing advisor_briefing.js
 product currency advisor_currency.js --currency-scales
 ADVISOR_UNAVAILABLE=1 product unavailable advisor.js --unavailable
 for mode in name route route-history enable enable-pending mobile revoke leave disable enable-shared personal-leave personal-leave-error personal-change; do

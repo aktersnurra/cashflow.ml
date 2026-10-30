@@ -24,6 +24,8 @@ const base = process.env.BASE_URL || 'http://127.0.0.1:18090';
     for (const rollover of [true, false]) {
       await command('set_budget', { scope: 'me', category_id: category.id, monthly_amount: '6000.00', rollover });
       await page.goto(base + '/budgets');
+      // Goals and budgets wait, folded, at the foot of the Overview.
+      await page.locator('.page:visible .goals-details > summary').click();
       const row = page.locator('.page .row.clickable').filter({ has: page.locator('.row-title', { hasText: category.name }) });
       await row.click();
       const form = page.locator('.page .card').filter({ has: page.locator('input[type=checkbox]') });
@@ -38,6 +40,7 @@ const base = process.env.BASE_URL || 'http://127.0.0.1:18090';
       assert.equal(line.budget, '6500.00', 'amount edit persisted');
       assert.equal(line.rollover, rollover, 'amount-only edit preserves rollover');
       await page.reload();
+      await page.locator('.page:visible .goals-details > summary').click();
       await row.click();
       assert.equal(await form.locator('input[type=checkbox]').isChecked(), rollover, 'rollover survives a reload');
     }

@@ -177,7 +177,12 @@ let component ~locale ~advisor ~route ~on_select ~on_new graph =
            Effect.Many [Effect.Prevent_default; (if Poly.equal menu History then Effect.of_thunk (fun () ->
              Js.Opt.iter (Dom_html.document##querySelector (Js.string ".advisor-history-panel")) H.focus_first) else open_history)]
          else Effect.Ignore)]
-       [Vdom.Node.span ~attrs:[Vdom.Attr.class_ "advisor-title-text";Vdom.Attr.create "dir" "auto"] [text title];
+       [(* On a phone the conversation list opens from a round menu button, as in a native chat app. *)
+        Vdom.Node.span ~attrs:[Vdom.Attr.class_ "advisor-title-menu";Vdom.Attr.create "aria-hidden" "true"]
+          [Vdom.Node.create_svg "svg" ~attrs:[Vdom.Attr.create "viewBox" "0 0 24 24";Vdom.Attr.create "width" "20";Vdom.Attr.create "height" "20";
+             Vdom.Attr.create "fill" "none";Vdom.Attr.create "stroke" "currentColor";Vdom.Attr.create "stroke-width" "2";Vdom.Attr.create "stroke-linecap" "round"]
+             [Vdom.Node.create_svg "path" ~attrs:[Vdom.Attr.create "d" "M5 8h14M5 12h10M5 16h14"] []]];
+        Vdom.Node.span ~attrs:[Vdom.Attr.class_ "advisor-title-text";Vdom.Attr.create "dir" "auto"] [text title];
         Vdom.Node.create_svg "svg" ~attrs:[Vdom.Attr.class_ "advisor-title-chevron";Vdom.Attr.create "viewBox" "0 0 24 24";
           Vdom.Attr.create "width" "16";Vdom.Attr.create "height" "16";Vdom.Attr.create "fill" "none";Vdom.Attr.create "stroke" "currentColor";
           Vdom.Attr.create "stroke-width" "2";Vdom.Attr.create "stroke-linecap" "round";Vdom.Attr.create "stroke-linejoin" "round";

@@ -559,7 +559,10 @@ This is optional and turned off until an API key is configured. The model can be
 - **Narrative text** for the Month review and Overview cards ("Spending was 8% below September, mostly fewer restaurant visits; Spotify went up"). The model receives the *already computed* figures from §10, never raw transactions, and the result is cached per period.
 - **Privacy:** requests use OpenRouter's provider settings to turn off data collection, and a log of every call (the prompt's purpose, the number of rows, the model) is visible in Settings.
 
-The LLM never posts transfers and never decides which cards are shown.
+- **Choosing categories** uses a decisions model (TypeSafe's Jev, `openrouter.classifier_model`) through OpenRouter's decisions API: each row is a choice among the owner's categories, and its calibrated probability is the suggestion's confidence. It sees what the chat model would. Rows it can't answer go to the chat model, whose confidence is capped at 75.
+- **Filing without asking** happens only in three cases, each through the inbox like a person's choice and marked as cashflow's (`inbox_items.filed_by = 'auto'`), so it never teaches the next suggestion: a merchant the person always filed under the same category; a rule marked to apply; and, when the person asked (the advisor's `file_inbox`, or a bank account's auto-apply threshold), a suggestion at least that confident (80 when the advisor sets it). Anything less stays in the inbox for the person.
+
+The LLM never decides which cards are shown, and posts nothing beyond the filing above.
 
 ## 13. MCP tools
 

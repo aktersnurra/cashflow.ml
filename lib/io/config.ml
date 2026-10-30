@@ -4,6 +4,10 @@
    uses. *)
 let default_openrouter_provider_only = [ "google-vertex"; "amazon-bedrock"; "azure" ]
 
+(* Categorising asks a decisions model, served by its maker (TypeSafe) on an endpoint OpenRouter lists
+   as zero-data-retention, outside [provider_only]; "none" turns it off. *)
+let default_classifier_model = "typesafe/jev-1.14"
+
 type t = {
   database_path : string;
   listen_address : string;
@@ -16,6 +20,7 @@ type t = {
   openrouter_api_key : string option;
   openrouter_model : string;  (** categorising, pairing and summaries *)
   advisor_model : string;  (** the advisor; the same as [openrouter_model] unless set apart *)
+  classifier_model : string option;  (** a decisions model choosing categories; [None] leaves it to [openrouter_model] *)
   openrouter_provider_only : string list;
   advisor_limits : Advisor_provider.generation_limits option;
   log_level : Logs.level option;  (** [None] silences logging *)
@@ -51,6 +56,7 @@ module File = struct
     advisor_limits : advisor_limits option; [@sexp.option]
     model : string; [@default "anthropic/claude-haiku-5.5"]
     advisor_model : string option; [@sexp.option]
+    classifier_model : string; [@default default_classifier_model]
     provider_only : string list; [@default default_openrouter_provider_only]
   }
   [@@deriving sexp]
@@ -122,6 +128,9 @@ let resolve (file : File.t) =
       static_dir = file.static_dir; openrouter_api_key;
       openrouter_model = Option.fold ~none:"anthropic/claude-haiku-5.5" ~some:(fun (o : File.openrouter) -> o.model) file.openrouter;
       advisor_model = Option.fold ~none:"anthropic/claude-haiku-5.5" ~some:(fun (o : File.openrouter) -> Option.value o.advisor_model ~default:o.model) file.openrouter;
+      classifier_model =
+        Option.bind file.openrouter (fun (o : File.openrouter) ->
+            match String.trim o.classifier_model with "" | "none" -> None | model -> Some model);
       openrouter_provider_only = Option.fold ~none:default_openrouter_provider_only ~some:(fun (o : File.openrouter) -> o.provider_only) file.openrouter;
       advisor_limits;
       log_level = (match file.log_level with Quiet -> None | Error -> Some Logs.Error | Warning -> Some Warning | Info -> Some Info | Debug -> Some Debug) }

@@ -9,6 +9,8 @@ val render_turns :
 (** Derived nodes belong to the current authorized snapshot's component lifetime. *)
 
 val render_body :
+  attach:Bonsai_web.Vdom.Node.t option ->
+  (** the desk's "+", on the left of the composer *)
   turns:Bonsai_web.Vdom.Node.t list ->
   show_source:bool ->
   locale:string ->

@@ -60,7 +60,9 @@ let transfer_of = function Ok (Ledger_core.Created (v : Service.transfer_view) |
 let record (service : Service.t) items results =
   List.iter (fun result -> Option.iter (fun t -> List.iter (fun (item : Import_store.item) -> Import_store.record_triage service.db ~item:item.transfer_id t) items) (transfer_of result)) results
 
-let categorize (service : Service.t) access ~transfer_id ~category_id ?(tags = []) () =
+(* [by] says who chose the category: what a person chose teaches the next suggestion, what cashflow filed by
+   itself doesn't. *)
+let categorize_one (service : Service.t) access ~by ~transfer_id ~category_id ~tags =
   let* item, bank = find_open service access transfer_id in
   let* original = Service.get_transfer service access transfer_id in
   let* target = Service.find_account service access category_id in
@@ -88,8 +90,41 @@ let categorize (service : Service.t) access ~transfer_id ~category_id ?(tags = [
         | Ok _ ->
             record service [ item ] [ result ];
             finish service item ~current:category_id ~revision ~status:"done";
+            Import_store.set_filed_by service.db item.transfer_id by;
             Ok (Some result)
         | Error _ -> Ok (Some result))
+
+(* The other rows still waiting from the same merchant, on bank accounts of the same owner, going the way
+   the category expects (money out to an expense, money in to income): filed along with the one a person
+   chose, so a merchant is categorised once. *)
+let follow (service : Service.t) access ~transfer_id ~category_id =
+  match Import_store.find_item service.db transfer_id, Service.find_account service access category_id with
+  | Some chosen, Ok target when chosen.merchant_key <> "" -> (
+      match Service.find_account service access chosen.bank_account_id with
+      | Error _ -> ()
+      | Ok bank ->
+          List.iter
+            (fun (item : Import_store.item) ->
+              let same_owner =
+                match Service.find_account service access item.bank_account_id with Ok b -> Owner.equal b.account.owner bank.account.owner | Error _ -> false
+              in
+              let fits_direction () =
+                match Service.get_transfer service access item.transfer_id, target.account.kind with
+                | Ok v, Expense -> outflow item v.transfer
+                | Ok v, Income -> not (outflow item v.transfer)
+                | Ok _, (Asset | Liability | Equity) -> false
+                | Error _, _ -> false
+              in
+              if (not (Transfer_id.equal item.transfer_id transfer_id)) && item.status = "open" && item.merchant_key = chosen.merchant_key && same_owner
+                 && fits_direction ()
+              then ignore (categorize_one service access ~by:`Auto ~transfer_id:item.transfer_id ~category_id ~tags:[]))
+            (Import_store.open_items service.db access ~limit:1000))
+  | _ -> ()
+
+let categorize (service : Service.t) access ~transfer_id ~category_id ?(tags = []) ?(by = `Person) () =
+  let* result = categorize_one service access ~by ~transfer_id ~category_id ~tags in
+  (match result, by with Some (Ok _), `Person -> follow service access ~transfer_id ~category_id | _ -> ());
+  Ok result
 
 (* Takes a categorisation back: reverses the transfer it posted and puts the row back in the inbox where it was.
    Only if the row is exactly as that categorisation left it (same revision, same category); anything done to it
@@ -333,11 +368,16 @@ let rules (service : Service.t) access = List.concat_map (Import_store.rules ser
 
 let remove_rule (service : Service.t) access ~rule_id =
   if List.exists (fun owner -> Import_store.remove_rule service.db owner rule_id) (Access.owners access) then Ok () else Error (`Not_found "rule")
-(* Auto-apply: a bank account's opt-in to applying confident history and LLM suggestions on import. *)
+(* Auto-apply: how sure cashflow must be of a category to file an imported row without asking. On for every bank
+   account (Import_store.default_threshold) unless turned off; the accounts listed are the ones it is on for. *)
 
 let auto_apply_settings (service : Service.t) access =
-  let usable = List.filter_map (fun (i : Account_info.t) -> if i.details.statement_backed then Some i.account.id else None) (Service.accounts service access) in
-  List.filter (fun (id, _) -> List.exists (Account_id.equal id) usable) (Import_store.auto_apply_thresholds service.db)
+  List.filter_map
+    (fun (i : Account_info.t) ->
+      if i.details.statement_backed && not i.account.closed then
+        Option.map (fun n -> (i.account.id, n)) (Import_store.auto_apply_threshold service.db i.account.id)
+      else None)
+    (Service.accounts service access)
 
 let set_auto_apply (service : Service.t) access ~account_id ~min_confidence =
   let* bank = Service.find_account service access account_id in

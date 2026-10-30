@@ -115,7 +115,7 @@ let login service name =
   ignore (ok (Advisor_access.set_user_consent service principal ~enabled:true));
   ((Access.user access).id, token, principal)
 
-let fixture post test =
+let fixture ?classifier post test =
   Eio_main.run (fun _ ->
       let db = Store_sqlite.open_memory () in
       Fun.protect
@@ -124,7 +124,7 @@ let fixture post test =
           Eio.Switch.run (fun sw ->
               Sql.set_guard db (Db_guard.make ());
               let f, clock = fake () in
-              let service = Service.make ~now:clock.now db in
+              let service = Service.make ~now:clock.now ?classifier db in
               let provider =
                 Advisor_provider.create
                   ~limits:
@@ -1058,6 +1058,66 @@ let rejected_proposal_is_recoverable () =
       check "no proposal card was made"
         (not (List.exists (function { A.payload = A.Evidence_added { proposal = Some _; _ }; _ } -> true | _ -> false) (journal db a))))
 
+(* Asked to categorise for the user, the advisor files what cashflow is sure of at once, through one tool call,
+   and hands back the rest for review. The classifier is asked with no database lock or transaction held. *)
+let file_inbox_when_asked () =
+  let posts = ref 0 in
+  let db_ref = ref None in
+  let classifier : Decisions.t =
+    { model = "synthetic";
+      choose =
+        (fun ~state:_ questions ->
+          (match !db_ref with
+           | Some db -> check "the classifier runs outside any transaction" (not (Sql.in_transaction db) && not ((Sql.unguarded db).held ()))
+           | None -> ());
+          Ok
+            (List.map
+               (fun (q : Decisions.question) ->
+                 (q.id, { Decisions.choice = "Groceries"; probability = (if Str_compat.contains ~sub:"WILLYS" q.instructions then 0.93 else 0.41) }))
+               questions)) }
+  in
+  fixture ~classifier
+    (fun _ ~uri:_ ~headers:_ ~body ~on_chunk ->
+      incr posts;
+      let open Yojson.Safe.Util in
+      let messages = Yojson.Safe.from_string body |> member "messages" |> to_list in
+      (match !posts with
+       | 1 ->
+           let call = `Assoc [ ("index", `Int 0); ("id", `String "file"); ("type", `String "function");
+                               ("function", `Assoc [ ("name", `String "file_inbox"); ("arguments", `String "{\"keep_on\":true}") ]) ] in
+           let data = `Assoc [ ("choices", `List [ `Assoc [ ("index", `Int 0); ("delta", `Assoc [ ("tool_calls", `List [ call ]) ]); ("finish_reason", `String "tool_calls") ] ]) ] in
+           on_chunk ("data: " ^ Yojson.Safe.to_string data ^ "\n\ndata: [DONE]\n\n")
+       | 2 ->
+           let result = List.find (fun m -> member "tool_call_id" m = `String "file") messages |> member "content" |> to_string in
+           check "the model hears what was filed" (Str_compat.contains ~sub:"WILLYS" result && Str_compat.contains ~sub:"\"filed\"" result);
+           check "and what needs review" (Str_compat.contains ~sub:"MYSTERY" result && Str_compat.contains ~sub:"needs_review" result);
+           on_chunk "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Filed one; one needs you.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+       | _ -> Alcotest.fail "unexpected extra model round");
+      Ok ())
+    (fun _ db service runtime _ ->
+      db_ref := Some db;
+      let owner, _, principal = login service "autofile" in
+      let access = Test_service_support.sign_in service "autofile" in
+      let checking = Test_service_support.open_checking service access ~statement_backed:true "Checking" in
+      (* Filing without asking turned off, so it is the advisor that is asked to. *)
+      ignore (Inbox.set_auto_apply service access ~account_id:checking ~min_confidence:None);
+      let csv = "Datum;Text;Belopp;Saldo\n2026-10-20;WILLYS HEMMA;-412,00;1 000,00\n2026-10-21;MYSTERY AB;-99,00;901,00\n" in
+      ignore (Test_service_support.ok_import (Import.confirm (Import.context service access) { target = Import.Existing checking; file_name = None; content = csv; decisions = [] }));
+      let a = ok (R.submit runtime ~principal { (submit "autofile") with user_text = "Categorise my transactions for me, and keep doing it" }) in
+      drain ();
+      check "the run completes" (state db owner a = A.Completed);
+      Alcotest.(check int) "two rounds" 2 !posts;
+      Alcotest.(check int) "one row still waits" 1 (Inbox.count service access);
+      Alcotest.(check int64) "the sure one was filed" 412_00L (Test_service_support.balance service access (Test_service_support.account_named service access "Groceries"));
+      Alcotest.(check (list int)) "later imports filed at 80" [ 80 ] (List.map snd (Inbox.auto_apply_settings service access));
+      let card = List.find_map (function { A.payload = A.Evidence_added e; _ } -> Some e | _ -> None) (journal db a) in
+      match card with
+      | Some e ->
+          let labels = List.map (fun (f : A.fact) -> f.label) e.facts in
+          check "the card shows what was filed and what needs review" (List.mem "Filed" labels && List.mem "Needs review" labels);
+          check "and asks for no click" (e.proposal = None)
+      | None -> Alcotest.fail "no evidence card")
+
 let memory_notes_in_prompt () =
   let systems = ref [] in
   fixture
@@ -1107,6 +1167,7 @@ let () =
           Alcotest.test_case "memory notes in the prompt" `Quick memory_notes_in_prompt;
           Alcotest.test_case "proposal is recorded, not applied" `Quick proposal_is_recorded_not_applied;
           Alcotest.test_case "a rejected proposal is recoverable" `Quick rejected_proposal_is_recoverable;
+          Alcotest.test_case "file the inbox when asked" `Quick file_inbox_when_asked;
           Alcotest.test_case "durable_delivery_and_runtime_deadlines" `Quick durable_delivery_and_runtime_deadlines;
           Alcotest.test_case "silent deadlines" `Quick silent_deadlines;
           Alcotest.test_case "sessions and reconnect" `Quick sessions_and_reconnect;

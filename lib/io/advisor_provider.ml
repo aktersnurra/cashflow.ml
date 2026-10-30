@@ -82,6 +82,11 @@ let tool_schemas =
   let propose_category = propose "propose_new_category" "Propose a new expense or income category, for the conversation's own scope."
     ["name"; "kind"] ["name", string 40; "kind", `Assoc ["type", str "string"; "enum", `List [str "expense"; str "income"]]] in
   (* A proposal acts in the conversation's own scope and currency, so it takes no currency argument. *)
+  let file_inbox = `Assoc ["type", str "function"; "function", `Assoc [
+    "name", str "file_inbox";
+    "description", str "Only when the user asks you to categorise their transactions for them: files, without asking, every uncategorized row cashflow is at least 80 percent sure of (the user's own rules and past choices, or a calibrated classifier), and returns what was filed and the rows that need the user's review with cashflow's best guess. This changes their books at once; each filed row can be recategorised. Report what was filed, then list the rows needing review and offer propose_categorize for them.";
+    "parameters", object_ [] ["keep_on", `Assoc ["type", str "boolean";
+      "description", str "Also file future imports by themselves at the same confidence, when the user asked for this to continue."]]]] in
   let propose_budget = `Assoc ["type", str "function"; "function", `Assoc [
     "name", str "propose_set_budget";
     "description", str "Propose a monthly budget for one expense category. Nothing changes until the user confirms it with Apply; you only see that it is awaiting confirmation.";
@@ -95,9 +100,9 @@ let tool_schemas =
      "category_trend", ["category"], [category; cycles];
      "relevant_transactions", [], [offset; category; "limit", integer 1 20];
      "recurring", [], []; "budget_status", [], [offset]; "goals", [], [];
-     "inbox_rows", [], []; "categories", [], []; "bank_accounts", [], [];
+     "inbox_rows", [], []; "categories", [], []; "bank_accounts", [], []; "period_outlook", [], []; "explain_month", [], [offset];
      "forecast", [], ["cycles", `Assoc ["type", str "integer"; "enum", `List [`Int 1; `Int 3; `Int 6];
-       "description", str "Forecast horizon in months from the current local date: 1, 3 or 6 (default 3). All one-off dates must fit this horizon."]; "scenario", scenario]] @ [propose_budget; propose_categorize; propose_rule; propose_goal; propose_update_goal; propose_category; propose_entry]
+       "description", str "Forecast horizon in months from the current local date: 1, 3 or 6 (default 3). All one-off dates must fit this horizon."]; "scenario", scenario]] @ [propose_budget; propose_categorize; propose_rule; propose_goal; propose_update_goal; propose_category; propose_entry; file_inbox]
 
 let call_json (c : raw_call) = `Assoc ["id", str c.id; "type", str "function";
   "function", `Assoc ["name", str c.name; "arguments", str c.arguments]]

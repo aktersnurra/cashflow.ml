@@ -36,7 +36,7 @@ const markdown = '# A plan for February\n\nSet aside **6,250.00 SEK** each month
   if(process.env.ADVISOR_CHAT_PAUSED==='1') {
    // Presentation-only readiness change; the running native request/Stop remain real.
    await page.route('**/api/advisor/status',async route=>{const response=await route.fetch();const body=await response.json();body.available=false;await route.fulfill({response,json:body});});
-   await page.getByRole('link',{name:'Plan',exact:true}).click();
+   await page.locator('.topbar a[href="/settings"]').click();
    await page.getByRole('link',{name:'Advisor',exact:true}).click();
    await page.getByText('Advisor is unavailable. Check your settings or try again later.',{exact:true}).waitFor();
    assert.equal(await page.getByRole('button',{name:'Send',exact:true}).count(),0);
@@ -103,7 +103,7 @@ const markdown = '# A plan for February\n\nSet aside **6,250.00 SEK** each month
   assert.equal(await page.getByRole('button',{name:'Send',exact:true}).isDisabled(),true);
   await composer.fill('');
   await page.waitForFunction(()=>document.querySelector('button[aria-label="Send"]')?.disabled===true);
-  assert.equal(await page.getByRole('button',{name:'Send',exact:true}).isVisible(),false,'Send is hidden while the draft is empty');
+  assert.equal(await page.getByRole('button',{name:'Send',exact:true}).isDisabled(),true,'Send stays in place, dimmed, while the draft is empty');
   await composer.fill('A next draft, not sent');
   await composer.evaluate(el=>el.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',isComposing:true,bubbles:true,cancelable:true})));
   await composer.evaluate(el=>el.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',repeat:true,bubbles:true,cancelable:true})));

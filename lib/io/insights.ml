@@ -82,10 +82,19 @@ let reconciled_through ctx =
   let book = book ctx in
   Reconciliation.reconciled_through ctx.service.db ~accounts:(accounts ctx) ~book
 
+(* How far the scope's statements reach (Analytics.covered_through). *)
+let covered_through ctx =
+  let accounts = accounts ctx in
+  let imported_through =
+    List.filter_map (fun (info : Account_info.t) -> Option.map (fun d -> (info.account.id, d)) (Import_store.imported_through ctx.service.db info.account.id)) accounts
+  in
+  Analytics.covered_through ~transfers:(transfers ctx ~first:(Date.add_days ctx.today (-183)) ~last:ctx.today) ~accounts ~owners:ctx.owners ~imported_through
+    ~today:ctx.today
+
 let cashflow_summary ctx ~cycles =
   let cycles = recent_cycles ctx cycles in
   let first, last = span cycles in
-  Analytics.cashflow_summary (book ctx) ~cycles ~reconciled_through:(reconciled_through ctx) (transfers ctx ~first ~last)
+  Analytics.cashflow_summary ?covered_through:(covered_through ctx) (book ctx) ~cycles ~reconciled_through:(reconciled_through ctx) (transfers ctx ~first ~last)
 
 type period = Cycle_offset of int | Range of Date.t * Date.t
 

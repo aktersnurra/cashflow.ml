@@ -12,10 +12,13 @@ let card_view ~(ctx : Ctx.t) (key : string Bonsai.t) (card : J.t Bonsai.t) graph
   let import = Import_widget.component ~ctx ~account_id graph in
   let%arr card and key and import and locale = ctx.locale and changed = ctx.changed and navigate = ctx.navigate and notify = ctx.notify and session = ctx.session in
   ignore key;
+  fun ~(extra : Vdom.Node.t list) ~(opened : bool) ->
   let currency = J.str ~default:"SEK" (J.path [ "user"; "default_currency" ] session) in
   let data = J.field "data" card in
   let card_key = J.str (J.field "key" card) in
   let money ?(code = currency) json = Fmt.money_json ~code json in
+  (* Whole kronor for what is read at a glance. *)
+  let kr ?(code = currency) json = Fmt.whole locale ~code json in
   let account_currency = J.str ~default:currency (J.path [ "account"; "currency" ] data) in
   let after effect =
     let%bind.Effect result = effect in
@@ -24,12 +27,24 @@ let card_view ~(ctx : Ctx.t) (key : string Bonsai.t) (card : J.t Bonsai.t) graph
   let later = Ui.button (Msg.action_snooze locale) (after (act ~key:card_key ~action:"snooze")) in
   let done_ = Ui.button (Msg.action_done locale) (after (act ~key:card_key ~action:"resolve")) in
   let month json = Fmt.month_label locale (J.str (J.field "cycle" json)) in
+  (* A banner: what needs you in one line (a dot for how much, the title, a line under it), opening to the rest
+     and what can be done about it. Open while the advisor talks about it. *)
+  let banner ?(tone = "") ?(eyebrow = "") ?(sub = "") ~title ?(body = []) ?(actions = []) () =
+    ignore eyebrow;
+    Vdom.Node.create "details"
+      ~attrs:([ Vdom.Attr.class_ ("card banner " ^ tone) ] @ if opened then [ Vdom.Attr.create "open" "" ] else [])
+      [ Vdom.Node.create "summary" ~attrs:[ Vdom.Attr.class_ "banner-head" ]
+          [ Ui.span ~cls:"banner-dot" [];
+            Ui.div ~cls:"banner-main" [ Vdom.Node.h2 [ Ui.text title ]; (if String.is_empty sub then Vdom.Node.none else Vdom.Node.p ~attrs:[ Vdom.Attr.class_ "banner-sub" ] [ Ui.text sub ]) ];
+            Feather_icon.svg ~extra_attrs:[ Vdom.Attr.class_ "banner-chevron" ] ~size:(`Px 18) ~stroke:(`Name "currentColor") ~stroke_width:(`Px 2) Chevron_right ];
+        Ui.div ~cls:"banner-detail" (body @ if List.is_empty actions && List.is_empty extra then [] else [ Ui.div ~cls:"actions" (actions @ extra) ]) ]
+  in
   match J.str (J.field "kind" card) with
   | "invitation" ->
       let id = J.str (J.field "id" data) in
       let respond accept = after (Api.run "respond_to_invitation" (`Assoc [ ("household_id", `String id); ("accept", `Bool accept) ])) in
-      Ui.card ~tone:"accent" ~title:(Msg.card_invitation_title ~household:(J.str (J.field "name" data)) locale)
-        ~body:[ Ui.muted (Msg.card_invitation_body locale) ]
+      banner ~tone:"accent" ~title:(Msg.card_invitation_title ~household:(J.str (J.field "name" data)) locale)
+        ~sub:(Msg.card_invitation_body locale)
         ~actions:[ Ui.button ~kind:"primary" (Msg.action_accept locale) (respond true); Ui.button (Msg.action_decline locale) (respond false) ] ()
   | "reconciliation_mismatch" ->
       let account = J.field "account" data in
@@ -39,102 +54,137 @@ let card_view ~(ctx : Ctx.t) (key : string Bonsai.t) (card : J.t Bonsai.t) graph
           (Api.run "reconcile"
              (`Assoc [ ("account_id", J.field "id" account); ("date", J.field "date" data); ("statement_balance", J.field "statement_balance" data); ("adjust", `Bool true) ]))
       in
-      Ui.card ~tone:"warning"
+      banner ~tone:"warning"
         ~title:(Msg.card_mismatch_title ~account:(Accounts_data.name ~locale account) ~difference:(m (J.field "difference" data)) locale)
-        ~body:[ Ui.muted (Msg.card_mismatch_body ~statement:(m (J.field "statement_balance" data)) ~date:(Fmt.date_json (J.field "date" data)) ~ledger:(m (J.field "ledger_balance" data)) locale) ]
+        ~sub:(Msg.card_mismatch_body ~statement:(m (J.field "statement_balance" data)) ~date:(Fmt.date_json (J.field "date" data)) ~ledger:(m (J.field "ledger_balance" data)) locale)
         ~actions:[ Ui.button ~kind:"primary" (Msg.action_adjust locale) adjust; later ] ()
   | "import_due" ->
       let days = J.field "days" data in
-      Ui.card ~title:(Msg.card_import_title ~account:(Accounts_data.name ~locale (J.field "account" data)) locale)
-        ~body:[ Ui.muted (if J.is_null days then Msg.card_import_never locale else Msg.card_import_days ~days:(J.int days) locale); import ]
+      banner ~title:(Msg.card_import_title ~account:(Accounts_data.name ~locale (J.field "account" data)) locale)
+        ~sub:(if J.is_null days then Msg.card_import_never locale else Msg.card_import_days ~days:(J.int days) locale) ~body:[ import ]
         ~actions:[ later ] ()
   | "inbox" ->
-      Ui.card ~tone:"accent" ~title:(Msg.card_inbox_title ~count:(J.int (J.field "count" data)) locale)
-        ~body:[ Ui.muted (Msg.card_inbox_body locale) ]
-        ~actions:[ Ui.button ~kind:"primary" (Msg.action_review locale) (navigate Route.Inbox) ] ()
+      (* What the sweep couldn't place and matters: one merchant per row, answered with one tap. The answer files
+         every row from the merchant and teaches the next import. *)
+      let answer g (category : J.t) =
+        after (Api.run "categorize" (`Assoc [ ("id", J.field "id" g); ("category_id", J.field "id" category) ]))
+      in
+      let row g =
+        let code = J.str ~default:currency (J.field "currency" g) in
+        Ui.div ~cls:"question-merchant"
+          [ Ui.div
+              [ Ui.div ~cls:"row-title" [ Ui.text (J.str (J.field "name" g)) ];
+                Ui.div ~cls:"row-sub"
+                  [ Ui.text
+                      (if J.int (J.field "rows" g) = 1 then kr ~code (J.field "total" g)
+                       else Msg.card_questions_row ~rows:(Int.to_string (J.int (J.field "rows" g))) ~amount:(kr ~code (J.field "total" g)) locale) ] ];
+            Ui.div ~cls:"question-answers"
+              [ (match J.field "guess" g with
+                 | `Null -> Vdom.Node.none
+                 | guess -> Ui.button ~kind:"primary" (Accounts_data.name ~locale guess) (answer g guess));
+                Ui.button (Msg.card_questions_other locale) (navigate Route.Inbox) ] ]
+      in
+      let groups = J.list (J.field "groups" data) in
+      banner ~tone:"accent" ~title:(Msg.card_questions_title locale)
+        ~sub:(String.concat ~sep:", " (List.map groups ~f:(fun g -> J.str (J.field "name" g))))
+        ~body:(List.map groups ~f:row) ()
+  | "autofiled" ->
+      banner ~title:(Msg.card_autofiled_title ~filed:(Int.to_string (J.int (J.field "filed" data))) locale)
+        ~sub:(if J.int (J.field "guessed" data) > 0 then Msg.card_autofiled_body ~guessed:(Int.to_string (J.int (J.field "guessed" data))) locale else "")
+        ~actions:[ done_ ] ()
   | "unmatched_entry" ->
       let t = J.field "transaction" data in
       let void = after (Api.run "void_pending" (`Assoc [ ("idempotency_key", `String ("void:" ^ J.str (J.field "id" t))); ("id", J.field "id" t) ])) in
-      Ui.card ~tone:"warning" ~title:(Msg.card_unmatched_title ~description:(J.str (J.field "description" t)) locale)
-        ~body:[ Ui.muted (Msg.card_unmatched_body ~amount:(money ~code:(J.str ~default:currency (J.field "currency" t)) (J.field "amount" t)) ~date:(Fmt.date_json (J.field "date" t)) locale) ]
+      banner ~tone:"warning" ~title:(Msg.card_unmatched_title ~description:(J.str (J.field "description" t)) locale)
+        ~sub:(Msg.card_unmatched_body ~amount:(money ~code:(J.str ~default:currency (J.field "currency" t)) (J.field "amount" t)) ~date:(Fmt.date_json (J.field "date" t)) locale)
         ~actions:[ Ui.button (Msg.action_void locale) void; later ] ()
-  | "month_review" ->
-      let summary = J.field "summary" data in
-      Ui.card ~eyebrow:(month (J.field "cycle" data)) ~title:(Msg.card_review_title ~month:(month (J.field "cycle" data)) locale)
-        ~body:
-          ((match J.str_opt (J.field "text" data) with Some text -> [ Ui.p text ] | None -> [])
-          @
-          if J.is_null summary then []
-          else
-            [ Ui.div ~cls:"kpis"
-                [ Ui.kpi (Msg.label_income locale) (Fmt.format_money locale ~code:currency (J.field "income" summary));
-                  Ui.kpi (Msg.label_spending locale) (Fmt.format_money locale ~code:currency (J.field "spending" summary));
-                  Ui.kpi ~tone:(Fmt.sign_tone (J.field "savings" summary)) (Msg.label_savings locale) (Fmt.format_money locale ~code:currency (J.field "savings" summary));
-                  Ui.kpi (Msg.label_savings_rate locale) (J.str ~default:"–" (J.field "savings_rate" summary)) ] ])
-        ~actions:[ done_ ] ()
   | "budget_alert" ->
       let category = Accounts_data.name ~locale (J.field "category" data) in
       let over = String.equal (J.str (J.field "status" data)) "over_budget" in
       let spent = Fmt.to_float (J.field "spent" data) and budget = Fmt.to_float (J.field "budget" data) and expected = Fmt.to_float (J.field "expected_by_now" data) in
-      Ui.card ~tone:(if over then "danger" else "warning")
+      banner ~tone:(if over then "danger" else "warning")
         ~title:(if over then Msg.card_budget_over ~category locale else Msg.card_budget_ahead ~category locale)
-        ~body:
-          [ Ui.meter ~marker:(if Float.(budget > 0.) then Some (expected /. budget) else None) (if Float.(budget > 0.) then spent /. budget else 0.);
-            Ui.muted (Msg.card_budget_body ~spent:(money (J.field "spent" data)) ~budget:(money (J.field "budget" data)) ~expected:(money (J.field "expected_by_now" data)) locale) ]
+        ~sub:(Msg.card_budget_body ~spent:(money (J.field "spent" data)) ~budget:(money (J.field "budget" data)) ~expected:(money (J.field "expected_by_now" data)) locale)
+        ~body:[ Ui.meter ~marker:(if Float.(budget > 0.) then Some (expected /. budget) else None) (if Float.(budget > 0.) then spent /. budget else 0.) ]
         ~actions:[ done_; later ] ()
   | "shortfall" ->
       let m json = money ~code:account_currency json in
-      Ui.card ~tone:"warning" ~title:(Msg.card_shortfall_title ~account:(Accounts_data.name ~locale (J.field "account" data)) locale)
+      banner ~tone:"warning" ~title:(Msg.card_shortfall_title ~account:(Accounts_data.name ~locale (J.field "account" data)) locale)
+        ~sub:(Msg.card_shortfall_body ~due:(m (J.field "due" data)) ~available:(m (J.field "available" data)) ~short:(m (J.field "short_by" data)) locale)
         ~body:
-          (Ui.muted (Msg.card_shortfall_body ~due:(m (J.field "due" data)) ~available:(m (J.field "available" data)) ~short:(m (J.field "short_by" data)) locale)
-          :: Ui.muted (Msg.advisor_bills_estimate locale)
+          (Ui.muted (Msg.advisor_bills_estimate locale)
           :: List.map (J.list (J.field "upcoming" data)) ~f:(fun u ->
                  Ui.muted (Msg.card_shortfall_item ~merchant:(J.str (J.field "merchant" u)) ~amount:(m (J.field "amount" u)) ~date:(Fmt.date_json (J.field "expected" u)) locale)))
         ~actions:
-          [ Ui.button ~kind:"primary" (Msg.action_move_money locale) (navigate Route.Add); Ui.button (Msg.action_see_forecast locale) (navigate Route.Forecast);
+          [ Ui.button ~kind:"primary" (Msg.action_move_money locale) (navigate Route.Add); Ui.button (Msg.action_see_forecast locale) (navigate Route.Home);
             done_; later ] ()
   | "unusual_spend" ->
       let category = Accounts_data.name ~locale (J.field "category" data) in
       let spent = Fmt.to_float (J.field "spent" data) and usual = Fmt.to_float (J.field "usual" data) in
-      Ui.card
+      banner
         ~eyebrow:(if String.equal (J.str (J.field "scope" data)) "household" then Msg.label_household locale else Msg.label_personal locale)
         ~title:(Msg.card_unusual_title ~category locale)
         ~body:
           ((match J.str_opt (J.field "text" data) with Some text -> [ Ui.p text ] | None -> [])
           @ [ (* Past the usual whole cycle, so the bar runs over; the marker is where the usual ends. *)
-              Ui.meter ~marker:(if Float.(spent > 0.) then Some (usual /. spent) else None) (if Float.(usual > 0.) then spent /. usual else 2.);
-              Ui.muted (Msg.card_unusual_body ~spent:(money (J.field "spent" data)) ~usual:(money (J.field "usual" data)) locale) ])
-        ~actions:[ Ui.button (Msg.action_see_spending locale) (navigate Route.Insights); done_; later ] ()
+              Ui.meter ~marker:(if Float.(spent > 0.) then Some (usual /. spent) else None) (if Float.(usual > 0.) then spent /. usual else 2.) ])
+        ~sub:(Msg.card_unusual_body ~spent:(money (J.field "spent" data)) ~usual:(money (J.field "usual" data)) locale)
+        ~actions:[ Ui.button (Msg.action_see_spending locale) (navigate (Route.Transactions { offset = 0; category = None })); done_; later ] ()
   | "contributions_due" ->
-      Ui.card ~title:(Msg.card_contributions_title locale)
-        ~body:[ Ui.muted (Msg.card_contributions_body ~remaining:(money (J.field "remaining" data)) ~contribution:(money (J.field "contribution" data)) locale) ]
-        ~actions:[ Ui.button (Msg.nav_household locale) (navigate Route.Household); done_ ] ()
+      banner ~title:(Msg.card_contributions_title locale)
+        ~sub:(Msg.card_contributions_body ~remaining:(money (J.field "remaining" data)) ~contribution:(money (J.field "contribution" data)) locale)
+        ~actions:[ Ui.button (Msg.nav_household locale) (navigate Route.Settings); done_ ] ()
   | "settle_up" ->
-      Ui.card ~title:(Msg.label_household locale)
+      banner ~title:(Msg.label_household locale)
         ~body:(List.map (J.list (J.field "owed" data)) ~f:(fun o -> Ui.p (Msg.card_settle_title ~name:(J.str (J.field "name" o)) ~amount:(money (J.field "amount" o)) locale)))
         ~actions:[ later ] ()
   | "count_cash" ->
-      Ui.card ~title:(Msg.card_cash_title ~account:(Accounts_data.name ~locale (J.field "account" data)) locale)
-        ~body:[ Ui.muted (Msg.card_cash_body ~since:(Fmt.date_json (J.field "since" data)) locale) ]
+      banner ~title:(Msg.card_cash_title ~account:(Accounts_data.name ~locale (J.field "account" data)) locale)
+        ~sub:(Msg.card_cash_body ~since:(Fmt.date_json (J.field "since" data)) locale)
         ~actions:[ Ui.button (Msg.action_count locale) (navigate (Route.Account (J.str (J.path [ "account"; "id" ] data)))); later ] ()
   | "goal_off_track" ->
-      Ui.card ~title:(Msg.card_goal_title ~goal:(J.str (J.field "goal" data)) locale)
+      banner ~title:(Msg.card_goal_title ~goal:(J.str (J.field "goal" data)) locale)
         ~body:
-          [ Ui.meter (Fmt.to_float (J.field "saved" data) /. Float.max 1. (Fmt.to_float (J.field "target" data)));
-            Ui.muted (Msg.card_goal_body ~saved:(money (J.field "saved" data)) ~target:(money (J.field "target" data)) ~required:(money (J.field "required_monthly" data)) locale) ]
+          [ Ui.meter (Fmt.to_float (J.field "saved" data) /. Float.max 1. (Fmt.to_float (J.field "target" data))) ]
+        ~sub:(Msg.card_goal_body ~saved:(money (J.field "saved" data)) ~target:(money (J.field "target" data)) ~required:(money (J.field "required_monthly" data)) locale)
         ~actions:[ done_; later ] ()
   | "recurring_change" ->
       let merchant = J.str (J.field "merchant" data) in
-      Ui.card
+      banner
         ~title:
           (if J.bool (J.field "price_changed" data) then
-             Msg.card_recurring_changed ~merchant ~previous:(money (J.field "previous_amount" data)) ~last:(money (J.field "last_amount" data)) locale
+             Msg.card_recurring_changed ~merchant ~previous:(kr (J.field "previous_amount" data)) ~last:(kr (J.field "last_amount" data)) locale
            else Msg.card_recurring_new ~cadence:(J.str (J.field "cadence" data)) ~merchant locale)
         ~actions:[ Ui.button (Msg.action_keep locale) (after (act ~key:card_key ~action:"resolve")); later ] ()
+  (* Things in the statements that need you: what, how much, when, and what to do about it. *)
+  | "missing_payment" ->
+      (* Only income: what the statements don't show is the one thing worth a look. *)
+      let name = J.str (J.field "name" data) and amount = kr (J.field "amount" data) and date = Fmt.date_json (J.field "expected" data) in
+      banner ~tone:"warning" ~title:(Msg.card_missing_income_title ~name locale) ~sub:(Msg.card_missing_income_body ~amount ~date locale)
+        ~actions:[ Ui.button (Msg.action_paid_elsewhere locale) (after (act ~key:card_key ~action:"resolve")); later ] ()
+  | "double_charge" ->
+      banner ~tone:"warning"
+        ~title:(Msg.card_double_charge_title ~merchant:(J.str (J.field "merchant" data)) locale)
+        ~sub:
+              (Msg.card_double_charge_body ~amount:(kr (J.field "amount" data)) ~first:(Fmt.date_json (J.field "first_date" data))
+                 ~second:(Fmt.date_json (J.field "second_date" data)) locale)
+        ~actions:
+          [ Ui.button (Msg.action_see_transactions locale) (navigate (Route.Transactions { offset = 0; category = None }));
+            Ui.button (Msg.action_both_right locale) (after (act ~key:card_key ~action:"resolve")) ] ()
+  | "yearly_bill" ->
+      banner ~title:(Msg.card_yearly_bill_title ~name:(J.str (J.field "name" data)) ~date:(Fmt.date_json (J.field "due" data)) locale)
+        ~sub:(Msg.card_yearly_bill_body ~amount:(kr (J.field "amount" data)) ~last:(Fmt.date_json (J.field "last_paid" data)) locale)
+        ~actions:[ done_; later ] ()
+  | "large_purchase" ->
+      banner ~title:(Msg.card_large_purchase_title locale)
+        ~sub:
+              (Msg.card_large_purchase_body ~amount:(kr (J.field "amount" data)) ~description:(J.str (J.field "description" data))
+                 ~date:(Fmt.date_json (J.field "date" data)) locale)
+        ~actions:[ done_ ] ()
   | "overview" ->
       let summary = J.field "summary" data in
       let code = J.str ~default:currency (J.field "currency" data) in
-      Ui.card ~tone:"overview" ~eyebrow:(Msg.label_personal locale) ~title:(Msg.card_overview_title ~month:(month (J.field "cycle" data)) locale)
+      banner ~tone:"overview" ~eyebrow:(Msg.label_personal locale) ~title:(Msg.card_overview_title ~month:(month (J.field "cycle" data)) locale)
         ~body:
           (if J.is_null summary then []
            else
@@ -143,13 +193,16 @@ let card_view ~(ctx : Ctx.t) (key : string Bonsai.t) (card : J.t Bonsai.t) graph
                    Ui.kpi (Msg.label_spending locale) (Fmt.format_money locale ~code (J.field "spending" summary));
                    Ui.kpi ~tone:(Fmt.sign_tone (J.field "savings" summary)) (Msg.label_savings locale) (Fmt.format_money locale ~code (J.field "savings" summary)) ];
                (if J.bool (J.field "reconciled" summary) then Vdom.Node.none else Ui.muted (Msg.label_provisional locale)) ])
-        ~actions:[ Ui.button (Msg.nav_insights locale) (navigate Route.Insights) ] ()
+        ~actions:[] ()
   | _ -> Vdom.Node.none
 
-(* Overview, in the order the questions come: which period and whose books, how much was saved,
-   where the money went, and then the few things that need you. Notices that only restate the
-   figures above (the overview and month-review cards) are left out; at most three remain. *)
-let figure_kinds = [ "overview"; "month_review" ]
+(* Overview, in the order the questions come: am I OK (safe to spend), what is worth knowing (the
+   briefing), then what needs doing. Cards that are insights rather than to-dos are left to the briefing,
+   which answers them better: the overview card restates the figures, the month review is the briefing's
+   "why it cost more", a large purchase is its one-off, and a price change its regular bills. At most three
+   remain. *)
+let restates_figures card =
+  List.mem [ "overview"; "month_review"; "large_purchase"; "recurring_change" ] (J.str (J.field "kind" card)) ~equal:String.equal
 
 (* Cards that ask for something before the figures can be trusted or before it is too late. When one is there, the
    cards come first. *)
@@ -164,40 +217,29 @@ let mostly_uncategorized categories_json =
   Float.(total uncategorized > total (fun _ -> true) /. 2.)
 
 let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor_protocol.Wire.scope -> unit Effect.t) Bonsai.t)
-    ~selected_finding ~outlet ~advisor_route ~(visible : bool Bonsai.t) graph =
+    ~(desk : Desk.t Bonsai.t) ~selected_finding ~outlet ~advisor_route ~(visible : bool Bonsai.t) graph =
   let captured, set_captured = Bonsai.state None graph in
   let offset, set_offset = Bonsai.state 0 graph in
+  let picking, set_picking = Bonsai.state false graph in
   let scope, set_scope = Bonsai.state "me" graph in
   let summary = Remote.load ~active:visible ~name:"cashflow_summary" ~args:(let%arr scope in `Assoc [ ("scope", `String scope); ("cycles", `Int 13) ]) ~ctx graph in
+  (* The cycle in progress: how far the statements reach and where it is heading. *)
+  let outlook = Remote.load ~active:visible ~name:"period_outlook" ~args:(let%arr scope in `Assoc [ ("scope", `String scope) ]) ~ctx graph in
   let categories =
     Remote.load ~active:visible ~name:"spending_by_category" ~args:(let%arr scope and offset in `Assoc [ ("scope", `String scope); ("cycle_offset", `Int offset) ]) ~ctx graph
   in
-  (* The figures show at once; when there is no text yet, a second load asks for it to be written. That request is armed for
-     one scope and one version of the data, a few seconds after the figures arrived: a change of either lets it lapse (a run
-     of changes, like clearing last week's inbox, writes once when it settles) and a scope switch starts over. The server
-     writes once per set of figures and remembers a failure. Never on the Advisor page, where this page is not showing. *)
-  let armed, set_armed = Bonsai.state None graph in
-  let brief =
-    Remote.load ~active:visible ~name:"get_weekly_brief"
-      ~args:(let%arr armed and scope and version = ctx.version in
-             `Assoc [ ("scope", `String scope); ("write", `Bool (Option.equal [%equal: string * int] armed (Some (scope, version)))) ])
-      ~ctx graph
-  in
-  Bonsai.Edge.on_change ~equal:phys_equal brief
-    ~callback:(let%arr set_armed and advisor_route and scope and version = ctx.version in fun (result : Remote.t) ->
-      match result with
-      | Loaded json when J.bool (J.path [ "brief"; "can_write" ] json) && not advisor_route ->
-          let%bind.Effect () = Effect.of_deferred_thunk (fun () -> Async_kernel.after (Time_ns.Span.of_sec 6.)) in
-          set_armed (Some (scope, version))
-      | _ -> Effect.Ignore)
-    graph;
+  (* The accountant's briefing: the questions worth answering before they're asked. *)
+  (* What is ahead: the forecast, then goals and budgets. *)
+  let forecast = Forecast_page.section ~ctx ~visible graph in
+  let goals = Budgets_page.section ~ctx ~visible graph in
+  let briefing = Briefing_view.component ~ctx ~scope ~visible ~on_ask ~selected_finding ~outlet graph in
   let feed = Remote.load ~active:visible ~name:"get_attention_feed" ~args:(Bonsai.return (`Assoc [("narrative", `Bool false)])) ~ctx graph in
   let cards =
     let%arr feed in
     match feed with
     | Loaded json ->
         J.list (J.field "cards" json)
-        |> List.filter ~f:(fun card -> not (List.mem figure_kinds (J.str (J.field "kind" card)) ~equal:String.equal))
+        |> List.filter ~f:(fun card -> not (restates_figures card))
         |> Fn.flip List.take 3
         |> List.mapi ~f:(fun i card -> (Printf.sprintf "%03d:%s" i (J.str (J.field "key" card)), card))
         |> String.Map.of_alist_reduce ~f:(fun a _ -> a)
@@ -214,11 +256,10 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
     let scope = if String.equal (J.str (J.path ["data"; "scope"] card)) "household"
       || String.equal (J.str (J.path ["data"; "account"; "owner"] card)) "household" then
       Cashflow_advisor_protocol.Wire.Household (J.str (J.path ["household"; "id"] session)) else Personal in
+    let ask = if eligible then [Ui.button (Msg.advisor_ask locale) (Effect.Many [set_captured (Some (finding_key, cards)); on_ask ~finding_key ~scope])] else [] in
     Vdom.Node.div ~attrs:([Vdom.Attr.create "data-finding-key" finding_key] @ if selected then [Vdom.Attr.create "data-testid" "selected-finding"] else [])
-      ([body] @ (if eligible then [Ui.div ~cls:"finding-reply" [Ui.button (Msg.advisor_ask locale)
-        (Effect.Many [set_captured (Some (finding_key, cards)); on_ask ~finding_key ~scope])]] else [])
-       @ if selected then [outlet] else [])) graph in
-  let%arr summary and categories and brief and views and offset and set_offset and scope and set_scope and locale = ctx.locale and session = ctx.session
+      ([body ~extra:ask ~opened:selected] @ if selected then [outlet] else [])) graph in
+  let%arr desk and forecast and goals and summary and outlook and categories and briefing and views and offset and set_offset and picking and set_picking and scope and set_scope and locale = ctx.locale and session = ctx.session
   and navigate = ctx.navigate and outlet and selected_finding and visible_cards and advisor_route in
   let cycles = match summary with Loaded json -> J.list (J.field "cycles" json) | Loading | Failed _ -> [] in
   let code = match summary with Loaded json -> J.str ~default:"SEK" (J.field "currency" json) | Loading | Failed _ -> "SEK" in
@@ -228,28 +269,57 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
   let scopes =
     if Ctx.has_household session then [ ("me", Msg.label_personal locale); ("household", Msg.label_household locale); ("family", Msg.label_family locale) ] else []
   in
+  (* The month is the page's title, and picking another is tapping it: the last seven months, newest first. The
+     year is said only when it isn't this one. *)
+  let month_picker =
+    let current_year = match List.last cycles with Some c -> String.prefix (J.str (J.field "cycle" c)) 4 | None -> "" in
+    let name c =
+      let cycle = J.str (J.field "cycle" c) in
+      let label = Fmt.month_label locale cycle in
+      if String.equal (String.prefix cycle 4) current_year then String.chop_suffix_if_exists label ~suffix:(" " ^ current_year) else label
+    in
+    let choices = List.filter_mapi cycles ~f:(fun i c -> let o = i - (List.length cycles - 1) in if o >= -6 then Some (o, c) else None) |> List.rev in
+    Ui.div ~cls:("month-picker" ^ if picking then " open" else "")
+      ([ Vdom.Node.button
+           ~attrs:
+             [ Vdom.Attr.class_ "month-picker-button"; Vdom.Attr.type_ "button"; Vdom.Attr.create "aria-haspopup" "listbox";
+               Vdom.Attr.create "aria-expanded" (Bool.to_string picking); Vdom.Attr.on_click (fun _ -> set_picking (not picking)) ]
+           [ Ui.span [ Ui.text (match selected with Some c -> name c | None -> "") ];
+             Feather_icon.svg ~size:(`Px 18) ~stroke:(`Name "currentColor") ~stroke_width:(`Px 2) Chevron_down ] ]
+      @
+      if not picking then []
+      else
+        [ (* A tap anywhere else puts the list away. *)
+          Vdom.Node.div ~attrs:[ Vdom.Attr.class_ "month-backdrop"; Vdom.Attr.on_click (fun _ -> set_picking false) ] [];
+          Vdom.Node.div
+            ~attrs:[ Vdom.Attr.class_ "month-menu"; Vdom.Attr.create "role" "listbox";
+                     Vdom.Attr.on_keydown (fun e -> if String.equal (Js_of_ocaml.Js.Optdef.case e##.key (fun () -> "") Js_of_ocaml.Js.to_string) "Escape" then set_picking false else Effect.Ignore) ]
+            (List.map choices ~f:(fun (o, c) ->
+                 Vdom.Node.button
+                   ~attrs:
+                     [ Vdom.Attr.type_ "button"; Vdom.Attr.create "role" "option"; Vdom.Attr.create "aria-selected" (Bool.to_string (o = offset));
+                       Vdom.Attr.class_ (if o = offset then "selected" else ""); Vdom.Attr.on_click (fun _ -> Effect.Many [ set_offset o; set_picking false ]) ]
+                   [ Ui.text (name c) ])) ])
+  in
   let head =
     Ui.div ~cls:"page-head"
       [ Vdom.Node.h1 [ Ui.text (Msg.nav_home locale) ];
-        Vdom.Node.a ~attrs:([Vdom.Attr.class_ "advisor-mobile-link button"; Vdom.Attr.href "/advisor";
-          Vdom.Attr.on_click (fun _ -> Effect.Many [Effect.Prevent_default; navigate (Route.Advisor None)])]
-          @ if advisor_route then [Vdom.Attr.create "aria-current" "page"] else []) [Ui.text (Msg.nav_advisor locale)];
         Ui.div ~cls:"page-controls"
           [ (if List.is_empty scopes then Vdom.Node.none
              else Ui.div ~cls:"segmented" (List.map scopes ~f:(fun (value, label) -> Ui.button ~kind:(if String.equal value scope then "active" else "") label (set_scope value))));
-            Ui.period
-              ~label:(match selected with Some c -> Fmt.month_label locale (J.str (J.field "cycle" c)) | None -> "")
-              ~previous:(Msg.overview_previous locale, index <= 0 || offset <= -6, set_offset (offset - 1))
-              ~next:(Msg.overview_next locale, offset >= 0, set_offset (offset + 1)) ] ]
+            month_picker ] ]
   in
   let figures (c : J.t) =
     let savings = Fmt.to_float (J.field "savings" c) in
+    (* A cycle the statements don't reach the end of has figures only so far: right after payday the
+       salary is in and the bills aren't. It is never compared with whole cycles. *)
+    let complete = match J.field "complete" c with `Bool b -> b | _ -> true in
     (* Compared only with earlier cycles that had income, and only when there are at least three:
        a comparison with empty months says nothing. *)
     let before = List.filteri cycles ~f:(fun i c -> i < index && i >= index - 6 && Float.(Fmt.to_float (J.field "income" c) > 0.)) in
     let average = if List.is_empty before then 0. else List.sum (module Float) before ~f:(fun c -> Fmt.to_float (J.field "savings" c)) /. Float.of_int (List.length before) in
     let trend =
-      if List.length before < 3 || Float.(abs average < 1.) then Vdom.Node.none
+      if (not complete) || List.length before < 3 || Float.(abs average < 1.) then Vdom.Node.none
       else
         let change = (savings -. average) /. Float.abs average *. 100. in
         Ui.div ~cls:("trend " ^ if Float.(change >= 0.) then "positive" else "negative")
@@ -257,19 +327,121 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
             Ui.span [ Ui.text (Msg.overview_vs_average ~change:(Fmt.percent ~signed:true locale change) locale) ] ]
     in
     let line label value = Ui.div ~cls:"figure-line" [ Ui.span ~cls:"figure-label" [ Ui.text label ]; Ui.span ~cls:"figure-value" [ Ui.text value ] ] in
-    Ui.div ~cls:"panel figures"
-      [ Ui.div ~cls:"figures-main"
+    let note text = Ui.div ~cls:"figure-note" [ Ui.text text ] in
+    let outlook =
+      match outlook with
+      | Loaded o when (not complete) && String.equal (J.str (J.path [ "cycle"; "cycle" ] o)) (J.str (J.field "cycle" c)) -> Some o
+      | _ -> None
+    in
+    let main =
+      match outlook with
+      | Some o ->
+          (* Glanceable: the number, one line under it, and three figures. The sum behind the number folds
+             out (Breakdown); the forecast's range and track record sit behind the ± beside where it is heading. *)
+          let amount path = Fmt.to_float (J.path path o) in
+          let items = J.list (J.field "still_due" o) in
+          let sum f = List.sum (module Float) items ~f:(fun i -> let a = Fmt.to_float (J.field "amount" i) in if f a then a else 0.) in
+          let signed x = Fmt.signed_whole locale ~code (`String (Printf.sprintf "%.2f" x)) in
+          let kr x = whole (`String (Printf.sprintf "%.2f" (Float.abs x))) in
+          let bills = sum Float.is_negative and income = sum Float.is_positive in
+          let safe = J.field "safe_to_spend" o in
+          let payday = Fmt.date_json (J.path [ "cycle"; "last" ] o) in
+          let figure ?(hint = "") ?(aside = "") label value =
+            Ui.div ~cls:"figure-line outlook-row"
+              [ Ui.span ~cls:"figure-label" [ Ui.text label ];
+                Vdom.Node.span
+                  ~attrs:(Vdom.Attr.class_ "figure-value" :: (if String.is_empty hint then [] else [ Vdom.Attr.title hint ]))
+                  [ Ui.text value; (if String.is_empty aside then Vdom.Node.none else Ui.span ~cls:"figure-aside" [ Ui.text aside ]) ] ]
+          in
+          let workings =
+            let row ?(cls = "") label x = Ui.div ~cls:("figure-line workings-row " ^ cls) [ Ui.span [ Ui.text label ]; Ui.span ~cls:"num" [ Ui.text (signed x) ] ] in
+            Vdom.Node.create "details" ~attrs:[ Vdom.Attr.class_ "workings" ]
+              (Vdom.Node.create "summary" [ Ui.text (Msg.overview_workings locale) ]
+               :: List.filter_opt
+                    [ Some (row (Msg.overview_workings_saved locale) (amount [ "so_far"; "savings" ]));
+                      (if Float.(income > 0.) then Some (row (Msg.overview_workings_income locale) income) else None);
+                      (if Float.(bills < 0.) then Some (row (Msg.overview_workings_bills locale) bills) else None);
+                      (if Float.(amount [ "goals_set_aside" ] > 0.) then Some (row (Msg.overview_workings_goals locale) (-. amount [ "goals_set_aside" ])) else None);
+                      (match J.field "covered_through" o with
+                       | `String _ as d when Float.(amount [ "unseen_spending" ] > 0.) ->
+                           Some (row (Msg.overview_workings_unseen ~date:(Fmt.date_json d) locale) (-. amount [ "unseen_spending" ]))
+                       | _ -> None);
+                      Some (row ~cls:"workings-total" (Msg.overview_workings_safe locale) (Fmt.to_float safe));
+                      (* How far the statements reach, and whether they agree with the bank: behind the sum, not under it. *)
+                      Some
+                        (Ui.div ~cls:"workings-foot"
+                           [ Ui.text
+                               (match J.field "covered_through" o with
+                                | `Null -> Msg.overview_nothing_yet locale
+                                | d -> Msg.overview_through ~date:(Fmt.date_json d) locale);
+                             (if J.bool (J.field "reconciled" c) then Vdom.Node.none else Ui.text (" · " ^ Msg.label_provisional locale)) ]) ])
+          in
+          let range_hint =
+            String.concat ~sep:". "
+              (List.filter_opt
+                 [ (match J.field "expected_range" o with
+                    | `Null -> None
+                    | r -> Some (Msg.overview_likely ~low:(Fmt.signed_whole locale ~code (J.field "low" r)) ~high:(Fmt.signed_whole locale ~code (J.field "high" r)) locale));
+                   (match J.field "track_record" o with
+                    | `Null -> None
+                    | t ->
+                        Some
+                          (Msg.overview_track ~amount:(whole (J.field "miss" t)) ~count:(Int.to_string (J.int (J.field "forecasts" t)))
+                             ~date:(Fmt.date_json (J.field "since" t)) locale)) ])
+          in
+          (* The one number, one line under it (per day, days left, what a usual day costs), its sum folded,
+             and two small figures under a hairline. *)
+          let left = (match J.field "days_total" o with `Int n -> n | _ -> 0) - (match J.field "days_covered" o with `Int n -> n | _ -> 0) in
+          let usual_day = if left > 0 then amount [ "usual_rest" ] /. Float.of_int left else 0. in
+          let stat ?(hint = "") ?(aside = "") label value =
+            Vdom.Node.div ~attrs:(Vdom.Attr.class_ "stat" :: (if String.is_empty hint then [] else [ Vdom.Attr.title hint ]))
+              [ Ui.div ~cls:"stat-label" [ Ui.text label ];
+                Ui.div ~cls:"stat-value num" [ Ui.text value; (if String.is_empty aside then Vdom.Node.none else Ui.span ~cls:"stat-aside" [ Ui.text aside ]) ] ]
+          in
+          ignore figure;
+          [ Ui.div ~cls:"hero-label" [ Ui.text (Msg.overview_safe_title ~date:payday locale) ];
+            Ui.div ~cls:("hero num " ^ Fmt.sign_tone safe) [ Ui.text (whole safe) ];
+            Ui.div ~cls:"hero-sub num"
+              [ Ui.text
+                  (if Float.(Fmt.to_float safe < 0.) then Msg.overview_safe_over ~amount:(kr (Fmt.to_float safe)) locale
+                   else if Float.(usual_day >= 1.) then
+                     Msg.overview_safe_sub_usual ~amount:(whole (J.field "safe_per_day" o)) ~days:(Int.to_string (J.int (J.field "days_to_payday" o))) ~usual:(kr usual_day) locale
+                   else Msg.overview_safe_sub ~amount:(whole (J.field "safe_per_day" o)) ~days:(Int.to_string (J.int (J.field "days_to_payday" o))) locale) ];
+            workings;
+            Ui.div ~cls:"stats"
+              [ stat ~hint:range_hint
+                  ~aside:(match J.field "track_record" o with `Null -> "" | t -> "±" ^ whole (J.field "miss" t))
+                  (Msg.overview_row_heading locale) (Fmt.signed_whole locale ~code (J.field "expected" o));
+                (if Float.(bills < 0.) then stat (Msg.overview_row_bills locale) (signed bills)
+                 else if Float.(income > 0.) then stat (Msg.overview_row_income locale) (signed income)
+                 else Vdom.Node.none) ] ]
+      | None ->
           [ Ui.div ~cls:"figure-label" [ Ui.text (Msg.overview_net_savings locale) ];
             Ui.div ~cls:("hero " ^ Fmt.sign_tone (J.field "savings" c)) [ Ui.text (Fmt.signed_whole locale ~code (J.field "savings" c)) ];
             trend;
-            (if J.bool (J.field "reconciled" c) then Vdom.Node.none else Ui.div ~cls:"provisional" [ Ui.text (Msg.label_provisional locale) ]) ];
+            (match complete, J.field "covered_through" c with
+             | false, (`String _ as d) -> note (Msg.overview_covered_through ~date:(Fmt.date_json d) locale)
+             | _ -> Vdom.Node.none) ]
+    in
+    if Option.is_some outlook then Ui.div ~cls:"overview-hero" main
+    else
+    Ui.div ~cls:"panel figures"
+      [ Ui.div ~cls:"figures-main"
+          (main @ [ (if J.bool (J.field "reconciled" c) then Vdom.Node.none else Ui.div ~cls:"provisional" [ Ui.text (Msg.label_provisional locale) ]) ]);
         Ui.div ~cls:"figures-side"
-          [ line (Msg.label_income locale) (whole (J.field "income" c));
-            line (Msg.overview_expenses locale) (whole (J.field "spending" c));
-            line (Msg.label_savings_rate locale)
-              (match J.str_opt (J.field "savings_rate" c) with
-              | Some rate -> Fmt.percent locale (Option.value (Float.of_string_opt (String.chop_suffix_if_exists rate ~suffix:"%")) ~default:0.)
-              | None -> "–") ] ]
+          [ line (if complete then Msg.label_income locale else Msg.label_income_so_far locale) (whole (J.field "income" c));
+            line (if complete then Msg.overview_expenses locale else Msg.label_spending_so_far locale) (whole (J.field "spending" c));
+            (* Spending so far set beside the same days of earlier cycles; a savings rate means nothing yet. *)
+            (match outlook with
+             | Some o -> (
+                 match J.field "usual_by_now" o with
+                 | `Null -> Vdom.Node.none
+                 | u -> Ui.div ~cls:"figure-aside-line" [ Ui.text (Msg.overview_usual ~amount:(whole (J.field "spending" u)) locale) ])
+             | None ->
+                 line (Msg.label_savings_rate locale)
+                   (match J.str_opt (J.field "savings_rate" c) with
+                   | Some rate when complete -> Fmt.percent locale (Option.value (Float.of_string_opt (String.chop_suffix_if_exists rate ~suffix:"%")) ~default:0.)
+                   | _ -> "–")) ] ]
   in
   let flow (c : J.t) categories_json =
     let left, right = Flow.nodes ~locale ~code c categories_json in
@@ -282,51 +454,56 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
     | Loaded _, None -> Ui.empty (Msg.overview_empty locale)
     | Loaded _, Some c when Float.(Fmt.to_float (J.field "income" c) = 0. && Fmt.to_float (J.field "spending" c) = 0.) ->
         Ui.div ~cls:"panel empty-panel"
-          [ Ui.p (Msg.overview_empty locale); Ui.div ~cls:"actions" [ Ui.button ~kind:"primary" (Msg.import_title locale) (navigate Route.Import) ] ]
+          [ Ui.p (Msg.overview_empty locale) ]
     | Loaded _, Some c ->
-        Ui.div [ figures c; Remote.view ~locale categories ~f:(fun json -> if mostly_uncategorized json then Vdom.Node.none else flow c json) ]
+        figures c
   in
-  let weekly =
-    match brief with
-    | Loaded json when not (J.is_null (J.field "brief" json)) ->
-        let b = J.field "brief" json in
-        let code = J.str ~default:code (J.field "currency" b) in
-        let money field = Fmt.format_money locale ~code (J.field field b) in
-        let top = J.list (J.field "top" b) in
-        Ui.div ~cls:"panel weekly-brief"
-          [ Vdom.Node.h2 [ Ui.text (Msg.brief_title ~first:(Fmt.date_json (J.field "first" b)) ~last:(Fmt.date_json (J.field "last" b)) locale) ];
-            (match J.str_opt (J.field "text" b) with
-             | Some text -> Ui.p text
-             | None -> if J.bool (J.field "can_write" b) then Ui.muted (Msg.brief_writing locale) else Vdom.Node.none);
-            Ui.div ~cls:"kpis"
-              [ Ui.kpi (Msg.label_income locale) (money "income"); Ui.kpi (Msg.label_spending locale) (money "spending") ];
-            Ui.muted (Msg.brief_before ~amount:(Fmt.money_json ~code (J.field "previous_spending" b)) locale);
-            (if J.int (J.field "upcoming_count" b) = 0 then Vdom.Node.none
-             else Ui.muted (Msg.brief_upcoming ~amount:(Fmt.money_json ~code (J.field "upcoming_total" b)) locale));
-            (if List.is_empty top then Vdom.Node.none
-             else
-               Ui.div
-                 [ Ui.muted (Msg.brief_top locale);
-                   Vdom.Node.ul
-                     (List.map top ~f:(fun c ->
-                          Vdom.Node.li [ Ui.text (J.str (J.field "name" c) ^ " " ^ Fmt.format_money locale ~code (J.field "total" c)) ])) ]) ]
-    | Loaded _ | Loading | Failed _ -> Vdom.Node.none
+  (* Where the money went, as a flow: for a month that is over, where it answers the question. *)
+  let flow_view =
+    match summary, selected with
+    | Loaded _, Some c when offset <> 0 && not Float.(Fmt.to_float (J.field "income" c) = 0. && Fmt.to_float (J.field "spending" c) = 0.) ->
+        Remote.view ~locale categories ~f:(fun json -> if mostly_uncategorized json then Vdom.Node.none else flow c json)
+    | _ -> Vdom.Node.none
   in
+  let briefing_view = if offset = 0 then briefing else Vdom.Node.none in
   let attention =
     match Map.data views with
     | [] -> Vdom.Node.none
     | items ->
-        Ui.div ~cls:"attention"
-          [ Ui.div ~cls:"section-head" [ Vdom.Node.h2 [ Ui.text (Msg.overview_attention locale) ]; Ui.span ~cls:"count" [ Ui.text (Int.to_string (List.length items)) ] ];
-            Ui.div ~cls:"attention-list" items ]
+        (* What needs doing, as slim banners straight under the number; no heading needed. *)
+        Ui.div ~cls:"attention" [ Ui.div ~cls:"attention-list" items ]
   in
   let hosted = Map.exists visible_cards ~f:(fun card -> Option.equal String.equal selected_finding (Some (J.str (J.field "key" card)))) in
   let standalone = advisor_route && not hosted in
-  Vdom.Node.main ~attrs:[Vdom.Attr.class_ (if standalone then "page advisor-page" else "page")]
+  (* Statements can be dropped while talking to the advisor too; what became of them shows above the conversation. *)
+  Vdom.Node.main ~attrs:[Vdom.Attr.class_ ((if standalone then "page advisor-page" else "page has-desk") ^ if desk.dragging then " dropping" else ""); desk.drop]
     [(if standalone then Vdom.Node.h1 [Ui.text (Msg.nav_advisor locale)] else Vdom.Node.none);
      (* Keep the financial surface mounted for Home continuity; an unanchored
         Advisor conversation is not a second dashboard above the chat. *)
      Vdom.Node.div ~attrs:(if standalone then [Vdom.Attr.create "hidden" ""] else [])
        (let urgent = Map.exists visible_cards ~f:(fun card -> List.mem urgent_kinds (J.str (J.field "kind" card)) ~equal:String.equal) in
-        if urgent then [head; attention; body; weekly] else [head; body; weekly; attention]);
+        (* What was handed over shows where the page starts; the box waits at its foot. *)
+        (* What is ahead follows what needs doing, for the current period only. *)
+        let ahead = if offset = 0 then Ui.div ~cls:"ahead" [forecast; goals] else Vdom.Node.none in
+        (* The rest of the books, for when they are wanted: every transaction, and the accounts. *)
+        let books =
+          let go r label = Vdom.Node.a ~attrs:[Vdom.Attr.href (Route.to_path r); Vdom.Attr.on_click (fun _ -> Effect.Many [Effect.Prevent_default; navigate r])] [Ui.text label] in
+          Ui.div ~cls:"books-links"
+            [go (Route.Transactions { offset = 0; category = None }) (Msg.overview_all_transactions locale); Ui.span [Ui.text "·"]; go Route.Accounts (Msg.nav_accounts locale)] in
+        (* While in a conversation under a card, its composer is the box: the desk steps aside. Back on the
+           Overview, the desk is there for the next question. *)
+        let in_briefing = match selected_finding with Some k -> String.is_prefix k ~prefix:"question:" | None -> false in
+        let box = if advisor_route && (hosted || in_briefing) then Vdom.Node.none else desk.view in
+        ignore urgent;
+        (* Each part keeps its place in the page whether it shows or not: a part that appears must not shift the
+           ones after it, or they are rebuilt and a section the reader opened closes again. *)
+        let slot ?(name = "") node = Ui.div ~cls:("slot " ^ name) [node] in
+        (* One column on a phone, in reading order. On a computer, two: the number and the briefing on the left;
+           what needs doing beside the number, and what is ahead under it, on the right (placed by the stylesheet). *)
+        [head; slot desk.files;
+         Ui.div ~cls:"overview-cols"
+           [ Ui.div ~cls:"overview-main" [slot ~name:"slot-body" body; slot ~name:"slot-attention" attention; slot ~name:"slot-briefing" briefing_view; slot ~name:"slot-flow" flow_view];
+             Ui.div ~cls:"overview-side" [ahead] ];
+         books; slot box]);
+     (if standalone then desk.files else Vdom.Node.none);
      (if standalone then outlet else Vdom.Node.none)]

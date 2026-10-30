@@ -346,7 +346,7 @@ let promote (d, rows) =
     | Ok category -> Cashflow_core.Owner.equal category.account.owner bank.owner && String.equal (Currency.code category.account.currency) (Currency.code bank.currency)
     | Error _ -> false
   in
-  let promote (s : Suggest.suggestion) = Suggest.promote ~threshold:(if fits s then threshold else None) s in
+  let promote (s : Suggest.suggestion) = Suggest.promote ~fits:(fits s) ~threshold s in
   Ok (d, List.map (fun p -> { p with suggestion = Option.map promote p.suggestion }) rows)
 
 (* The balance after the file's last row. Banks list rows newest or oldest first; the running

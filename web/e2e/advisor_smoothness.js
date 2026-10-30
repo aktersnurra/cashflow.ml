@@ -48,7 +48,9 @@ const answer=Array.from({length:240},(_,i)=>`### Review ${i+1}\n\nKeep **emergen
     const chat=getComputedStyle(el),canvas=getComputedStyle(document.body),button=getComputedStyle(el.querySelector('.advisor-send'));
     const rgb=s=>s.match(/[\d.]+/g).slice(0,3).map(Number);
     const luminance=s=>rgb(s).map(v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4;}).reduce((s,v,i)=>s+v*[.2126,.7152,.0722][i],0);
-    const a=luminance(button.color),b=luminance(getComputedStyle(el.querySelector('.advisor-composer')).backgroundColor);
+    // The arrow sits on the round button's own fill (or on the composer where the button has none).
+    const fill=button.backgroundColor;const behind=rgb(fill).length===3&&!/rgba\(.*,\s*0\)$/.test(fill)?fill:getComputedStyle(el.querySelector('.advisor-composer')).backgroundColor;
+    const a=luminance(button.color),b=luminance(behind);
     return{chat:chat.backgroundColor,canvas:canvas.backgroundColor,buttonContrast:(Math.max(a,b)+.05)/(Math.min(a,b)+.05)};
    });
   }

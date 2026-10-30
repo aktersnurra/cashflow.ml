@@ -127,10 +127,10 @@ const fs = require('node:fs');
         await page.keyboard.press(key);
         assert.equal(await insideDialog(), true, `pending ${key} stays in dialog`);
       }
-      await page.locator('.sidebar button').first().focus();
+      await page.locator('.topbar button').first().focus();
       await page.keyboard.press('Tab');
       assert.equal(await insideDialog(), true, 'escaped focus is returned to dialog on Tab');
-      await page.locator('.sidebar button').first().focus();
+      await page.locator('.topbar button').first().focus();
       await page.keyboard.press('Shift+Tab');
       assert.equal(await insideDialog(), true, 'escaped focus is returned to dialog on Shift+Tab');
       await page.keyboard.press('Control+k');

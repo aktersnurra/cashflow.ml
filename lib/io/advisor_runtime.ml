@@ -546,11 +546,36 @@ let run_handler t r sw : E.handler =
             in
             match r.aliases with
             | None -> Error (error A.Invalid_request)
-            | Some aliases ->
+            | Some aliases -> (
+                (* Filing asks the classifier: network I/O, so it runs before the run's transaction, holding none.
+                   What it says is checked again row by row when the rows are filed, inside it. *)
+                let* classified =
+                  match request with
+                  | Cashflow_workflow.Advisor_tools.File_inbox _ -> (
+                      let owner =
+                        try
+                          Sql.read_snapshot t.service.db (fun () ->
+                              let* () = Advisor_access.authorize_scope t.service r.principal scope in
+                              let* access = Advisor_access.access t.service r.principal in
+                              Ok (access, match scope with A.Personal -> Access.personal access | Household h -> Owner.Household h))
+                        with Sql.Sql_error _ -> Error (error A.Storage_unavailable)
+                      in
+                      match owner with
+                      | Ok (access, owner) -> Ok (Some (Autofile.classify t.service access ~owner))
+                      | Error e -> Error e)
+                  | _ -> Ok None
+                in
                 checked t r (fun run ->
-                    let* evidence = Advisor_projection.read t.service ~principal:r.principal ~scope ~aliases ~currency request in
+                    let* filed =
+                      match request, classified with
+                      | Cashflow_workflow.Advisor_tools.File_inbox { keep_on }, Some c ->
+                          let* access = Advisor_access.access t.service r.principal in
+                          Ok (Some (Autofile.file t.service access ~keep_on c))
+                      | _ -> Ok None
+                    in
+                    let* evidence = Advisor_projection.read ?filed t.service ~principal:r.principal ~scope ~aliases ~currency request in
                     let* () = remember_proposal t r run evidence in
-                    Ok evidence))
+                    Ok evidence)))
         | E.Select_evidence evidence -> (
             let* _ = checked t r (fun run -> Ok run) in
             match r.aliases with

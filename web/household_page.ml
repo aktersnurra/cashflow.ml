@@ -2,7 +2,8 @@ open! Core
 open! Bonsai_web.Cont
 open Bonsai.Let_syntax
 
-(* The household's figures are only fetched in the branch where there is a household. *)
+(* The household, as a section of Settings. Its figures are only fetched in the branch where there is a
+   household. *)
 let rec page ~(ctx : Ctx.t) ~(advisor : Advisor.controller Bonsai.t) graph =
   let has_household = let%arr session = ctx.session in Ctx.has_household session in
   match%sub has_household with
@@ -23,8 +24,9 @@ and view ~(ctx : Ctx.t) ~(advisor : Advisor.controller Bonsai.t) ~plan ~owed gra
   in
   let section title body = Ui.div [ Ui.div ~cls:"section-head" [ Vdom.Node.h2 [ Ui.text title ] ]; body ] in
   if not (Ctx.has_household session) then
-    Ui.page ~title:(Msg.household_title locale)
-      [ Ui.div ~cls:"panel empty-panel"
+    Ui.div ~cls:"household-section"
+      [ Ui.div ~cls:"section-head" [ Vdom.Node.h2 [ Ui.text (Msg.household_title locale) ] ];
+        Ui.div ~cls:"panel empty-panel"
           ([ Ui.p (Msg.household_none locale); Ui.muted (Msg.household_none_body locale) ]
           @ [ Ui.div ~cls:"inline-form"
                 [ Ui.input ~placeholder:(Msg.label_name locale) ~value:name ~on_input:set_name ();
@@ -32,9 +34,9 @@ and view ~(ctx : Ctx.t) ~(advisor : Advisor.controller Bonsai.t) ~plan ~owed gra
   else
     let household = J.field "household" session in
     let code json = J.str ~default:(J.str ~default:"SEK" (J.field "default_currency" household)) (J.field "currency" json) in
-    Vdom.Node.main ~attrs:[ Vdom.Attr.class_ "page" ]
-      [ Ui.div ~cls:"page-head"
-          [ Ui.div [ Vdom.Node.h1 [ Ui.text (J.str (J.field "name" household)) ]; Ui.div ~cls:"subtitle" [ Ui.text (Msg.household_subtitle locale) ] ] ];
+    Ui.div ~cls:"household-section"
+      [ Ui.div ~cls:"section-head"
+          [ Ui.div [ Vdom.Node.h2 [ Ui.text (J.str (J.field "name" household)) ]; Ui.div ~cls:"subtitle" [ Ui.text (Msg.household_subtitle locale) ] ] ];
         (* What the household owes a member, from shared costs they paid personally. *)
         (match owed with
         | Loaded json when not (List.is_empty (J.list (J.field "owed" json))) ->
@@ -49,7 +51,7 @@ and view ~(ctx : Ctx.t) ~(advisor : Advisor.controller Bonsai.t) ~plan ~owed gra
                let members = J.list (J.field "members" json) in
                if List.for_all members ~f:(fun m -> Float.(Fmt.to_float (J.field "contribution" m) = 0.)) then
                  Ui.div ~cls:"panel empty-panel"
-                   [ Ui.p (Msg.household_no_plan locale); Ui.div ~cls:"actions" [ Ui.button ~kind:"primary" (Msg.nav_budgets locale) (navigate Route.Budgets) ] ]
+                   [ Ui.p (Msg.household_no_plan locale); Ui.div ~cls:"actions" [ Ui.button ~kind:"primary" (Msg.nav_budgets locale) (navigate Route.Home) ] ]
                else
                  Ui.div ~cls:"table"
                    (Ui.div ~cls:"table-head budget-row"

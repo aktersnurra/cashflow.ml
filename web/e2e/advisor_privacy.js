@@ -56,7 +56,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
      const p=await c.newPage();await p.goto(base+'/advisor/'+ids.conversation_id);await p.getByRole('button',{name:'Stop',exact:true}).waitFor();
     }
     const c=await context('extra8');await req(c,'extra8','/api/advisor/consent',{enabled:true});
-    const p=await c.newPage();await p.goto(base+'/advisor');await p.getByRole('textbox').fill('capacity ninth');const refused=p.waitForResponse(r=>r.request().method()==='POST'&&r.url()===base+'/api/advisor/turns');
+    const p=await c.newPage();await p.goto(base+'/advisor');await p.locator('textarea.advisor-input').fill('capacity ninth');const refused=p.waitForResponse(r=>r.request().method()==='POST'&&r.url()===base+'/api/advisor/turns');
     await p.getByRole('button',{name:'Send',exact:true}).click();assert.equal((await refused).status(),503);
     assert.equal((await state()).provider_starts,8);
     const list=await get(c,'/api/advisor/conversations');assert.equal(list.conversations.length,0);
@@ -115,7 +115,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
      assert.notEqual((await state()).tool_hashes[1],first);
      await fetch(base+'/release');await page.getByRole('status').filter({hasText:'Answer complete'}).waitFor();
      const s=await snap(id);assert.equal(s.turns[0].attempts[0].segments.filter(x=>x.type==='Evidence_segment').length,2);
-     await page.locator('.sidebar').getByRole('link',{name:'Settings',exact:true}).click();
+     await page.locator('.topbar').getByRole('link',{name:'Settings',exact:true}).click();
      await page.locator('select:visible').first().selectOption('sv');await button('Save').click();
      await page.getByRole('heading',{name:'Inställningar',exact:true}).waitFor();
      // Saving a language renames the seeded categories (translated names), so only that step re-baselines the digest.

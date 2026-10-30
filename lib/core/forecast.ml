@@ -60,6 +60,7 @@ type t = {
   scenario : point list option;
   lowest : Date.t * int64;
   range : (Date.t * int64 * int64) list;
+  misses : int64 list;
   chance_positive : int option;
   accounts : outlook list;
   items : item list;
@@ -433,8 +434,8 @@ let history (input : input) ~first =
    have been made that morning (the balances at the end of the day before, only what was known by
    then, imports complete, no plan, goals or what-if), compared with the cash that followed. A
    start needs 100 days of history before it. The range for a day ahead is the baseline plus the
-   10th and 90th percentile of the errors at that distance, as far as there are 10 of them; the
-   chance of staying above zero is the share of whole-horizon error paths that, added to the
+   10th and 90th percentile of the errors at that distance, as far as there are 10 of them, and the
+   median of their sizes is how far off forecasts that far ahead typically were; the chance of staying above zero is the share of whole-horizon error paths that, added to the
    baseline, never go below zero, given 8 of them. *)
 let backtest (input : input) ~(baseline : point list) =
   let cash = cash_accounts input in
@@ -513,6 +514,13 @@ let backtest (input : input) ~(baseline : point list) =
         | _ -> [])
   in
   let range = range 0 baseline in
+  let misses =
+    List.mapi
+      (fun d _ ->
+        let sizes = Array.of_list (List.sort Int64.compare (List.map Int64.abs (errors_at d))) in
+        quantile sizes 0.5)
+      range
+  in
   let whole = List.filter (fun path -> List.length path > ahead) paths in
   let chance_positive =
     if List.length whole < 8 then None
@@ -525,7 +533,7 @@ let backtest (input : input) ~(baseline : point list) =
     | [], _ | _, [] -> No_range_yet
     | _, earliest :: _ -> Range_from { forecasts = List.length starts; since = earliest }
   in
-  (range, chance_positive, assumption)
+  (range, misses, chance_positive, assumption)
 
 let project (input : input) scenario =
   let baseline = run input no_scenario in
@@ -569,12 +577,12 @@ let project (input : input) scenario =
           usual.seasons)
       months_ahead
   in
-  let range, chance_positive, range_assumption = backtest input ~baseline:baseline.points in
+  let range, misses, chance_positive, range_assumption = backtest input ~baseline:baseline.points in
   let assumptions = assumptions @ seasonal @ [ range_assumption ] in
   let current = Cycle.cycle_of input.setting input.today in
   let rec back cycle n = if n <= 0 then cycle else back (Cycle.previous input.setting cycle) (n - 1) in
   let lowest = List.fold_left (fun (ld, lv) p -> if Int64.compare p.cash lv < 0 then (p.date, p.cash) else (ld, lv)) ((List.hd baseline.points).date, (List.hd baseline.points).cash) baseline.points in
   { today = input.today; imported_through; horizon_end;
     history = history input ~first:(back current (min input.horizon 3)).first; baseline = baseline.points;
-    scenario = (if scenario = no_scenario then None else Some (run input scenario).points); lowest; range; chance_positive; accounts = baseline.outlooks;
+    scenario = (if scenario = no_scenario then None else Some (run input scenario).points); lowest; range; misses; chance_positive; accounts = baseline.outlooks;
     items = baseline.run_items; assumptions }

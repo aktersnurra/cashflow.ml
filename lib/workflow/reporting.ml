@@ -20,7 +20,11 @@ let cashflow_summary ~access ~scope ?currency ~cycles () =
   let* request = Cashflow_request.make ~context ~first ~last in
   let* facts = Effects.perform (Load_cashflow request) in
   let book = Analytics.make_book ~accounts:facts.accounts ~owners:(Reporting_context.owners context) ~currency in
-  Ok {context; cycles=Analytics.cashflow_summary book ~cycles ~reconciled_through:facts.reconciled_through facts.transfers}
+  let covered_through =
+    Analytics.covered_through ~transfers:facts.transfers ~accounts:facts.accounts ~owners:(Reporting_context.owners context) ~imported_through:facts.imported_through
+      ~today:(Reporting_context.today context)
+  in
+  Ok {context; cycles=Analytics.cashflow_summary ?covered_through book ~cycles ~reconciled_through:facts.reconciled_through facts.transfers}
 
 type forecast_report = { context : Reporting_context.t; forecast : Cashflow_core.Forecast.t }
 
@@ -42,7 +46,8 @@ let scenario_of ~currency ~today ~last (input : Forecast_request.scenario_input)
     let* one_off = List.fold_right (fun o acc -> let* acc = acc in let* o = one_off o in Ok (o :: acc)) input.one_off (Ok []) in
     Ok { F.leave_out = input.leave_out; one_off; follow_budgets = input.follow_budgets }
 
-let forecast ~access ~scope ?currency ~horizon ~scenario () =
+(* The forecast with the facts and book it came from, loaded once. *)
+let project ~access ~scope ?currency ~horizon ~scenario () =
   let module F = Cashflow_core.Forecast in
   let* default_currency = Reporting_context.default_currency ~access ~scope in
   let* currency = Effects.perform (Resolve_currency (Option.value currency ~default:default_currency)) in
@@ -62,4 +67,21 @@ let forecast ~access ~scope ?currency ~horizon ~scenario () =
     { today; setting; horizon; book; owners; accounts = facts.accounts; imported_through = facts.imported_through; transfers = facts.transfers;
       series; budgets = facts.budgets; goals = facts.goals; contribution = facts.contribution }
   in
-  Ok { context; forecast = F.project input scenario }
+  Ok (context, facts, book, F.project input scenario)
+
+let forecast ~access ~scope ?currency ~horizon ~scenario () =
+  let* context, _, _, forecast = project ~access ~scope ?currency ~horizon ~scenario () in
+  Ok { context; forecast }
+
+type outlook_report = { context : Reporting_context.t; outlook : Cashflow_core.Outlook.t }
+
+(* The current cycle so far and where it is heading: the forecast's facts (a month ahead reaches past
+   any cycle's end) with how far the statements reach. *)
+let period_outlook ~access ~scope ?currency () =
+  let* context, (facts : Forecast_facts.t), book, forecast = project ~access ~scope ?currency ~horizon:1 ~scenario:Forecast_request.no_scenario () in
+  let owners = Reporting_context.owners context and today = Reporting_context.today context in
+  let covered_through = Analytics.covered_through ~transfers:facts.transfers ~accounts:facts.accounts ~owners ~imported_through:facts.imported_through ~today in
+  Ok
+    { context;
+      outlook =
+        Cashflow_core.Outlook.make ~goals:facts.goals book ~setting:(Reporting_context.setting context) ~today ~covered_through ~forecast facts.transfers }

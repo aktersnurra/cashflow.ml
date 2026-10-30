@@ -109,3 +109,20 @@ let household (h : Household.t) =
 let member (m : Household.member) =
   `Assoc [ ("user_id", `String (User_id.to_string m.user_id)); ("display_name", `String m.display_name);
            ("status", `String (Household.status_to_string m.status)) ]
+
+(* Why a cycle came out as it did (Cashflow_core.Explain), for the month review and the model. *)
+let explanation currency (e : Cashflow_core.Explain.t) =
+  let m = money currency in
+  let driver : Cashflow_core.Explain.driver -> Yojson.Safe.t = function
+    | Yearly { category; description; amount; date = on } ->
+        `Assoc [ ("kind", `String "yearly"); ("category", account_ref category); ("description", `String description); ("amount", m amount); ("date", date on) ]
+    | One_off { category; description; amount; date = on } ->
+        `Assoc [ ("kind", `String "one_off"); ("category", account_ref category); ("description", `String description); ("amount", m amount); ("date", date on) ]
+    | Habit { category; difference; cycles_up } ->
+        `Assoc [ ("kind", `String "habit"); ("category", account_ref category); ("amount", m difference); ("cycles_up", `Int cycles_up) ]
+    | Less { category; difference } -> `Assoc [ ("kind", `String "less"); ("category", account_ref category); ("amount", m difference) ]
+    | Income_change { difference } -> `Assoc [ ("kind", `String "income"); ("amount", m difference) ]
+  in
+  `Assoc
+    [ ("cycle", cycle e.cycle); ("normal", `Bool e.normal); ("spending", m e.spending); ("usual_spending", m e.usual_spending); ("income", m e.income);
+      ("usual_income", m e.usual_income); ("compared_with", `Int e.compared_with); ("drivers", `List (List.map driver e.drivers)) ]

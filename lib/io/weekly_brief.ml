@@ -42,7 +42,10 @@ let compute ?(scope = Analytics.Me) ?currency (service : Service.t) access ~writ
   match Insights.context service access ~scope ?currency () with
   | Error _ -> None
   | Ok ctx ->
-      let first, last = last_full_week ctx.today in
+      (* The last week the statements cover in full: one they stop partway through would look quiet, and
+         say nothing set beside the week before. *)
+      let reference = match Insights.covered_through ctx with Some d -> Date.min ctx.today (Date.add_days d 1) | None -> ctx.today in
+      let first, last = last_full_week reference in
       let before = Date.add_days first (-7) in
       let week from upto = { Cycle.first = from; last = upto; year = 0; month = 0 } in
       let summaries =

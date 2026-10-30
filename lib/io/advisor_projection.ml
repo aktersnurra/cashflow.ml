@@ -46,7 +46,8 @@ let parse_call ~name ~arguments =
     | "recurring" | "goals" -> Some []
     | "forecast" -> Some [ "cycles"; "scenario" ]
     | "propose_set_budget" -> Some [ "category"; "monthly_amount"; "rollover" ]
-    | "inbox_rows" | "categories" -> Some []
+    | "inbox_rows" | "categories" | "period_outlook" -> Some []
+    | "explain_month" -> Some [ "cycle_offset" ]
     | "propose_categorize" -> Some [ "rows" ]
     | "propose_add_rule" -> Some [ "pattern"; "category"; "direction" ]
     | "bank_accounts" -> Some []
@@ -54,6 +55,7 @@ let parse_call ~name ~arguments =
     | "propose_save_goal" -> Some [ "name"; "target_amount"; "target_date"; "monthly_amount" ]
     | "propose_update_goal" -> Some [ "goal"; "name"; "target_amount"; "target_date"; "monthly_amount" ]
     | "propose_new_category" -> Some [ "name"; "kind" ]
+    | "file_inbox" -> Some [ "keep_on" ]
     | _ -> None
   in
   match allowed with
@@ -61,8 +63,8 @@ let parse_call ~name ~arguments =
   | Some allowed -> (
       try
         if String.length arguments > 8192 then raise Invalid;
-        (* A proposal never takes a currency: it acts in the conversation's own. *)
-        let proposing = String.starts_with ~prefix:"propose_" name in
+        (* A proposal, or filing, never takes a currency: it acts in the conversation's own. *)
+        let proposing = String.starts_with ~prefix:"propose_" name || name = "file_inbox" in
         let f = fields ((if proposing then [] else [ "currency" ]) @ allowed) (Yojson.Safe.from_string arguments) in
         let currency = Option.map (fun s -> require (T.currency_code s)) (text f "currency") in
         let c = { T.currency } in
@@ -79,6 +81,9 @@ let parse_call ~name ~arguments =
           | "budget_status" -> T.Budget_status (c, integer f "cycle_offset" 0 (-5) 0)
           | "goals" -> T.Goals c
           | "inbox_rows" -> T.Inbox_rows c
+          | "period_outlook" -> T.Period_outlook c
+          | "explain_month" -> T.Explain_cycle (c, integer f "cycle_offset" (-1) (-5) (-1))
+          | "file_inbox" -> T.File_inbox { keep_on = boolean f "keep_on" }
           | "categories" -> T.Categories c
           | "bank_accounts" -> T.Bank_accounts c
           | "propose_entry" ->
@@ -291,7 +296,10 @@ let refs = function
   | T.Categorize_proposal_result rows -> List.map (fun (r : T.categorize_row) -> r.category) rows
   | T.Proposal_card_result c -> c.accounts
   | T.Bank_accounts_result xs -> List.map (fun (b : T.bank_account) -> b.account) xs
-  | T.Cycle_summary_result _ | T.Goals_result _ -> []
+  | T.Filed_inbox_result { filed; unsure; _ } ->
+      List.filter_map (fun (r : T.inbox_row) -> Option.map (fun (a, _, _) -> a) r.suggestion) (filed @ unsure)
+  | T.Explain_result { categories; _ } -> categories
+  | T.Cycle_summary_result _ | T.Goals_result _ | T.Period_outlook_result _ -> []
 
 let assumptions (f : Forecast.t) =
   List.map
@@ -310,7 +318,8 @@ let assumptions (f : Forecast.t) =
       | Seasonal { month; year; percent } -> Printf.sprintf "seasonal: %d-%02d %d percent" year month percent)
     f.assumptions
 
-let read (service : Service.t) ~principal ~scope ~aliases ~currency:pinned request =
+(* [filed] is what file_inbox already did (Autofile.file, in the caller's transaction): read only reports it. *)
+let read ?filed (service : Service.t) ~principal ~scope ~aliases ~currency:pinned request =
   try
     let* detached =
       Sql.read_snapshot service.db (fun () ->
@@ -342,7 +351,8 @@ let read (service : Service.t) ~principal ~scope ~aliases ~currency:pinned reque
                 && s.input.leave_out = []
                 && List.length s.leave_out <= 20
                 && List.length s.input.one_off <= 10
-            | Recurring _ | Goals _ | Propose_budget _ | Inbox_rows _ | Categories _ | Propose_rule _ | Propose_goal _ | Propose_update_goal _ | Propose_category _ | Bank_accounts _ | Propose_entry _ -> true
+            | Recurring _ | Goals _ | Propose_budget _ | Inbox_rows _ | Categories _ | Propose_rule _ | Propose_goal _ | Propose_update_goal _ | Propose_category _ | Bank_accounts _ | Propose_entry _ | File_inbox _ | Period_outlook _ -> true
+            | Explain_cycle (_, n) -> n >= -5 && n <= -1
             | Propose_categorize { rows } ->
                 let n = List.length rows in
                 n >= 1 && n <= 20 && List.length (List.sort_uniq String.compare (List.map (fun (r, _) -> T.row_reference_text r) rows)) = n
@@ -354,6 +364,35 @@ let read (service : Service.t) ~principal ~scope ~aliases ~currency:pinned reque
               | T.Cycle_summary (_, n) ->
                   let* xs = run (Query.Cashflow_summary (qc, n)) in
                   Ok (T.Cycle_summary_result xs, List.length xs, List.length xs, [])
+              | Explain_cycle (_, offset) -> (
+                  let cycle = Insights.cycle_at ctx offset in
+                  (* Only a cycle the statements cover to its end: half a cycle is not explained. *)
+                  let covered = match Insights.covered_through ctx with Some d -> Date.compare cycle.last d <= 0 | None -> true in
+                  let floor = Int64.mul 300L (Int64.of_float (10. ** float_of_int (Currency.scale ctx.currency))) in
+                  match
+                    if covered then
+                      Explain.explain (Insights.book ctx) ~setting:ctx.setting ~floor ~cycle
+                        (Insights.transfers ctx ~first:(Date.add_days cycle.first (-400)) ~last:cycle.last)
+                    else None
+                  with
+                  | None -> error A.Not_found
+                  | Some e ->
+                      let categories =
+                        List.filter_map
+                          (function
+                            | Explain.Yearly { category; _ } | One_off { category; _ } | Habit { category; _ } | Less { category; _ } ->
+                                scoped category.account.id
+                            | Income_change _ -> None)
+                          e.drivers
+                      in
+                      Ok (T.Explain_result { explanation = e; categories }, 1, 1, [ "compared with the average of compared_with earlier cycles" ]))
+              | Period_outlook _ ->
+                  let* o = run (Query.Period_outlook qc) in
+                  Ok
+                    ( T.Period_outlook_result o,
+                      1,
+                      1,
+                      [ "expected is a projection from the recurring payments still due and usual spending, not observed; so_far runs only through covered_through" ] )
               | Category_spending (_, p) ->
                   let* xs = run (Query.Spending_by_category (qc, period p, true)) in
                   let ys =
@@ -427,6 +466,38 @@ let read (service : Service.t) ~principal ~scope ~aliases ~currency:pinned reque
                           outflow = Inbox.outflow v.item t; description = t.memo.description; suggestion })
                   in
                   Ok (T.Inbox_rows_result shown, List.length open_rows, List.length shown, [])
+              | File_inbox _ -> (
+                  match (filed : Autofile.report option) with
+                  | None -> error A.Invalid_request
+                  | Some report ->
+                      let alias_for id =
+                        match Hashtbl.fold (fun a t found -> if Transfer_id.equal t id then Some a else found) aliases.rows None with
+                        | Some a -> a
+                        | None ->
+                            let a = Printf.sprintf "row_%s_%d" aliases.nonce (Hashtbl.length aliases.rows + 1) in
+                            Hashtbl.add aliases.rows a id;
+                            a
+                      in
+                      let row (r : Autofile.row) =
+                        let t = r.transfer in
+                        let suggestion =
+                          Option.bind r.guess (fun ((c : Account_info.t), confidence, source) ->
+                              match scoped c.account.id with
+                              | Some a when a.kind = Account.Expense || a.kind = Account.Income -> Some (a, confidence, source)
+                              | _ -> None)
+                        in
+                        { T.reference = require (T.row_reference (alias_for t.id)); date = t.value_date; amount = Amount.to_int64 t.amount;
+                          outflow = r.outflow; description = t.memo.description; suggestion }
+                      in
+                      (* Every filed row is reported (the model must say what changed); unsure ones up to twenty, the
+                         rest wait in the inbox where the user sees them all. *)
+                      let unsure = List.map row report.unsure in
+                      let shown = take 20 unsure in
+                      Ok
+                        ( T.Filed_inbox_result { filed = List.map row report.filed; unsure = shown; kept_on = report.kept_on },
+                          List.length report.filed + List.length unsure,
+                          List.length report.filed + List.length shown,
+                          [ Printf.sprintf "filed without asking at %d percent confidence or more; each can be recategorised" Autofile.threshold ] ))
               | Categories _ ->
                   let all =
                     Insights.accounts ctx
@@ -964,6 +1035,17 @@ let display (e : T.evidence) : A.evidence =
           money "Forecast lowest cash" (snd f.lowest);
           { A.label = "Forecast lowest date"; value = A.Date (fst f.lowest) };
         ]
+    | Period_outlook_result o ->
+        [ money "Expected savings this cycle" o.expected; money "Savings so far" (Analytics.savings o.so_far) ]
+        @ (match o.covered_through with Some d -> [ { A.label = "Covered through"; value = A.Date d } ] | None -> [])
+    | Filed_inbox_result { filed; unsure; kept_on } ->
+        let line (r : T.inbox_row) =
+          Date.to_string r.date ^ " · " ^ shorten r.description 60
+          ^ match r.suggestion with Some (a, confidence, _) -> Printf.sprintf " → %s (%d%%)" (Option.value a.name ~default:"") confidence | None -> ""
+        in
+        List.map (fun r -> { A.label = "Filed"; value = A.Text (line r) }) filed
+        @ List.map (fun r -> { A.label = "Needs review"; value = A.Text (line r) }) unsure
+        @ [ { A.label = "Future imports filed automatically"; value = A.Text (string_of_bool kept_on) } ]
     | _ -> []
   in
   let proposal_facts =
@@ -1051,6 +1133,8 @@ let model_json ~aliases (e : T.evidence) =
                       ("savings", num x.savings);
                       ("savings_rate_bp", opt (fun n -> `Int n) x.savings_rate_bp);
                       ("reconciled", `Bool x.reconciled);
+                      ("complete", `Bool x.complete);
+                      ("covered_through", opt date x.covered_through);
                     ])
                 xs
           | Category_spending_result xs ->
@@ -1157,6 +1241,80 @@ let model_json ~aliases (e : T.evidence) =
                           r.suggestion );
                     ])
                 rows
+          | Explain_result { explanation = e; categories } ->
+              let category (info : Account_info.t) =
+                match List.find_opt (fun (a : T.account) -> Account_id.equal a.id info.account.id) categories with Some a -> acct a | None -> `Null
+              in
+              let driver : Explain.driver -> Yojson.Safe.t = function
+                | Yearly { category = c; description; amount; date = d } ->
+                    obj [ ("kind", str "yearly"); ("category", category c); ("description", str (shorten description 80)); ("amount", num amount); ("date", date d) ]
+                | One_off { category = c; description; amount; date = d } ->
+                    obj [ ("kind", str "one_off"); ("category", category c); ("description", str (shorten description 80)); ("amount", num amount); ("date", date d) ]
+                | Habit { category = c; difference; cycles_up } -> obj [ ("kind", str "habit"); ("category", category c); ("amount", num difference); ("cycles_up", `Int cycles_up) ]
+                | Less { category = c; difference } -> obj [ ("kind", str "less"); ("category", category c); ("amount", num difference) ]
+                | Income_change { difference } -> obj [ ("kind", str "income"); ("amount", num difference) ]
+              in
+              obj
+                [
+                  ("cycle", str (Cycle.label e.cycle)); ("first_day", date e.cycle.first); ("last_day", date e.cycle.last);
+                  ("normal", `Bool e.normal); ("spending", num e.spending); ("usual_spending", num e.usual_spending);
+                  ("income", num e.income); ("usual_income", num e.usual_income); ("compared_with", `Int e.compared_with);
+                  ("drivers", arr driver e.drivers);
+                ]
+          | Period_outlook_result o ->
+              let flows (f : Analytics.flows) = obj [ ("income", num f.income); ("spending", num f.spending); ("savings", num (Analytics.savings f)) ] in
+              obj
+                [
+                  ("cycle", str (Cycle.label o.cycle));
+                  ("first_day", date o.cycle.first);
+                  ("last_day", date o.cycle.last);
+                  ("complete", `Bool (o.days_covered >= o.days_total));
+                  ("covered_through", opt date o.covered_through);
+                  ("days_covered", `Int o.days_covered);
+                  ("days_total", `Int o.days_total);
+                  ("so_far", flows o.so_far);
+                  ( "usual_by_now",
+                    opt
+                      (fun (u : Outlook.usual) ->
+                        obj [ ("income", num u.income); ("spending", num u.spending); ("savings", num u.savings); ("cycles", `Int u.cycles) ])
+                      o.usual_by_now );
+                  ( "still_due",
+                    arr
+                      (fun (i : Forecast.item) ->
+                        obj [ ("date", date i.date); ("kind", str (Forecast.kind_to_string i.kind)); ("name", str (shorten i.name 80)); ("amount", num i.amount) ])
+                      (take 20 o.still_due) );
+                  ("usual_rest", num o.usual_rest);
+                  ("expected", num o.expected);
+                  ("safe_to_spend", num o.safe_to_spend);
+                  ("days_to_payday", `Int o.days_to_payday);
+                  ("goals_set_aside", num o.goals_set_aside);
+                  ("unseen_spending", num o.unseen_spending);
+                  ("expected_range", opt (fun (low, high) -> obj [ ("low", num low); ("high", num high) ]) o.expected_range);
+                  ( "track_record",
+                    opt
+                      (fun (t : Cashflow_core.Outlook.track) -> obj [ ("miss", num t.miss); ("forecasts", `Int t.forecasts); ("since", date t.since) ])
+                      o.track_record );
+                ]
+          | Filed_inbox_result { filed; unsure; kept_on } ->
+              let row (r : T.inbox_row) =
+                obj
+                  [
+                    ("reference", str (T.row_reference_text r.reference));
+                    ("date", date r.date);
+                    ("amount", num r.amount);
+                    ("direction", str (if r.outflow then "out" else "in"));
+                    ("description", str (shorten r.description 200));
+                    ( "category",
+                      opt (fun ((a : T.account), confidence, source) -> obj [ ("category", acct a); ("confidence", `Int confidence); ("source", str source) ]) r.suggestion );
+                  ]
+              in
+              obj
+                [
+                  ("filed", arr row filed);
+                  ("needs_review", arr row unsure);
+                  ("future_imports_filed_automatically", `Bool kept_on);
+                  ("threshold_percent", `Int Autofile.threshold);
+                ]
           | Categories_result xs -> arr acct xs
           | Bank_accounts_result xs ->
               arr
@@ -1282,6 +1440,13 @@ let resolve_finding (service : Service.t) ~principal ~scope ~key =
           let scope_is s =
             match (scope, s) with A.Personal, Analytics.Me | Household _, Analytics.Household -> true | _ -> false
           in
+          (* A briefing question: the server states it and its figures. *)
+          if String.starts_with ~prefix:"question:" key then
+            let analytics_scope = match scope with A.Personal -> Analytics.Me | Household _ -> Analytics.Household in
+            match Briefing.find service access ~scope:analytics_scope ~key with
+            | None -> error A.Not_found
+            | Some (title, summary) -> Ok { A.kind = "briefing"; key; scope; title; summary; sampled_at = service.now () }
+          else
           let cards = Attention.feed ~narrative:false service access in
           match List.find_opt (fun (Attention.Card c) -> c.key = key) cards with
           | None -> error A.Not_found

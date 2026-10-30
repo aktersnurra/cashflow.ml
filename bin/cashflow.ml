@@ -6,6 +6,7 @@ module Id_generator = Cashflow_io.Id_generator
 module Json = Cashflow_io.Json
 module Ledger = Cashflow_io.Ledger
 module Llm = Cashflow_io.Llm
+module Decisions = Cashflow_io.Decisions
 module Logging = Cashflow_io.Logging
 module Logo_fetch = Cashflow_io.Logo_fetch
 module Oidc = Cashflow_io.Oidc
@@ -79,7 +80,12 @@ let serve path =
                   ~provider_only:config.openrouter_provider_only ())
               config.openrouter_api_key
           in
-          let service = Service.make ?assistant ~logo_network:(Https.logo_network env)
+          let classifier =
+            match config.openrouter_api_key, config.classifier_model with
+            | Some api_key, Some model -> Some (Decisions.openrouter ~app_url:config.public_base_url ~post:(Https.post env) ~api_key ~model ())
+            | _ -> None
+          in
+          let service = Service.make ?assistant ?classifier ~logo_network:(Https.logo_network env)
             ~schedule:(fun work -> Eio.Fiber.fork ~sw work) db in
           let client = Oidc.https_client env in
           let verify_bearer = Oidc.make ~issuer:config.oidc_issuer ~audience:config.oidc_audience ~client () in

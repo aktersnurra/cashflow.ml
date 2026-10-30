@@ -77,6 +77,9 @@ type t = {
   range : (Date.t * int64 * int64) list;
       (** from today: the cash 8 in 10 past forecasts landed between (10th and 90th percentile of
           their errors at that distance), as far ahead as there are at least 10 of them *)
+  misses : int64 list;
+      (** alongside [range], day by day: how far off past forecasts were at that distance, the median of their
+          errors' sizes; what the forecast's track record says about trusting it *)
   chance_positive : int option;  (** percent of past forecasts whose errors would keep cash at or above zero *)
   accounts : outlook list;
   items : item list;  (** by date *)

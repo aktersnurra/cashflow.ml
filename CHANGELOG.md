@@ -2,6 +2,143 @@
 
 ## Unreleased
 
+### Your accountant's briefing
+
+- **A calmer Overview.** The month is the page's title (the year only when it isn't this one); tapping it lists the
+  last seven months to pick from. The bar above it is icons only. One number leads: what
+  you can spend until payday, large, with a line under it saying how that compares with usual; the sum behind it
+  (and how far the statements reach) folds under it, and two quiet stats sit below. Things that need you are
+  banners of one line each (a dot, the title, what it is) that open to the rest and what can be done; on a
+  computer they sit beside the number. The briefing is a list of rows: the question, a line on what is behind it,
+  and its figure with what it is per (a month, a year) under it; a row opens to its lines and actions. On a
+  computer the forecast and goals sit in a narrow column on the right: a calm curve of your balance (a month's
+  average around each day, so payday's saw-tooth gives way to the trend) with the lowest point and where it ends
+  under it; tapping either opens its full controls. Closed, goals still show where they stand (each goal and how
+  far along it is), or that nothing is set aside yet, with a way to add the first. A month that is over reads the
+  same way, without boxes. One type scale, one spacing scale, pill buttons, and
+  warmer, higher-contrast neutrals in both themes.
+- **One desk.** The Overview opens with one box: *Ask, or drop statements*. A question goes to the advisor as a new
+  conversation. Statements dropped anywhere on the page (or on the advisor page, or picked with the paperclip, several
+  at once) are read, matched to their account and filed without a button when nothing needs you: the account is
+  known, no row is ambiguous and the balance agrees. A new account or a doubtful row brings up its questions right
+  there. The Import tab is gone; the advisor has its place in the phone's tab bar, and adding a transaction by hand
+  is on the transactions page.
+- The box stays out of the way until wanted: a grab bar above the tab bar to swipe up (down to put it away), a
+  chevron at the foot of the page on a computer; dragging files over the page opens it. Both it and the advisor's
+  composer are one line, like a chat app: "+" to add statements on the left, then the text, then the return key to
+  send or a small square to stop on the right.
+- **No inbox to work through.** Filing without asking is on for every bank account (at 80% sure; change or turn it
+  off under Settings). After each import, and whenever rows are waiting, cashflow sweeps the rest in the
+  background: what it is sure of is filed; a small row (under 300) it isn't sure of is filed with its best guess
+  and marked as a guess, because its category changes nothing you'd act on. What is left and matters (big, or a
+  merchant that recurs) becomes at most three questions on the Overview, one per merchant: one tap files every row
+  from it and teaches the next import. A line says what the last sweep did.
+- A bill missing from your statements is no longer flagged: the statements can't tell an unpaid bill from one you
+  cancelled or paid another way. A salary missing from statements that reach past its day still is, worded as what
+  is known ("isn't in your statements").
+- **One page.** The Overview is the app: no sidebar and no tab bar. A slim bar on top leads back to it, to the
+  advisor's conversations and to Settings, with search beside them (icons only on a phone). Transactions and
+  accounts open from where they come up (a category in where your money went, a question, an account in a card),
+  from search, or from the links at the foot of the Overview.
+- **Four places instead of thirteen pages:** Overview, Advisor, Money and Settings. The Overview takes what is
+  ahead (the forecast chart and its key numbers, with payments, what-ifs and assumptions folded under it; goals and
+  budgets). Money is Transactions and Accounts, with the inbox, an account and adding by hand inside them. The
+  household is a section of Settings. Insights, Cash flow and Import are gone: the briefing, the Overview's money
+  flow and the desk do their work. Old addresses lead to where things went.
+- A question typed on the desk while the advisor wasn't on screen could land in the last conversation instead of
+  a new one; it now waits until the advisor is showing, then starts its own.
+- How far your statements reach now counts only the accounts you spend from: a savings account whose statement ends
+  at its last monthly transfer no longer makes the whole month look unread.
+
+- **Worth knowing** on the Overview: the questions about your money an accountant would answer before you ask,
+  already answered with exact figures, best first, at most five. Why last month cost more (a yearly bill, a
+  one-off, a habit); where the money goes (bills, what is yours to decide, one-offs, and the biggest categories);
+  a category that has crept up and stayed; small purchases at one place that add up; what you pay regularly, with
+  new bills and price rises; fees and interest; what a normal month costs and how long your cash covers it; what you
+  really save without one-offs; a month coming up that cost more last year; spending in the week after payday.
+- Each is ranked by whether it is worth your attention: the money at stake against your income, how far it is from
+  your usual swing, how much history backs it, and whether you could do anything about it. Only complete months
+  are read. **Got it** puts an answer away (a materially different one comes back); **Not useful** stops that kind
+  of question. The advisor can read the same briefing (`get_briefing`).
+- **The model asks too.** It reads a digest of your books (cycles, categories, the merchants that cost the most) and
+  proposes up to four more questions, each tied to a check the app runs: what a merchant cost, how a category changed,
+  a merchant that is new. Only those whose figures hold up, and that the briefing doesn't already answer, are shown,
+  ranked with the rest; the question is the model's words, every figure the app's. It is asked once per set of
+  figures, after the page has loaded.
+- **Ask advisor** on any card opens the advisor on that question, under the card, with the question and its figures
+  as the server states them.
+- Spending that started from nothing no longer reads as "crept up".
+- It replaces the weekly brief and its written summary, and the month review, large-purchase and price-change cards:
+  Needs attention now holds only things to do. Design: `design/superpowers/specs/2026-10-29-accountant-briefing-design.md`.
+
+### Things that need you, and what you can spend
+
+- The Overview of a cycle in progress leads with **safe to spend until payday**: what day-to-day spending can still
+  take with the bills still due and your goals' monthly amounts covered, counting usual spending for the days since
+  your last upload. Per day, beside what a usual day costs; with no goal, a note says nothing is set aside.
+- New cards for things in your statements that need a person, each saying what, how much and when, with what to
+  do: a regular income or bill that should have arrived by now and hasn't (only judged as far as the statements
+  reach), the same charge taken twice, the biggest purchase in half a year, and a yearly bill (insurance, car tax)
+  due within a month, known from its last two payments. They stay quiet otherwise: a salary not imported yet isn't
+  missing, and the same lunch three days running is a habit.
+- Cards of the same urgency are ordered by the money they are about; the Overview shows the first three.
+- The month review says why a finished month came out as it did, against the months before it: an ordinary month
+  says so, otherwise the few things that made the difference, each with its amount and what kind of thing it was:
+  a yearly bill (expected), a one-off purchase, a habit (and how many months running), less than usual somewhere,
+  or a change in income. The written review is built on the same list, and the advisor can explain any of the last
+  five finished months (`explain_month`).
+- Cards learn from what you do with them: a missing payment you resolved stays quiet for that series, a double
+  charge you said was right mutes that merchant, and after two large purchases you resolved those cards stop.
+- The Overview reads at a glance: safe to spend, its per-day figure and days left, then where the cycle is heading
+  (with how far off forecasts this far ahead have been, as ±) and the bills to come. The sum behind the number
+  folds out under **Breakdown**; the range and the forecast's track record are on the ±. The advisor's period
+  outlook carries the track record too.
+- Cards say what, how much and when in a title and one line, in whole kronor. The month review is the month's
+  spending beside a usual one, then what made the difference as rows tagged Yearly, One-off, Habit, Less or
+  Income. The weekly brief is one row of figures and where the money went.
+
+### Fixed
+
+- The month review explained a month only for purchases posted straight to a category: rows filed from the
+  inbox (how imports reach a category) all read as "more than usual", never as a yearly bill or a one-off.
+  The review now shows on the Overview when it has something to explain, without repeating the figures.
+- A yearly bill (or a purchase with nothing else bought in the half year before it) no longer shows as "your
+  biggest purchase in half a year".
+- A stray brace in the stylesheet dropped the desktop chat composer's own style.
+
+### A month in progress, honestly
+
+- Statements arrive when you upload them, so a pay cycle's figures run only as far as the imports reach. Each
+  cycle now says how far that is (`covered_through`, the earliest last-imported day of your bank accounts and
+  cards) and whether it is `complete`.
+- The Overview no longer calls the cycle so far a result. Right after payday it leads with where the cycle is
+  heading, "Expected by 24 Nov", from what you have so far, the income, bills and household contributions still
+  due (listed under it) and your usual day-to-day spending for the days left, with the forecast's backtested range
+  once there is a year of history. Below it: so far, through which day, and spending so far beside the same day of
+  earlier cycles. Savings rate and "vs. 6-month average" wait until the cycle is complete.
+- A `period_outlook` query (API and MCP) and advisor tool give the same. The advisor is told never to compare a
+  cycle in progress with whole cycles.
+- The month review waits until the statements cover the cycle to its end, and the weekly brief covers the last
+  week the statements cover in full.
+
+### Categorising by itself
+
+- Filed once by you, a merchant is filed by itself after that: the other rows waiting from it at once, and later
+  imports' without asking. Rows cashflow files by itself never teach it; a merchant you filed under different
+  categories stays a suggestion.
+- Categories are chosen by TypeSafe's Jev 1.14 (`openrouter.classifier_model`, `none` turns it off) through
+  OpenRouter's decisions API, whose calibrated probability is the confidence. It is served by TypeSafe on an
+  endpoint OpenRouter lists as zero-data-retention; requests ask for ZDR and no data collection, and an account-wide
+  ZDR guardrail on the OpenRouter key enforces it. If Jev can't answer, the chat model does, capped at 75.
+- Ask the advisor to categorise for you and it does: every waiting row cashflow is at least 80% sure of is filed at
+  once, and the rest come back as a list to review with its best guess. Say you want it to continue and later
+  imports are filed the same way.
+
+### Phone
+
+- While you type, the tab bar steps aside and the advisor's message box sits on the keyboard.
+- No zooming: pinch and double-tap zoom are off, and form fields are large enough that iOS doesn't zoom into them.
+
 ### Danger zone: start over with your imports
 
 - Settings has a Danger zone. "Reset my imported data" undoes every statement imported into your accounts, newest first,

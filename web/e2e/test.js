@@ -18,6 +18,11 @@ Bokföringsdag;Text;Belopp;Saldo
 2026-08-01;RÄNTA;12,00;5 000,00
 `;
 fs.writeFileSync(out + '/savings.csv', savings);
+// The next month's statement for it: the account is known and nothing is ambiguous, so the desk files it.
+fs.writeFileSync(out + '/savings2.csv', `Kontoutdrag;Sparkonto ****4321
+Bokföringsdag;Text;Belopp;Saldo
+2026-09-03;FRÅN LÖNEKONTO;1 000,00;7 000,00
+`);
 (async () => {
   const browser = await chromium.launch();
   const errors = [];
@@ -35,8 +40,8 @@ fs.writeFileSync(out + '/savings.csv', savings);
     await page.waitForSelector('.page .panel, .page .empty', { timeout: 15000 });
     await page.screenshot({ path: out + '/01-home-empty.png' });
     // Open a checking account through the form.
-    await page.click('.sidebar >> text=Money');
-    await page.click('.section-nav >> text=Accounts');
+    // One page: the accounts are a link at the foot of the Overview.
+    await page.click('.books-links >> text=Accounts');
     await page.click('text=Open account');
     await page.fill('.sheet input >> nth=0', 'Lönekonto');
     await page.click('.sheet .button.primary');
@@ -72,23 +77,25 @@ fs.writeFileSync(out + '/savings.csv', savings);
     // Palette navigation.
     await page.keyboard.press('Control+k');
     await page.waitForFunction(() => document.activeElement && document.activeElement.matches('.palette input'));
-    await page.keyboard.type('Insights');
+    await page.keyboard.type('Accounts');
     await page.keyboard.press('Enter');
-    await page.waitForSelector('.insight, .page .empty', { timeout: 10000 });
-    await page.screenshot({ path: out + '/07-insights.png', fullPage: true });
-    // Findings about this month share one note that it isn't reconciled yet, and Uncategorized is never "a finding".
-    await page.waitForTimeout(500);
-    assert.ok(await page.locator('.page:visible .provisional').count() <= 1, 'the provisional note is said once');
-    assert.doesNotMatch((await page.locator('.page:visible .insight').allInnerTexts()).join('\n'), /Uncategorized accounts for/);
-    for (const [label, file] of [['Plan', '08-budgets'], ['Overview', '09-home'], ['Household', '11-household'], ['Settings', '10-settings']]) {
-      await page.click(`.sidebar >> text=${label}`);
+    await page.waitForSelector('h1 >> text=Accounts', { timeout: 10000 });
+    await page.screenshot({ path: out + '/07-accounts.png', fullPage: true });
+    // Four places: Overview, Advisor, Money and Settings (the household among its sections).
+    // One page: a bar on top leads back to the Overview, to the advisor and to Settings; nothing else to navigate.
+    assert.equal(await page.locator('.sidebar, .tabbar').count(), 0, 'no sidebar or tab bar');
+    assert.deepEqual(await page.locator('.topbar a').evaluateAll(as => as.map(a => a.getAttribute('aria-label'))), ['Overview', 'Advisor', 'Settings']);
+    for (const [label, file] of [['Overview', '09-home'], ['Settings', '10-settings']]) {
+      await page.click(`.topbar >> text=${label}`);
       await page.waitForTimeout(800);
       if (label === 'Overview') {
         assert.ok(feedCalls > feedBefore, 'Home reloads when it is shown again');
-        // Rows are waiting in the inbox: what needs doing comes before the figures, and the chart of where the money
+        // Rows are waiting in the inbox: what needs doing shows under the figures, and the chart of where the money
         // went, still nearly all Uncategorized, waits until they are sorted.
         // This month is still empty; the one before holds the imported rows.
-        await page.locator('.page:visible .period .icon-button').first().click();
+        // The month is the title: tapping it lists the months, newest first.
+        await page.locator('.page:visible .month-picker-button').click();
+        await page.locator('.page:visible .month-menu [role=option]').nth(1).click();
         await page.locator('.page:visible .figures').waitFor({ timeout: 10000 });
         await page.waitForTimeout(500);
         const order = await page.evaluate(() => {
@@ -96,24 +103,27 @@ fs.writeFileSync(out + '/savings.csv', savings);
           const at = sel => { const el = page.querySelector(sel); return el ? [...page.querySelectorAll('*')].indexOf(el) : -1; };
           return { attention: at('.attention'), figures: at('.figures'), flow: at('.flow') };
         });
-        assert.ok(order.attention >= 0 && order.attention < order.figures, 'attention before the figures: ' + JSON.stringify(order));
+        // What needs doing sits directly under the number, as banners.
+        assert.ok(order.attention >= 0 && order.figures >= 0 && order.attention > order.figures, 'banners under the figures: ' + JSON.stringify(order));
         assert.equal(order.flow, -1, 'no chart while spending is mostly uncategorized');
-        await page.locator('.page:visible .period .icon-button').last().click();
+        await page.locator('.page:visible .month-picker-button').click();
+        await page.locator('.page:visible .month-menu [role=option]').first().click();
       }
       await page.screenshot({ path: `${out}/${file}.png`, fullPage: true });
     }
     // Forecast: one imported month has no recurring payments yet, so Upcoming says so; a one-off
     // draws the what-if line, and removing it takes the line away.
-    await page.click('.sidebar >> text=Plan');
-    await page.click('.section-nav >> text=Forecast');
-    await page.locator('.section-nav a[aria-current=page]', { hasText: 'Forecast' }).waitFor({ timeout: 10000 });
-    await page.locator('.sidebar .nav-link.active', { hasText: 'Plan' }).waitFor({ timeout: 10000 });
+    // It is part of the Overview now, under what is worth knowing.
+    await page.click('.topbar >> text=Overview');
+    await page.locator('.page:visible .ahead-details > summary').click();
     await page.waitForSelector('svg.projection >> visible=true', { timeout: 10000 });
     const kpis = await page.locator('.forecast-kpis .kpi').count();
     if (kpis !== 4 && kpis !== 3) throw new Error(`forecast: ${kpis} key numbers`);
     // No key number repeats another: the lowest point and the day before salary show once when they are one day.
     const kpiTexts = await page.locator('.forecast-kpis .kpi').evaluateAll(ks => ks.map(k => k.querySelector('.kpi-value').textContent + ' ' + k.querySelector('.kpi-sub').textContent));
     assert.equal(new Set(kpiTexts).size, kpiTexts.length, 'no repeated key number: ' + kpiTexts);
+    // The payments, what-ifs and assumptions are folded under the chart.
+    await page.locator('.page:visible .forecast-details > summary').click();
     await page.waitForSelector('text=No regular payments found yet');
     const today = await page.getAttribute('.what-if input[type=date]', 'min');
     await page.fill('.what-if input[type=date]', today);
@@ -125,7 +135,7 @@ fs.writeFileSync(out + '/savings.csv', savings);
     await page.click('.what-if .chip >> text=Sofa');
     await page.waitForSelector('svg.projection .line.what-if', { state: 'detached', timeout: 10000 });
     // Advisor memory: notes the user writes are added, edited and forgotten from Settings.
-    await page.click('.sidebar >> text=Settings');
+    await page.click('.topbar >> text=Settings');
     const noteInput = page.getByPlaceholder('For example: answer in whole kronor');
     await noteInput.waitFor({ timeout: 10000 });
     await page.getByText('No notes yet.').waitFor();
@@ -144,10 +154,10 @@ fs.writeFileSync(out + '/savings.csv', savings);
     await page.locator('.row', { hasText: 'Answer in kronor' }).getByRole('button', { name: 'Forget' }).click();
     await page.getByText('No notes yet.').waitFor({ timeout: 10000 });
     await page.screenshot({ path: out + '/14-settings-memory.png', fullPage: true });
-    // Automatic categories: a bank account opts in per confidence level, and it persists.
+    // Automatic categories: on for every bank account at 80% unless changed; a change persists.
     await page.getByRole('heading', { name: 'Automatic categories', exact: true }).waitFor({ timeout: 10000 });
     const autoRow = page.locator('.setting-row', { hasText: 'Lönekonto' });
-    assert.equal(await autoRow.locator('select').inputValue(), 'off', 'automatic categories start off');
+    assert.equal(await autoRow.locator('select').inputValue(), '80', 'automatic categories start on, at 80');
     await autoRow.locator('select').selectOption('90');
     await page.waitForFunction(() => [...document.querySelectorAll('.setting-row')].some(r => r.textContent.includes('Lönekonto') && r.querySelector('select').value === '90'), null, { timeout: 10000 });
     await page.reload();
@@ -156,15 +166,16 @@ fs.writeFileSync(out + '/savings.csv', savings);
     // Switch to Swedish in Settings; the whole UI follows.
     await page.selectOption('.setting-row select >> nth=0', 'sv');
     await page.click('.table-foot .button.primary');
-    await page.waitForSelector('.sidebar >> text=Pengar', { timeout: 10000 });
+    await page.waitForSelector('.topbar >> text=Översikt', { timeout: 10000 });
     await page.getByRole('heading', { name: 'Minne', exact: true }).waitFor({ timeout: 10000 });
     await page.getByRole('heading', { name: 'Automatiska kategorier', exact: true }).waitFor({ timeout: 10000 });
     await page.getByPlaceholder('Till exempel: svara i hela kronor').waitFor();
     // The starter categories follow too, with nothing reloaded: they are stored once, in English,
     // and the browser names them in the reader's language.
-    await page.click('.sidebar >> text=Pengar');
-    await page.click('.section-nav >> text=Konton');
-    await page.locator('.row-title', { hasText: /^Mat & hushåll$/ }).first().waitFor({ timeout: 10000 });
+    await page.click('.topbar >> text=Översikt');
+    await page.click('.page:visible .books-links >> text=Konton');
+    await page.waitForSelector('h1 >> text=Konton', { timeout: 10000 });
+    await page.locator('.page:visible .row-title', { hasText: /^Mat & hushåll$/ }).first().waitFor({ timeout: 10000 });
     // Categories nothing has moved through yet wait, folded, under one line.
     const unused = page.locator('.page:visible .unused-categories');
     assert.equal(await unused.count(), 2, 'spending and income each fold their unused categories');
@@ -184,25 +195,38 @@ fs.writeFileSync(out + '/savings.csv', savings);
     assert.equal(await groceriesOption.locator('.row-sub').textContent(), 'Utgiftskategori', 'its kind in Swedish too');
     await page.screenshot({ path: out + '/16-inbox-picker-sv.png' });
     await page.keyboard.press('Escape');
-    await page.click('.sidebar >> text=Översikt');
+    await page.click('.topbar >> text=Översikt');
     await page.waitForTimeout(800);
     await page.screenshot({ path: out + '/12-home-sv.png', fullPage: true });
-    await page.click('.sidebar >> text=Planering');
-    await page.click('.section-nav >> text=Prognos');
-    await page.waitForSelector('h1 >> text=Prognos', { timeout: 10000 });
+    await page.click('.topbar >> text=Översikt');
+    await page.waitForSelector('.page:visible h2 >> text=Framåt', { timeout: 10000 });
   });
   await run('phone', { width: 390, height: 844 }, async page => {
     await page.goto(base + '/');
     await page.waitForSelector('.page .panel, .page .empty', { timeout: 15000 });
     await page.screenshot({ path: out + '/20-phone-home.png' });
-    // Importing is the middle tab; the file says which account it is for.
-    await page.click('.tabbar >> text=Importera');
-    const upload = page.locator('.page:visible .dropzone:visible');
-    await upload.waitFor({ timeout: 10000 });
-    assert.equal(await upload.locator('.dropzone-hint').isVisible(), false, 'a touch screen offers no drop');
+    // There is no import tab: statements are handed over on the Overview's desk, and the file says which account
+    // it is for. A new account needs a name, so this one asks.
+    assert.equal(await page.locator('.tabbar >> text=Importera').count(), 0, 'no import tab');
+    const desk = page.locator('.page:visible .desk');
+    await desk.waitFor({ timeout: 10000 });
+    // The box waits behind a grab bar above the tab bar: a swipe up opens it with the cursor in it, a swipe down
+    // puts it away.
+    assert.equal(await desk.locator('textarea').isVisible(), false, 'hidden until swiped up');
+    const swipe = async dy => {
+      const box = await desk.locator('.desk-handle').boundingBox();
+      const x = box.x + box.width / 2, y = box.y + box.height / 2;
+      await page.mouse.move(x, y); await page.mouse.down(); await page.mouse.move(x, y + dy, { steps: 4 }); await page.mouse.up();
+    };
+    await swipe(-60);
+    await page.waitForSelector('.page:visible .desk.open');
+    assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.id), 'desk-input', 'opened with the cursor in it');
+    await page.screenshot({ path: out + '/20b-phone-desk-open.png' });
+    await swipe(60);
+    await page.waitForFunction(() => !document.querySelector('.page:not([hidden]) .desk.open'));
     await page.screenshot({ path: out + '/21-phone-import.png' });
-    await upload.locator('input[type=file]').setInputFiles(out + '/savings.csv');
-    await page.waitForSelector('.import-preview', { timeout: 10000 });
+    await desk.locator('input[type=file]').setInputFiles(out + '/savings.csv');
+    await page.waitForSelector('.desk-files .import-preview', { timeout: 10000 });
     const destination = page.locator('.import-destination');
     assert.equal(await destination.locator('select').first().inputValue(), 'new', 'no account has ****4321, so a new one');
     assert.equal(await destination.locator('input').inputValue(), 'Sparkonto', 'named from the file');
@@ -212,11 +236,25 @@ fs.writeFileSync(out + '/savings.csv', savings);
     await page.click('.import-result >> text=Sparkonto');
     await page.waitForSelector('h1 >> text=Sparkonto', { timeout: 10000 });
     await page.screenshot({ path: out + '/23-phone-account.png', fullPage: true });
-    // Adding by hand is the way round.
-    await page.click('.tabbar >> text=Importera');
-    await page.click('.import-manual a');
+    // A statement for an account it knows is just filed: no preview, no button.
+    await page.click('.topbar a[href="/"]');
+    let previews = 0;
+    const seen = [];
+    page.on('request', r => { if (r.url().includes('_statement')) seen.push(r.url().split('/').pop() + ' ' + (r.postData() || '').replace(/"content[^,]*,/, '').slice(0, 160)); if (r.url().includes('import_statement') && !(r.postData() || '').includes('"confirm":true')) previews++; });
+    const filedBefore = await page.locator('.desk-files .import-result.ok').count();
+    await page.locator('.page:visible .desk input[type=file]').setInputFiles(out + '/savings2.csv');
+    await page.waitForFunction(n => document.querySelectorAll('.desk-files .import-result.ok').length > n, filedBefore, { timeout: 10000 });
+    assert.equal(await page.locator('.desk-files .import-preview').count(), 0, 'filed without asking');
+    await page.waitForTimeout(1500);
+    assert.equal(previews, 1, 'one dry run, then filed: ' + seen.join(' | '));
+    await page.screenshot({ path: out + '/24-phone-desk-filed.png', fullPage: true });
+    const receipts = await page.locator('.desk-files .import-result').count();
+    await page.locator('.desk-files .import-result').last().locator('.button', { hasText: 'Stäng' }).click();
+    await page.waitForFunction(n => document.querySelectorAll('.desk-files .import-result').length === n - 1, receipts, { timeout: 5000 });
+    // Adding by hand is the way round, from the transactions.
+    await page.goto(base + '/transactions');
+    await page.locator('.page:visible .button', { hasText: 'Lägg till' }).first().click();
     await page.waitForSelector('.add-form', { timeout: 10000 });
-    await page.click('.tabbar >> text=Pengar');
     await page.waitForSelector('.section-nav');
     const strip = await page.locator('.section-nav').boundingBox();
     assert.ok(strip.x >= 0 && strip.width <= 390, 'the section strip fits the phone width');

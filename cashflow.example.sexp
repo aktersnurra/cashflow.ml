@@ -43,5 +43,8 @@
      (model anthropic/claude-haiku-5.5)
      ;; The advisor can run on a bigger model than the cheap calls (categorising, pairing, summaries):
      ;; (advisor_model anthropic/claude-sonnet-5.5)
+     ;; Categories are chosen by this decisions model, served by TypeSafe on a ZDR endpoint outside
+     ;; provider_only; turn on your OpenRouter key's ZDR guardrail too. "none" turns it off.
+     ;; (classifier_model typesafe/jev-1.14)
      (provider_only (google-vertex amazon-bedrock azure))))
  )

@@ -22,7 +22,10 @@ const base = process.env.BASE_URL || 'http://127.0.0.1:18090';
     await command('update_settings', { locale: 'en' });
     const before = (await command('list_inbox', { limit: 1 })).count;
     const rows = ['Datum;Text;Belopp'];
-    for (let n = 1; n <= 120; n++) rows.push(`2026-09-${String(1 + (n % 27)).padStart(2, '0')};WINDOW ROW ${n};-${10 + n},00`);
+    // Each row its own merchant (letters, since a merchant's key ignores digits): filing one files the rest of
+    // the same merchant, and this is about the queue, not that.
+    const letters = n => { let s = ''; for (let k = n; k > 0; k = Math.floor((k - 1) / 26)) s = String.fromCharCode(65 + ((k - 1) % 26)) + s; return s; };
+    for (let n = 1; n <= 120; n++) rows.push(`2026-09-${String(1 + (n % 27)).padStart(2, '0')};WINDOW ROW ${letters(n)};-${10 + n},00`);
     const imported = await command('import_statement', { new_account: { name: 'Window account', kind: 'asset' }, content: rows.join('\n'), file_name: 'window.csv', confirm: true });
     const total = before + 120;
     assert.equal((await command('list_inbox', { limit: 1 })).count, total, 'the rows are waiting');

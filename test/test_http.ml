@@ -17,7 +17,7 @@ let claims ?(scopes = [ "ledger:read"; "ledger:write" ]) ?nonce subject : Oidc.c
 let config : Config.t =
   { database_path = ":memory:"; listen_address = "127.0.0.1:0"; public_base_url = "https://cashflow.example"; oidc_issuer = "https://id.example";
     oidc_audience = "https://cashflow.example"; web_client_id = Some "web"; web_client_secret = Some "secret";
-    static_dir = "/nonexistent"; openrouter_api_key = None; openrouter_model = "x"; advisor_model = "x";
+    static_dir = "/nonexistent"; openrouter_api_key = None; openrouter_model = "x"; advisor_model = "x"; classifier_model = None;
     openrouter_provider_only = Config.default_openrouter_provider_only;
     advisor_limits = None; log_level = None }
 
@@ -270,7 +270,7 @@ let test_reporting_envelopes () =
     ~headers:["cookie", "cashflow_session=" ^ token; "x-csrf-token", csrf; "content-type", "application/json"]
     ~body:(Yojson.Safe.to_string args)) in
   let check_json label expected actual = Alcotest.(check string) label (Yojson.Safe.to_string expected) (Yojson.Safe.to_string actual) in
-  let success = Yojson.Safe.from_string {|{"scope":"me","currency":"SEK","cycles":[{"cycle":"2026-10","first":"2026-09-25","last":"2026-10-22","income":"0.00","spending":"0.00","transfers_in":"0.00","transfers_out":"0.00","savings":"0.00","savings_rate":null,"reconciled":false}]}|} in
+  let success = Yojson.Safe.from_string {|{"scope":"me","currency":"SEK","cycles":[{"cycle":"2026-10","first":"2026-09-25","last":"2026-10-22","income":"0.00","spending":"0.00","transfers_in":"0.00","transfers_out":"0.00","savings":"0.00","savings_rate":null,"reconciled":false,"complete":true,"covered_through":null}]}|} in
   let listed = member "tools" (member "result" (body_json (rpc deps "tools/list" (`Assoc [])))) in
   let descriptor = match listed with
     | `List tools -> List.find (fun t -> member "name" t = `String "cashflow_summary") tools

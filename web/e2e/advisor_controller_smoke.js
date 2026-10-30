@@ -52,21 +52,21 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await page.addStyleTag({content:'.advisor-conversation {height:220px;overflow-y:auto;}'});
   if(process.env.ADVISOR_REVIEW_READINESS) {
    const copy=process.env.ADVISOR_REVIEW_READINESS==='consent'?'Enable Advisor in settings before sending financial data.':'Advisor is unavailable. Check your settings or try again later.';
-   await page.getByText(copy,{exact:true}).waitFor();assert.equal(await page.getByRole('textbox').count(),0);assert.equal(posts,0);assert.deepEqual(errors,[]);
+   await page.getByText(copy,{exact:true}).waitFor();assert.equal(await page.locator('textarea.advisor-input').count(),0);assert.equal(posts,0);assert.deepEqual(errors,[]);
    console.log(JSON.stringify({result:'passed',delayedReadiness:process.env.ADVISOR_REVIEW_READINESS}));return;
   }
-  await page.getByRole('textbox').waitFor();
+  await page.locator('textarea.advisor-input').waitFor();
   if(process.env.ADVISOR_REVIEW_REJECTIONS==='1') {
    const responses=[{status:422,json:{error:'Invalid_request'}},{status:503,json:{error:'Invalid_request'}},{status:409,json:{error:'unknown'}},{status:202,json:{version:99}}];
    await page.route('**/api/advisor/turns',route=>responses.length?route.fulfill({contentType:'application/json',...responses.shift()}):route.continue());
-   await page.getByRole('textbox').fill('original payload  ');
+   await page.locator('textarea.advisor-input').fill('original payload  ');
    await page.getByRole('button',{name:'Send',exact:true}).click();
    await page.getByRole('status').filter({hasText:'Request could not be completed.'}).waitFor();
    assert.equal(await page.getByRole('button',{name:'Retry request',exact:true}).count(),0);
-   assert.equal(await page.getByRole('textbox').inputValue(),'original payload  ');
+   assert.equal(await page.locator('textarea.advisor-input').inputValue(),'original payload  ');
    await page.getByRole('button',{name:'Send',exact:true}).click();
    await page.getByRole('button',{name:'Retry request',exact:true}).waitFor();
-   await page.getByRole('textbox').fill('different next draft');
+   await page.locator('textarea.advisor-input').fill('different next draft');
    for(let i=0;i<3;i++) {
     const before=posts;
     await page.getByRole('button',{name:'Retry request',exact:true}).click();
@@ -76,7 +76,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
    await page.getByText(/first héj <img/).waitFor();
    assert.equal(posts,5);assert.notEqual(JSON.parse(postBodies[0]).data.idempotency_key,JSON.parse(postBodies[1]).data.idempotency_key);
    for(const payload of postBodies.slice(2)) assert.equal(payload,postBodies[1]);
-   assert.equal(await page.getByRole('textbox').inputValue(),'different next draft');assert.deepEqual(errors,[]);
+   assert.equal(await page.locator('textarea.advisor-input').inputValue(),'different next draft');assert.deepEqual(errors,[]);
    console.log(JSON.stringify({result:'passed',invalid422Resolved:true,uncertain503Retained:true,unknown409Retained:true,malformed202Retained:true,exactRepeat:true}));return;
   }
   if(process.env.ADVISOR_POST_TIMEOUT === '1') {
@@ -86,15 +86,15 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     const response=await route.fetch();await sleep(16000);await route.fulfill({response}).catch(()=>{});
    });
   }
-  await page.getByRole('textbox').fill('Synthetic user <svg onload=window.fixtureXss=true>  ');
+  await page.locator('textarea.advisor-input').fill('Synthetic user <svg onload=window.fixtureXss=true>  ');
   await page.getByRole('button',{name:'Send',exact:true}).click();
   if(process.env.ADVISOR_POST_TIMEOUT === '1') {
    await page.getByRole('status').filter({hasText:'Connection interrupted.'}).waitFor({timeout:20000});
-   await page.getByRole('textbox').fill('a different next draft');
+   await page.locator('textarea.advisor-input').fill('a different next draft');
    await page.getByRole('button',{name:'Retry request',exact:true}).click();
    await page.getByText(/first héj <img/).waitFor();
    assert.equal(posts,2);assert.equal(postBodies[0],postBodies[1]);
-   assert.equal(await page.getByRole('textbox').inputValue(),'a different next draft');
+   assert.equal(await page.locator('textarea.advisor-input').inputValue(),'a different next draft');
    assert.deepEqual(errors,[]);
    console.log(JSON.stringify({result:'passed',ambiguousPostTimeout:true,immutableRepeat:true,nextDraftPreserved:true}));return;
   }
@@ -117,19 +117,19 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
      return process.env.ADVISOR_REVIEW_VERSION==='transport'?route.abort('failed'):route.fulfill({status:200,contentType:'application/json',json:{version:99}});
     });
    }
-   await page.getByRole('textbox').fill('explicit followup  ');const before=snapshots;
+   await page.locator('textarea.advisor-input').fill('explicit followup  ');const before=snapshots;
    const denied=page.waitForResponse(r=>r.url().endsWith('/api/advisor/turns') && r.status()===409);
    await page.getByRole('button',{name:'Send',exact:true}).click();await denied;
    for(let i=0;i<100 && snapshots===before;i++)await sleep(20);await sleep(100);
    assert.equal(snapshots,before+1);assert.equal(posts,2);
-   assert.equal(await page.getByRole('textbox').inputValue(),'explicit followup  ');
+   assert.equal(await page.locator('textarea.advisor-input').inputValue(),'explicit followup  ');
    assert.equal(await page.getByRole('button',{name:'Retry request',exact:true}).count(),0);
    if(refreshFailure) {
     const conversation=page.locator('.advisor-conversation');
     await conversation.getByRole('button',{name:'Reconnect',exact:true}).waitFor();
     await page.getByRole('button',{name:'Send',exact:true}).click();await sleep(100);
     assert.equal(posts,2,'failed refresh must not unlock stale version');
-    assert.equal(await page.getByRole('textbox').inputValue(),'explicit followup  ');
+    assert.equal(await page.locator('textarea.advisor-input').inputValue(),'explicit followup  ');
     assert.match(await conversation.innerText(),/first héj/);
     await conversation.getByRole('button',{name:'Reconnect',exact:true}).click();
     await page.getByRole('status').filter({hasText:'Answer completed.'}).waitFor();
@@ -137,7 +137,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
    }
    await page.getByRole('button',{name:'Send',exact:true}).click();
    await page.getByText('explicit followup',{exact:true}).waitFor();
-   for(let i=0;i<100 && (await page.getByRole('textbox').inputValue())!=='';i++)await sleep(20);
+   for(let i=0;i<100 && (await page.locator('textarea.advisor-input').inputValue())!=='';i++)await sleep(20);
    assert.equal(posts,3);assert.notEqual(JSON.parse(postBodies[1]).data.idempotency_key,JSON.parse(postBodies[2]).data.idempotency_key);
    assert.equal(JSON.parse(postBodies[2]).data.expected_version,'1');assert.deepEqual(errors,[]);
    console.log(JSON.stringify({result:'passed',actualVersion409:true,refreshFailure:refreshFailure?process.env.ADVISOR_REVIEW_VERSION:null,explicitReconnectUnlocked:true,explicitRecoverySnapshots:refreshFailure?2:1,noAutoPost:true,freshExplicitSubmissionAccepted:true}));return;
@@ -177,18 +177,18 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await page.locator('#delete-other').click();
   await page.getByRole('status').filter({hasText:'Request could not be completed.'}).waitFor();
   assert.match(await page.locator('.advisor-conversation').innerText(),/first héj/);
-  await page.getByRole('textbox').fill('unsent draft héj');
+  await page.locator('textarea.advisor-input').fill('unsent draft héj');
   for(let i=0;i<8;i++) await page.locator('#toggle').click();
-  assert.equal(await page.getByRole('textbox').inputValue(),'unsent draft héj');
+  assert.equal(await page.locator('textarea.advisor-input').inputValue(),'unsent draft héj');
   assert.equal(await page.evaluate(()=>window.fixtureSources.filter(s=>!s.fixtureClosed).length),1);
   assert.equal(await page.evaluate(()=>window.fixtureMaxSources),1);
   if(process.env.ADVISOR_DEACTIVATE === '1') {
-   await page.locator('#deactivate').click();await page.getByRole('textbox').waitFor({state:'detached'});await sleep(100);
+   await page.locator('#deactivate').click();await page.locator('textarea.advisor-input').waitFor({state:'detached'});await sleep(100);
    assert.equal(await page.evaluate(()=>window.fixtureSources.filter(s=>!s.fixtureClosed).length),0);
    await page.evaluate(()=>{for(const source of window.fixtureSources) source.dispatchEvent(new Event('error'));for(const r of window.fixtureRequests)r.dispatchEvent(new Event('readystatechange'));});
    await sleep(100);assert.equal(await page.locator('.advisor-conversation').count(),0);
-   await page.locator('#activate').click();await page.getByRole('textbox').waitFor();
-   assert.equal(await page.getByRole('textbox').inputValue(),'');
+   await page.locator('#activate').click();await page.locator('textarea.advisor-input').waitFor();
+   assert.equal(await page.locator('textarea.advisor-input').inputValue(),'');
    assert.equal(await page.getByText(/first héj <img/).count(),0);
    assert.equal(posts,1);assert.equal(cancels,0);assert.deepEqual(errors,[]);
    console.log(JSON.stringify({result:'passed',shellDeactivationCloses:true,staleCallbacksInert:true,noImplicitStopOrPost:true,reactivationPrivateStateEmpty:true}));return;
@@ -236,7 +236,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   assert.equal((await page.request.get(base+'/api/advisor/status')).status(),200);
   await page.locator('#resync').click();
   await page.getByText(/first héj <img/).waitFor({state:'detached'});
-  assert.equal(await page.getByRole('textbox').count(),0);
+  assert.equal(await page.locator('textarea.advisor-input').count(),0);
   assert.equal(await page.locator('[id^="advisor-evidence-"]').count(),0);
   assert.equal(cancels,0);
   assert.deepEqual(errors,[]);

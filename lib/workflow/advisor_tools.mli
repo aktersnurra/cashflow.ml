@@ -36,6 +36,8 @@ type request =
   | Budget_status of common * int
   | Goals of common
   | Forecast of common * int * scenario
+  | Period_outlook of common  (** the cycle in progress so far, and where it is heading *)
+  | Explain_cycle of common * int  (** why a complete cycle (offset, -5 to -1) came out as it did *)
   | Inbox_rows of common
   | Categories of common
   | Bank_accounts of common
@@ -50,6 +52,9 @@ type request =
       (** Up to 20 uncategorized rows, each with the category to file it under, for the user to confirm. *)
   | Propose_budget of { category : account_reference; monthly_amount : string; rollover : bool }
       (** A change for the user to confirm. Currency and scope are the conversation's. *)
+  | File_inbox of { keep_on : bool }
+      (** Files, without asking, every uncategorized row cashflow is sure enough of, when the user asked for it;
+          [keep_on] files later imports the same way. The one tool that writes by itself. *)
 
 val common : request -> common
 
@@ -192,6 +197,11 @@ type result =
   | Categorize_proposal_result of categorize_row list
   | Proposal_card_result of proposal_card
   | Bank_accounts_result of bank_account list
+  | Period_outlook_result of Outlook.t
+  | Explain_result of { explanation : Explain.t; categories : account list }
+      (** [categories]: the drivers' categories as the model may name them *)
+  | Filed_inbox_result of { filed : inbox_row list; unsure : inbox_row list; kept_on : bool }
+      (** [suggestion] is where a filed row went, or the best guess for one left for the user. *)
 
 type evidence = {
   id : Advisor.Evidence_id.t;
