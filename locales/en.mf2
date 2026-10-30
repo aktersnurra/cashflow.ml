@@ -750,5 +750,7 @@ card.autofiled.body = {$guessed} small ones are best guesses; change any under M
 overview.all_transactions = All transactions
 ahead.title = Ahead
 ahead.lowest = Lowest · {$date}
+budgets.nothing_yet = Nothing set aside yet
+budgets.add_goal = Add a goal
 budgets.open = Set up
 overview.safe_sub_usual = {$amount} a day · {$days} days left · a usual day is {$usual}

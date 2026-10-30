@@ -220,6 +220,7 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
     ~(desk : Desk.t Bonsai.t) ~selected_finding ~outlet ~advisor_route ~(visible : bool Bonsai.t) graph =
   let captured, set_captured = Bonsai.state None graph in
   let offset, set_offset = Bonsai.state 0 graph in
+  let picking, set_picking = Bonsai.state false graph in
   let scope, set_scope = Bonsai.state "me" graph in
   let summary = Remote.load ~active:visible ~name:"cashflow_summary" ~args:(let%arr scope in `Assoc [ ("scope", `String scope); ("cycles", `Int 13) ]) ~ctx graph in
   (* The cycle in progress: how far the statements reach and where it is heading. *)
@@ -258,7 +259,7 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
     let ask = if eligible then [Ui.button (Msg.advisor_ask locale) (Effect.Many [set_captured (Some (finding_key, cards)); on_ask ~finding_key ~scope])] else [] in
     Vdom.Node.div ~attrs:([Vdom.Attr.create "data-finding-key" finding_key] @ if selected then [Vdom.Attr.create "data-testid" "selected-finding"] else [])
       ([body ~extra:ask ~opened:selected] @ if selected then [outlet] else [])) graph in
-  let%arr desk and forecast and goals and summary and outlook and categories and briefing and views and offset and set_offset and scope and set_scope and locale = ctx.locale and session = ctx.session
+  let%arr desk and forecast and goals and summary and outlook and categories and briefing and views and offset and set_offset and picking and set_picking and scope and set_scope and locale = ctx.locale and session = ctx.session
   and navigate = ctx.navigate and outlet and selected_finding and visible_cards and advisor_route in
   let cycles = match summary with Loaded json -> J.list (J.field "cycles" json) | Loading | Failed _ -> [] in
   let code = match summary with Loaded json -> J.str ~default:"SEK" (J.field "currency" json) | Loading | Failed _ -> "SEK" in
@@ -268,16 +269,45 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
   let scopes =
     if Ctx.has_household session then [ ("me", Msg.label_personal locale); ("household", Msg.label_household locale); ("family", Msg.label_family locale) ] else []
   in
+  (* The month is the page's title, and picking another is tapping it: the last seven months, newest first. The
+     year is said only when it isn't this one. *)
+  let month_picker =
+    let current_year = match List.last cycles with Some c -> String.prefix (J.str (J.field "cycle" c)) 4 | None -> "" in
+    let name c =
+      let cycle = J.str (J.field "cycle" c) in
+      let label = Fmt.month_label locale cycle in
+      if String.equal (String.prefix cycle 4) current_year then String.chop_suffix_if_exists label ~suffix:(" " ^ current_year) else label
+    in
+    let choices = List.filter_mapi cycles ~f:(fun i c -> let o = i - (List.length cycles - 1) in if o >= -6 then Some (o, c) else None) |> List.rev in
+    Ui.div ~cls:("month-picker" ^ if picking then " open" else "")
+      ([ Vdom.Node.button
+           ~attrs:
+             [ Vdom.Attr.class_ "month-picker-button"; Vdom.Attr.type_ "button"; Vdom.Attr.create "aria-haspopup" "listbox";
+               Vdom.Attr.create "aria-expanded" (Bool.to_string picking); Vdom.Attr.on_click (fun _ -> set_picking (not picking)) ]
+           [ Ui.span [ Ui.text (match selected with Some c -> name c | None -> "") ];
+             Feather_icon.svg ~size:(`Px 18) ~stroke:(`Name "currentColor") ~stroke_width:(`Px 2) Chevron_down ] ]
+      @
+      if not picking then []
+      else
+        [ (* A tap anywhere else puts the list away. *)
+          Vdom.Node.div ~attrs:[ Vdom.Attr.class_ "month-backdrop"; Vdom.Attr.on_click (fun _ -> set_picking false) ] [];
+          Vdom.Node.div
+            ~attrs:[ Vdom.Attr.class_ "month-menu"; Vdom.Attr.create "role" "listbox";
+                     Vdom.Attr.on_keydown (fun e -> if String.equal (Js_of_ocaml.Js.Optdef.case e##.key (fun () -> "") Js_of_ocaml.Js.to_string) "Escape" then set_picking false else Effect.Ignore) ]
+            (List.map choices ~f:(fun (o, c) ->
+                 Vdom.Node.button
+                   ~attrs:
+                     [ Vdom.Attr.type_ "button"; Vdom.Attr.create "role" "option"; Vdom.Attr.create "aria-selected" (Bool.to_string (o = offset));
+                       Vdom.Attr.class_ (if o = offset then "selected" else ""); Vdom.Attr.on_click (fun _ -> Effect.Many [ set_offset o; set_picking false ]) ]
+                   [ Ui.text (name c) ])) ])
+  in
   let head =
     Ui.div ~cls:"page-head"
       [ Vdom.Node.h1 [ Ui.text (Msg.nav_home locale) ];
         Ui.div ~cls:"page-controls"
           [ (if List.is_empty scopes then Vdom.Node.none
              else Ui.div ~cls:"segmented" (List.map scopes ~f:(fun (value, label) -> Ui.button ~kind:(if String.equal value scope then "active" else "") label (set_scope value))));
-            Ui.period
-              ~label:(match selected with Some c -> Fmt.month_label locale (J.str (J.field "cycle" c)) | None -> "")
-              ~previous:(Msg.overview_previous locale, index <= 0 || offset <= -6, set_offset (offset - 1))
-              ~next:(Msg.overview_next locale, offset >= 0, set_offset (offset + 1)) ] ]
+            month_picker ] ]
   in
   let figures (c : J.t) =
     let savings = Fmt.to_float (J.field "savings" c) in

@@ -749,5 +749,7 @@ card.autofiled.body = {$guessed} små är bästa gissningar; ändra under Pengar
 overview.all_transactions = Alla transaktioner
 ahead.title = Framåt
 ahead.lowest = Lägst · {$date}
+budgets.nothing_yet = Inget undanlagt än
+budgets.add_goal = Lägg till ett mål
 budgets.open = Ställ in
 overview.safe_sub_usual = {$amount} om dagen · {$days} dagar kvar · en vanlig dag {$usual}

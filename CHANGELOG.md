@@ -4,7 +4,8 @@
 
 ### Your accountant's briefing
 
-- **A calmer Overview.** The month is the page's title; the bar above it is icons only. One number leads: what
+- **A calmer Overview.** The month is the page's title (the year only when it isn't this one); tapping it lists the
+  last seven months to pick from. The bar above it is icons only. One number leads: what
   you can spend until payday, large, with a line under it saying how that compares with usual; the sum behind it
   (and how far the statements reach) folds under it, and two quiet stats sit below. Things that need you are
   banners of one line each (a dot, the title, what it is) that open to the rest and what can be done; on a
@@ -12,7 +13,9 @@
   and its figure with what it is per (a month, a year) under it; a row opens to its lines and actions. On a
   computer the forecast and goals sit in a narrow column on the right: a calm curve of your balance (a month's
   average around each day, so payday's saw-tooth gives way to the trend) with the lowest point and where it ends
-  under it; tapping either opens its full controls. One type scale, one spacing scale, pill buttons, and
+  under it; tapping either opens its full controls. Closed, goals still show where they stand (each goal and how
+  far along it is), or that nothing is set aside yet, with a way to add the first. A month that is over reads the
+  same way, without boxes. One type scale, one spacing scale, pill buttons, and
   warmer, higher-contrast neutrals in both themes.
 - **One desk.** The Overview opens with one box: *Ask, or drop statements*. A question goes to the advisor as a new
   conversation. Statements dropped anywhere on the page (or on the advisor page, or picked with the paperclip, several

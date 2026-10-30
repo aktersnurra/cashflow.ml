@@ -139,10 +139,38 @@ let section ~(ctx : Ctx.t) ~(visible : bool Bonsai.t) graph =
                 Ui.button (Msg.action_cancel locale) (set_editing Not_editing) ] ()
       | _ -> Ui.div ~cls:"actions" [ Ui.button (Msg.action_new_goal locale) (set_editing (Goal { name = ""; target = ""; date = ""; monthly = "" } : editing)) ]) ]
   in
+  (* Closed, the section still says where things stand: the goals and how far along each is, or that nothing is
+     set aside yet with the way to start. *)
+  let glance =
+    match goals with
+    | Remote.Loaded json -> (
+        let c = code json in
+        match J.list (J.field "goals" json) with
+        | [] ->
+            Ui.div ~cls:"goals-glance nothing-yet"
+              [ Ui.span [ Ui.text (Msg.budgets_nothing_yet locale) ];
+                Vdom.Node.button
+                  ~attrs:
+                    [ Vdom.Attr.class_ "section-link"; Vdom.Attr.type_ "button";
+                      Vdom.Attr.on_click (fun _ ->
+                          Effect.Many [ set_opened true; set_showing_goals true; set_editing (Goal { name = ""; target = ""; date = ""; monthly = "" } : editing) ]) ]
+                  [ Ui.text (Msg.budgets_add_goal locale) ] ]
+        | gs ->
+            Ui.div ~cls:"goals-glance"
+              (List.map (List.take gs 3) ~f:(fun g ->
+                   let saved = Fmt.to_float (J.field "saved" g) and target = Fmt.to_float (J.field "target" g) in
+                   Ui.div ~cls:"goal-glance"
+                     [ Ui.div ~cls:"goal-glance-line"
+                         [ Ui.span [ Ui.text (J.str (J.field "name" g)) ];
+                           Ui.span ~cls:"num" [ Ui.text (Fmt.whole locale ~code:c (J.field "saved" g) ^ " / " ^ Fmt.whole locale ~code:c (J.field "target" g)) ] ];
+                       Ui.meter (if Float.(target > 0.) then saved /. target else 0.) ])))
+    | Loading | Failed _ -> Vdom.Node.none
+  in
   (* Folded behind one quiet row: goals and budgets are set now and then, not read every day. *)
   Ui.div ~cls:"plan-section"
     [ Vdom.Node.create "details" ~attrs:([ Vdom.Attr.class_ "goals-details" ] @ if opened then [ Vdom.Attr.create "open" "" ] else [])
         ([ Vdom.Node.create "summary" ~attrs:[ Vdom.Attr.on_click (fun _ -> Effect.Many [ Effect.Prevent_default; set_opened (not opened) ]) ]
              [ Ui.div ~cls:"section-title" [ Vdom.Node.h2 [ Ui.text (Msg.budgets_goals_title locale) ]; Ui.span ~cls:"section-link" [ Ui.text (Msg.budgets_open locale) ] ] ];
            head; tabs ]
-        @ if showing_goals then goals_view else categories) ]
+        @ if showing_goals then goals_view else categories);
+      (if opened then Vdom.Node.none else glance) ]
