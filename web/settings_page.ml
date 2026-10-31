@@ -71,7 +71,7 @@ let page ~(ctx : Ctx.t) ~(advisor : Advisor.controller Bonsai.t) graph =
                   Effect.of_thunk (fun () -> Js_of_ocaml.Dom_html.window##alert (Js_of_ocaml.Js.string (Msg.signout_failed locale)))) ] ];
       household;
       section (Msg.nav_advisor locale)
-        [Advisor_view.consent ~locale ~view:advisor.view ~dispatch:advisor.dispatch ~decline:Effect.Ignore];
+        [Ui.div ~cls:"row" [Advisor_view.consent ~locale ~view:advisor.view ~dispatch:advisor.dispatch ~decline:Effect.Ignore]];
       memory;
       section (Msg.settings_general locale)
         [ setting (Msg.label_language locale) (Ui.select ~value:draft.locale ~options:[ ("en", "English"); ("sv", "Svenska") ] ~on_change:(fun v -> set (fun d -> { d with locale = v })));
