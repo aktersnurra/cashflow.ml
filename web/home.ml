@@ -29,13 +29,15 @@ let card_view ~(ctx : Ctx.t) (key : string Bonsai.t) (card : J.t Bonsai.t) graph
   let month json = Fmt.month_label locale (J.str (J.field "cycle" json)) in
   (* A banner: what needs you in one line (a dot for how much, the title, a line under it), opening to the rest
      and what can be done about it. Open while the advisor talks about it. *)
+  (* Whose it is (personal or the household's) is said only to someone in a household, before the title. *)
   let banner ?(tone = "") ?(eyebrow = "") ?(sub = "") ~title ?(body = []) ?(actions = []) () =
-    ignore eyebrow;
+    let eyebrow = if Ctx.has_household session then eyebrow else "" in
     Vdom.Node.create "details"
       ~attrs:([ Vdom.Attr.class_ ("card banner " ^ tone) ] @ if opened then [ Vdom.Attr.create "open" "" ] else [])
       [ Vdom.Node.create "summary" ~attrs:[ Vdom.Attr.class_ "banner-head" ]
           [ Ui.span ~cls:"banner-dot" [];
-            Ui.div ~cls:"banner-main" [ Vdom.Node.h2 [ Ui.text title ]; (if String.is_empty sub then Vdom.Node.none else Vdom.Node.p ~attrs:[ Vdom.Attr.class_ "banner-sub" ] [ Ui.text sub ]) ];
+            Ui.div ~cls:"banner-main"
+              [ (if String.is_empty eyebrow then Vdom.Node.none else Ui.div ~cls:"banner-eyebrow" [ Ui.text eyebrow ]); Vdom.Node.h2 [ Ui.text title ]; (if String.is_empty sub then Vdom.Node.none else Vdom.Node.p ~attrs:[ Vdom.Attr.class_ "banner-sub" ] [ Ui.text sub ]) ];
             Feather_icon.svg ~extra_attrs:[ Vdom.Attr.class_ "banner-chevron" ] ~size:(`Px 18) ~stroke:(`Name "currentColor") ~stroke_width:(`Px 2) Chevron_right ];
         Ui.div ~cls:"banner-detail" (body @ if List.is_empty actions && List.is_empty extra then [] else [ Ui.div ~cls:"actions" (actions @ extra) ]) ]
   in
@@ -257,7 +259,8 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
       || String.equal (J.str (J.path ["data"; "account"; "owner"] card)) "household" then
       Cashflow_advisor_protocol.Wire.Household (J.str (J.path ["household"; "id"] session)) else Personal in
     let ask = if eligible then [Ui.button (Msg.advisor_ask locale) (Effect.Many [set_captured (Some (finding_key, cards)); on_ask ~finding_key ~scope])] else [] in
-    Vdom.Node.div ~attrs:([Vdom.Attr.create "data-finding-key" finding_key] @ if selected then [Vdom.Attr.create "data-testid" "selected-finding"] else [])
+    (* Keyed by the finding: a banner someone opened stays theirs when the one before it goes away. *)
+    Vdom.Node.div ~key:finding_key ~attrs:([Vdom.Attr.create "data-finding-key" finding_key] @ if selected then [Vdom.Attr.create "data-testid" "selected-finding"] else [])
       ([body ~extra:ask ~opened:selected] @ if selected then [outlet] else [])) graph in
   let%arr desk and forecast and goals and summary and outlook and categories and briefing and views and offset and set_offset and picking and set_picking and scope and set_scope and locale = ctx.locale and session = ctx.session
   and navigate = ctx.navigate and outlet and selected_finding and visible_cards and advisor_route in
@@ -279,11 +282,55 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
       if String.equal (String.prefix cycle 4) current_year then String.chop_suffix_if_exists label ~suffix:(" " ^ current_year) else label
     in
     let choices = List.filter_mapi cycles ~f:(fun i c -> let o = i - (List.length cycles - 1) in if o >= -6 then Some (o, c) else None) |> List.rev in
-    Ui.div ~cls:("month-picker" ^ if picking then " open" else "")
+    let open Js_of_ocaml in
+    (* The months as buttons; the open list takes the focus, arrows move through it, Escape or leaving puts it away. *)
+    let options () = Dom_html.document##querySelectorAll (Js.string ".page:not([hidden]) .month-menu button") in
+    let focus_at pick =
+      Effect.of_thunk (fun () ->
+          let list = options () in
+          let n = list##.length in
+          if n > 0 then
+            let active = Dom_html.document##.activeElement in
+            let current = List.find (List.init n ~f:Fn.id) ~f:(fun i -> Js.Opt.case (list##item i) (fun () -> false) (fun el ->
+              Js.Opt.case active (fun () -> false) (fun a -> phys_equal (Js.Unsafe.coerce a) (Js.Unsafe.coerce el)))) in
+            Js.Opt.iter (list##item (pick ~n ~current)) (fun el -> el##focus))
+    in
+    let focus_selected =
+      Effect.of_thunk (fun () ->
+          ignore
+            (Dom_html.window##requestAnimationFrame
+               (Js.wrap_callback (fun _ ->
+                    Js.Opt.iter (Dom_html.document##querySelector (Js.string ".page:not([hidden]) .month-menu button.selected")) (fun el -> el##focus)))))
+    in
+    let focus_button =
+      Effect.of_thunk (fun () -> Js.Opt.iter (Dom_html.document##querySelector (Js.string ".page:not([hidden]) .month-picker-button")) (fun el -> el##focus))
+    in
+    let key e = Js.Optdef.case e##.key (fun () -> "") Js.to_string in
+    (* Focus moving to something outside the picker (tabbing away) closes it. Focus going nowhere is a click, which
+       Safari doesn't focus buttons on: the backdrop or the option takes care of that. *)
+    let leave =
+      Vdom.Attr.on_blur (fun e ->
+          let inside =
+            Js.Opt.case (Js.Unsafe.get e "relatedTarget") (fun () -> true) (fun (t : Dom_html.element Js.t) ->
+                Js.Opt.test (Js.Unsafe.meth_call t "closest" [| Js.Unsafe.inject (Js.string ".month-picker") |] : Dom_html.element Js.t Js.opt))
+          in
+          if picking && not inside then set_picking false else Effect.Ignore)
+    in
+    Vdom.Node.div
+      ~attrs:
+        [ Vdom.Attr.class_ ("month-picker" ^ if picking then " open" else "");
+          Vdom.Attr.on_keydown (fun e ->
+              match key e with
+              | "Escape" when picking -> Effect.Many [ set_picking false; focus_button ]
+              | "ArrowDown" when picking ->
+                  Effect.Many [ Effect.Prevent_default; focus_at (fun ~n ~current -> match current with Some i -> Int.min (n - 1) (i + 1) | None -> 0) ]
+              | "ArrowUp" when picking -> Effect.Many [ Effect.Prevent_default; focus_at (fun ~n:_ ~current -> match current with Some i -> Int.max 0 (i - 1) | None -> 0) ]
+              | _ -> Effect.Ignore);
+          ]
       ([ Vdom.Node.button
            ~attrs:
-             [ Vdom.Attr.class_ "month-picker-button"; Vdom.Attr.type_ "button"; Vdom.Attr.create "aria-haspopup" "listbox";
-               Vdom.Attr.create "aria-expanded" (Bool.to_string picking); Vdom.Attr.on_click (fun _ -> set_picking (not picking)) ]
+             [ Vdom.Attr.class_ "month-picker-button"; Vdom.Attr.type_ "button"; Vdom.Attr.create "aria-expanded" (Bool.to_string picking);
+               leave; Vdom.Attr.on_click (fun _ -> if picking then set_picking false else Effect.Many [ set_picking true; focus_selected ]) ]
            [ Ui.span [ Ui.text (match selected with Some c -> name c | None -> "") ];
              Feather_icon.svg ~size:(`Px 18) ~stroke:(`Name "currentColor") ~stroke_width:(`Px 2) Chevron_down ] ]
       @
@@ -291,14 +338,13 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
       else
         [ (* A tap anywhere else puts the list away. *)
           Vdom.Node.div ~attrs:[ Vdom.Attr.class_ "month-backdrop"; Vdom.Attr.on_click (fun _ -> set_picking false) ] [];
-          Vdom.Node.div
-            ~attrs:[ Vdom.Attr.class_ "month-menu"; Vdom.Attr.create "role" "listbox";
-                     Vdom.Attr.on_keydown (fun e -> if String.equal (Js_of_ocaml.Js.Optdef.case e##.key (fun () -> "") Js_of_ocaml.Js.to_string) "Escape" then set_picking false else Effect.Ignore) ]
+          Vdom.Node.div ~attrs:[ Vdom.Attr.class_ "month-menu" ]
             (List.map choices ~f:(fun (o, c) ->
                  Vdom.Node.button
                    ~attrs:
-                     [ Vdom.Attr.type_ "button"; Vdom.Attr.create "role" "option"; Vdom.Attr.create "aria-selected" (Bool.to_string (o = offset));
-                       Vdom.Attr.class_ (if o = offset then "selected" else ""); Vdom.Attr.on_click (fun _ -> Effect.Many [ set_offset o; set_picking false ]) ]
+                     ([ Vdom.Attr.type_ "button"; Vdom.Attr.class_ (if o = offset then "selected" else ""); leave;
+                        Vdom.Attr.on_click (fun _ -> Effect.Many [ set_offset o; set_picking false; focus_button ]) ]
+                     @ if o = offset then [ Vdom.Attr.create "aria-current" "true" ] else [])
                    [ Ui.text (name c) ])) ])
   in
   let head =

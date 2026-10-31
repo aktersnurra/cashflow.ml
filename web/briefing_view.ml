@@ -114,7 +114,7 @@ let component ~(ctx : Ctx.t) ~(scope : string Bonsai.t) ~(visible : bool Bonsai.
           if String.equal scope "household" then Cashflow_advisor_protocol.Wire.Household (J.str (J.path [ "household"; "id" ] session)) else Personal
         in
         let selected = Option.equal String.equal selected_finding (Some key) in
-        Vdom.Node.div
+        Vdom.Node.div ~key
           ~attrs:[ Vdom.Attr.create "data-finding-key" key ]
           (* A quiet row: the question and its number; opened, what is behind it and what to say back. *)
           ([ Vdom.Node.create "details"

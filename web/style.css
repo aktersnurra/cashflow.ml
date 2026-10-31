@@ -823,7 +823,9 @@ main.page.advisor-page.dropping { outline: 2px dashed var(--accent); outline-off
 .slot { display: contents; }
 .page.has-desk .page-head { justify-content: flex-start; margin-bottom: var(--s3); }
 .page.has-desk .page-head h1 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
-summary { list-style: none; } summary::-webkit-details-marker { display: none; }
+/* These folds draw their own chevron; every other fold keeps the browser's triangle. */
+:is(.workings, .wk-row, .banner, .ahead-details, .goals-details) > summary { list-style: none; }
+:is(.workings, .wk-row, .banner, .ahead-details, .goals-details) > summary::-webkit-details-marker { display: none; }
 .overview-hero .num, .stats .num, .wk-head .num, .spark-caption.num { font-variant-numeric: tabular-nums lining-nums; letter-spacing: -.01em; }
 .overview-hero .hero, .overview-hero .hero-sub, .stats .stat-value { text-align: left; }
 /* The period: a quiet control, not a box. */
@@ -948,23 +950,24 @@ summary { list-style: none; } summary::-webkit-details-marker { display: none; }
 .goals-details[open] > summary { margin-bottom: var(--s3); }
 .has-desk .books-links { margin-top: var(--s7); }
 
-/* A computer: two columns, each laid out on its own, so nothing on one side moves the other. */
+/* A computer: two columns. */
 .overview-cols { display: block; }
 @media (min-width: 1000px) {
-  .overview-cols { display: grid; grid-template-columns: minmax(0, 1fr) 340px; column-gap: var(--s7); align-items: start; }
+  /* Rows: the number spans the first two, the banners take the first on the right, the briefing the third; what is
+     ahead runs from under the banners into a last flexible row. Grid puts a spanning item's extra height only into
+     flexible rows it spans, so opening the forecast lengthens that last row and never moves the briefing. */
+  .overview-cols { display: grid; grid-template-columns: minmax(0, 1fr) 340px; grid-template-rows: auto auto auto auto 1fr; column-gap: var(--s7); align-items: start; }
   .overview-main, .overview-side { display: contents; }
-  /* The number spans two rows: the banners take the first on the right, so what is ahead follows them
-     straight away rather than waiting for the number to end. */
   .slot-body > * { grid-column: 1; grid-row: 1 / span 2; }
   .slot-attention > * { grid-column: 2; grid-row: 1; }
   .slot-briefing > *, .slot-flow > * { grid-column: 1; grid-row: 3; }
-  .overview-side .ahead { grid-column: 2; grid-row: 2 / span 2; }
+  .overview-side .ahead { grid-column: 2; grid-row: 2 / -1; }
   /* A conversation under a banner needs the width: the banners move under the number while it is open. */
   .overview-cols:has(.slot-attention [data-testid="selected-finding"]) .slot-attention > * { grid-column: 1; grid-row: 3; margin-top: var(--s5); }
   .overview-cols:has(.slot-attention [data-testid="selected-finding"]) :is(.slot-briefing, .slot-flow) > * { grid-row: 4; }
-  .overview-cols:has(.slot-attention [data-testid="selected-finding"]) .overview-side .ahead { grid-row: 1 / span 4; }
-  /* Nothing needs doing: what is ahead moves up beside the number. */
-  .overview-cols:not(:has(.attention)) .overview-side .ahead { grid-row: 1 / span 3; }
+  /* Nothing beside the number (no banners, or they moved under it): what is ahead starts at the top. */
+  .overview-cols:not(:has(.attention)) .overview-side .ahead,
+  .overview-cols:has(.slot-attention [data-testid="selected-finding"]) .overview-side .ahead { grid-row: 1 / -1; }
   .has-desk .slot-attention .attention { margin-top: 0; margin-bottom: var(--s6); }
   .has-desk .overview-side .ahead, .overview-side .ahead > :first-child .section-title { margin-top: 0; }
 }
@@ -974,6 +977,7 @@ summary { list-style: none; } summary::-webkit-details-marker { display: none; }
 .banner > summary::-webkit-details-marker { display: none; }
 .banner-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--mark); }
 .banner-main { min-width: 0; }
+.banner-eyebrow { font-size: var(--t12); color: var(--text-3); }
 .banner-main h2 { margin: 0; font-size: var(--t14); font-weight: 600; line-height: 1.4; }
 .banner-sub { margin: 2px 0 0; font-size: 13px; line-height: 1.45; color: var(--text-2); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 .banner[open] .banner-sub { -webkit-line-clamp: unset; }
@@ -982,4 +986,3 @@ summary { list-style: none; } summary::-webkit-details-marker { display: none; }
 .banner-detail { padding: 0 var(--s4) var(--s3) calc(var(--s4) + 8px + var(--s3)); }
 .banner-detail > .muted { margin: 0 0 var(--s1); }
 .banner-detail .question-merchant:first-child { padding-top: 0; }
-}

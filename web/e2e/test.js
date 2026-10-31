@@ -95,7 +95,7 @@ Bokföringsdag;Text;Belopp;Saldo
         // This month is still empty; the one before holds the imported rows.
         // The month is the title: tapping it lists the months, newest first.
         await page.locator('.page:visible .month-picker-button').click();
-        await page.locator('.page:visible .month-menu [role=option]').nth(1).click();
+        await page.locator('.page:visible .month-menu button').nth(1).click();
         await page.locator('.page:visible .figures').waitFor({ timeout: 10000 });
         await page.waitForTimeout(500);
         const order = await page.evaluate(() => {
@@ -107,7 +107,7 @@ Bokföringsdag;Text;Belopp;Saldo
         assert.ok(order.attention >= 0 && order.figures >= 0 && order.attention > order.figures, 'banners under the figures: ' + JSON.stringify(order));
         assert.equal(order.flow, -1, 'no chart while spending is mostly uncategorized');
         await page.locator('.page:visible .month-picker-button').click();
-        await page.locator('.page:visible .month-menu [role=option]').first().click();
+        await page.locator('.page:visible .month-menu button').first().click();
       }
       await page.screenshot({ path: `${out}/${file}.png`, fullPage: true });
     }
