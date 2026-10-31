@@ -896,6 +896,29 @@ let dated_forecast_validation () =
       (Int64.sub planned.cash baseline.cash);
     check "no financial, goal, consent or cache writes" (before = digest_tables service.db financial_tables))
 
+(* What the model is told it may send is what the validator accepts: a call outside the advertised bounds rejects the
+   whole run, so the bounds a schema states must be accepted at both ends. *)
+let schema_bounds_are_accepted () =
+  let open Yojson.Safe.Util in
+  List.iter
+    (fun schema ->
+      let f = schema |> member "function" in
+      let name = f |> member "name" |> to_string in
+      let parameters = f |> member "parameters" in
+      if parameters |> member "required" |> to_list = [] then
+        List.iter
+          (fun (property, spec) ->
+            match member "minimum" spec, member "maximum" spec with
+            | `Int lo, `Int hi ->
+                List.iter
+                  (fun n ->
+                    let arguments = Printf.sprintf "{%S:%d}" property n in
+                    check (Printf.sprintf "%s accepts %s = %d" name property n) (Result.is_ok (P.parse_call ~name ~arguments)))
+                  [ lo; hi ]
+            | _ -> ())
+          (parameters |> member "properties" |> to_assoc))
+    Advisor_provider.tool_schemas
+
 let () =
   Alcotest.run "Advisor tools"
     [
@@ -903,6 +926,7 @@ let () =
         [
           Alcotest.test_case "dated forecast validation" `Quick dated_forecast_validation;
           Alcotest.test_case "strict arguments" `Quick strict_arguments;
+          Alcotest.test_case "schema bounds are accepted" `Quick schema_bounds_are_accepted;
           Alcotest.test_case "eight tools and redaction" `Quick redacted_eight_tools;
           Alcotest.test_case "propose budget card" `Quick propose_budget_card;
           Alcotest.test_case "propose categorize card" `Quick propose_categorize_card;

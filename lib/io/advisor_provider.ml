@@ -48,6 +48,8 @@ let reference prefix = `Assoc ["type", str "string"; "maxLength", `Int 100;
 let tool_schemas =
   let currency = `Assoc ["type", str "string"; "pattern", str "^[A-Z]{3}$"] in
   let cycles = "cycles", integer 1 6 and offset = "cycle_offset", integer (-5) 0 in
+  (* A cycle that is over: the current one has nothing to explain yet (its outlook is period_outlook). *)
+  let finished_offset = "cycle_offset", integer (-5) (-1) in
   let category = "category", reference "account_" in
   let scenario = object_ [] ["leave_out", array 20 (reference "series_");
     "one_off", array 10 (object_ ["date"; "amount"] [
@@ -100,7 +102,7 @@ let tool_schemas =
      "category_trend", ["category"], [category; cycles];
      "relevant_transactions", [], [offset; category; "limit", integer 1 20];
      "recurring", [], []; "budget_status", [], [offset]; "goals", [], [];
-     "inbox_rows", [], []; "categories", [], []; "bank_accounts", [], []; "period_outlook", [], []; "explain_month", [], [offset];
+     "inbox_rows", [], []; "categories", [], []; "bank_accounts", [], []; "period_outlook", [], []; "explain_month", [], [finished_offset];
      "forecast", [], ["cycles", `Assoc ["type", str "integer"; "enum", `List [`Int 1; `Int 3; `Int 6];
        "description", str "Forecast horizon in months from the current local date: 1, 3 or 6 (default 3). All one-off dates must fit this horizon."]; "scenario", scenario]] @ [propose_budget; propose_categorize; propose_rule; propose_goal; propose_update_goal; propose_category; propose_entry; file_inbox]
 
