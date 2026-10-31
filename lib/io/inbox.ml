@@ -229,6 +229,34 @@ let pairable (service : Service.t) access (item : Import_store.item) =
   | Income | Expense -> Ok ()
   | Asset | Liability | Equity -> Error (`Invalid "one of these rows was shared or moved to an account, so it can't be paired")
 
+(* How sure two rows are one move between the person's own accounts, 0 to 100, from the rows alone (the amount and
+   direction are checked by the caller). The same text on both, which is how most banks label a transfer, is very
+   high even a week apart; otherwise a move is plausible within three days, surest on the same day and when either
+   says it is a transfer. 0 is not a move. *)
+let transfer_words = [ "overforing"; "vrfring" (* överföring, without its umlauts *); "transfer"; "sparande"; "sparkonto"; "lnekonto"; "lonekonto"; "internal" ]
+
+let fold_text s =
+  String.concat ""
+    (List.map
+       (fun c -> match c with 'a' .. 'z' | '0' .. '9' -> String.make 1 c | 'A' .. 'Z' -> String.make 1 (Char.lowercase_ascii c) | _ -> "")
+       (List.init (String.length s) (String.get s)))
+
+let contains ~sub s =
+  let n = String.length sub and m = String.length s in
+  let rec at i = i + n <= m && (String.sub s i n = sub || at (i + 1)) in
+  n > 0 && at 0
+
+let move_confidence (a : Transfer.t) (b : Transfer.t) =
+  let gap = abs (Date.days_between ~first:a.value_date ~last:b.value_date) in
+  let text (t : Transfer.t) = fold_text (t.memo.description ^ " " ^ Option.value t.memo.counterparty ~default:"") in
+  let ta = text a and tb = text b in
+  let same = String.length (fold_text a.memo.description) > 0 && String.equal (fold_text a.memo.description) (fold_text b.memo.description) in
+  let says_transfer = List.exists (fun w -> contains ~sub:w ta || contains ~sub:w tb) transfer_words in
+  if gap > 7 then 0
+  else if same then 98 - gap
+  else if gap > 3 then 0
+  else (if gap = 0 then 88 else 65 - (3 * gap)) + if says_transfer then 10 else 0
+
 (* Two rows that are one move between the user's own accounts (checking to savings, personal to
    household): the money left one and arrived in the other, so what each row was counted as
    (uncategorized, or the category it was filed in) cancels. Both rows are then paired: asking
@@ -250,7 +278,7 @@ let pair (service : Service.t) access ~out_id ~in_id =
       let out_t = out_t.transfer and in_t = in_t.transfer in
       if not (outflow out_item out_t && not (outflow in_item in_t)) then Error (`Invalid "pair a row that took money out with one that brought it in")
       else if not (Amount.equal out_t.amount in_t.amount) then Error (`Invalid "the two rows have different amounts")
-      else if abs (Date.days_between ~first:out_t.value_date ~last:in_t.value_date) > 3 then Error (`Invalid "the two rows are more than three days apart")
+      else if move_confidence out_t in_t = 0 then Error (`Invalid "the two rows are too far apart in time to be one move")
       else if not (Currency.equal out_bank.account.currency in_bank.account.currency) then Error (`Invalid "the accounts have different currencies")
       else
         let code : Transfer.code = if Owner.equal out_bank.account.owner in_bank.account.owner then Internal else Contribution in
@@ -274,7 +302,7 @@ let pair (service : Service.t) access ~out_id ~in_id =
             | Error _ -> ());
             Ok result)
 
-(* Rows that look like the other half of a move: the same amount the other way within three days. *)
+(* Rows that look like the other half of a move: the same amount the other way, close enough in time (see [move_confidence]). *)
 let pair_candidates (service : Service.t) access ~transfer_id =
   let* item, _ = find_open service access transfer_id in
   let* t = Service.get_transfer service access transfer_id in
@@ -285,7 +313,7 @@ let pair_candidates (service : Service.t) access ~transfer_id =
        (fun (v : item_view) ->
          let o = v.transfer.transfer in
          Amount.equal o.amount t.amount && outflow v.item o <> outflow item t
-         && abs (Date.days_between ~first:o.value_date ~last:t.value_date) <= 3)
+         && move_confidence o t > 0)
        others)
 
 (* The row is the bank's version of a pending manual entry with a different amount: void the
@@ -393,8 +421,8 @@ let still_open (service : Service.t) ids =
 
 (* Finding moves between the user's own accounts across the whole inbox, in memory: two years of
    imports from several accounts is thousands of rows, too many to ask the database about one by one.
-   A row's counterparts are the pairable rows of the same amount the other way within three days on
-   another bank account. *)
+   A row's counterparts are the pairable rows of the same amount the other way on another bank account
+   that [move_confidence] allows. *)
 type move_row = { view : item_view; out : bool }
 
 let counterparts_of rows =
@@ -404,7 +432,7 @@ let counterparts_of rows =
     List.filter
       (fun o ->
         o.out <> r.out && (not (Account_id.equal o.view.item.bank_account_id r.view.item.bank_account_id))
-        && abs (Date.days_between ~first:o.view.transfer.transfer.value_date ~last:r.view.transfer.transfer.value_date) <= 3)
+        && move_confidence o.view.transfer.transfer r.view.transfer.transfer > 0)
       (Hashtbl.find_all by_amount (Amount.to_int64 r.view.transfer.transfer.amount))
 
 (* The rows waiting in the inbox and those filed in a category (see [pairable]): a move filed as spending before its
@@ -419,17 +447,17 @@ let pair_rows (service : Service.t) access ~out ~in_ =
 
 let same_row a b = Transfer_id.equal a.view.item.transfer_id b.view.item.transfer_id
 
-(* The counterpart of a row that is nearer in date than every other, if there is one. *)
+(* The counterpart of a row that is surer than every other, if there is one. *)
 let nearest counterparts r =
-  let gap o = abs (Date.days_between ~first:o.view.transfer.transfer.value_date ~last:r.view.transfer.transfer.value_date) in
+  let sure o = move_confidence o.view.transfer.transfer r.view.transfer.transfer in
   match counterparts r with
   | [] -> None
   | first :: rest -> (
-      let closest = List.fold_left (fun least o -> Int.min least (gap o)) (gap first) rest in
-      match List.filter (fun o -> gap o = closest) (first :: rest) with [ o ] -> Some o | _ -> None)
+      let best = List.fold_left (fun most o -> Int.max most (sure o)) (sure first) rest in
+      match List.filter (fun o -> sure o = best) (first :: rest) with [ o ] -> Some o | _ -> None)
 
-(* Two rows that are each other's nearest counterpart in date are the same move seen from both accounts, so
-   they are paired without asking; a rival of the same amount further away doesn't hide it, but one equally near
+(* Two rows that are each other's surest counterpart are the same move seen from both accounts, so
+   they are paired without asking; a less likely rival of the same amount doesn't hide it, but one equally likely
    does. Pairing a move can make its neighbours unambiguous, so it repeats until nothing more pairs. A move
    [pair] refuses stays among the rows, so it still counts as a rival, but is not tried again. Returns how many
    moves it paired. *)

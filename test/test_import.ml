@@ -1107,11 +1107,36 @@ let test_sweep_pairs_what_is_left () =
   Cashflow_io.Autofile.sweep service alice;
   Alcotest.(check int) "the sweep paired the move" 0 (Inbox.count service alice)
 
+(* The same text pairs a week apart, and beats a rival of another text nearer in date. *)
+let test_same_text_pairs_a_week_apart () =
+  let service, alice, checking, savings, shared = moves_setup () in
+  import_into service alice shared "Datum;Text;Belopp\n2026-10-04;SWISH KALLE;3000,00\n";
+  import_into service alice savings "Datum;Text;Belopp\n2026-10-12;TILL SPARKONTO;3000,00\n";
+  import_into service alice checking "Datum;Text;Belopp\n2026-10-05;TILL SPARKONTO;-3000,00\n";
+  Alcotest.(check int) "only the swish waits" 1 (Inbox.count service alice)
+
+(* A same-day move with different texts pairs. *)
+let test_same_day_move_with_different_texts () =
+  let service, alice, checking, savings, _ = moves_setup () in
+  import_into service alice checking "Datum;Text;Belopp\n2026-10-05;KORTKOP;-500,00\n";
+  import_into service alice savings "Datum;Text;Belopp\n2026-10-05;INSATTNING;500,00\n";
+  Alcotest.(check int) "paired" 0 (Inbox.count service alice)
+
+(* The receiving account is imported first, the same day, with other text. *)
+let test_receiving_account_imported_first () =
+  let service, alice, checking, savings, _ = moves_setup () in
+  import_into service alice savings "Datum;Text;Belopp\n2026-10-05;INSATTNING;500,00\n";
+  import_into service alice checking "Datum;Text;Belopp\n2026-10-05;KORTKOP;-500,00\n";
+  Alcotest.(check int) "paired" 0 (Inbox.count service alice)
+
 let () =
   Alcotest.run "import"
     [ ("parsing", [ Alcotest.test_case "amounts and csv" `Quick test_parsing ]);
       ( "pipeline",
         [ Alcotest.test_case "matches, dedupes and checks the balance" `Quick test_import_matches_dedupes_and_checks_the_balance;
+          Alcotest.test_case "same text pairs a week apart" `Quick test_same_text_pairs_a_week_apart;
+          Alcotest.test_case "receiving account first" `Quick test_receiving_account_imported_first;
+          Alcotest.test_case "same day, different texts" `Quick test_same_day_move_with_different_texts;
           Alcotest.test_case "identical rows without balances" `Quick test_identical_rows_without_balances;
           Alcotest.test_case "closing balance, oldest first" `Quick test_closing_balance_oldest_first;
           Alcotest.test_case "handelsbanken xlsx" `Quick test_handelsbanken_xlsx;
