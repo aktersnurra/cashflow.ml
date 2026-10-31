@@ -419,10 +419,20 @@ let pair_rows (service : Service.t) access ~out ~in_ =
 
 let same_row a b = Transfer_id.equal a.view.item.transfer_id b.view.item.transfer_id
 
-(* A row with exactly one counterpart, which has no other counterpart either, is the same move seen from both
-   accounts, so it is paired without asking. Pairing a move can make its neighbours unambiguous, so it repeats
-   until nothing more pairs. A move [pair] refuses stays among the rows, so it still counts as a rival, but is
-   not tried again. Returns how many moves it paired. *)
+(* The counterpart of a row that is nearer in date than every other, if there is one. *)
+let nearest counterparts r =
+  let gap o = abs (Date.days_between ~first:o.view.transfer.transfer.value_date ~last:r.view.transfer.transfer.value_date) in
+  match counterparts r with
+  | [] -> None
+  | first :: rest -> (
+      let closest = List.fold_left (fun least o -> Int.min least (gap o)) (gap first) rest in
+      match List.filter (fun o -> gap o = closest) (first :: rest) with [ o ] -> Some o | _ -> None)
+
+(* Two rows that are each other's nearest counterpart in date are the same move seen from both accounts, so
+   they are paired without asking; a rival of the same amount further away doesn't hide it, but one equally near
+   does. Pairing a move can make its neighbours unambiguous, so it repeats until nothing more pairs. A move
+   [pair] refuses stays among the rows, so it still counts as a rival, but is not tried again. Returns how many
+   moves it paired. *)
 let pair_obvious (service : Service.t) access =
   let refused = Hashtbl.create 16 in
   let rec go rows paired =
@@ -431,7 +441,7 @@ let pair_obvious (service : Service.t) access =
       List.filter_map
         (fun r ->
           if (not r.out) || Hashtbl.mem refused r.view.item.transfer_id then None
-          else match counterparts r with [ o ] when (match counterparts o with [ back ] -> same_row back r | _ -> false) -> Some (r, o) | _ -> None)
+          else match nearest counterparts r with Some o when (match nearest counterparts o with Some back -> same_row back r | None -> false) -> Some (r, o) | _ -> None)
         rows
     in
     let made = List.filter (fun (r, o) -> pair_rows service access ~out:r ~in_:o || (Hashtbl.replace refused r.view.item.transfer_id (); false)) moves in

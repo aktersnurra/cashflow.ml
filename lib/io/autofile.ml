@@ -8,7 +8,8 @@
    inside the caller's transaction, checking each row again as it is then.
 
    [sweep] does the same without being asked, after an import and when the Overview finds rows waiting: the
-   books shouldn't wait on a person sorting coffee. It files at each bank account's own threshold (on by
+   books shouldn't wait on a person sorting coffee. It pairs moves between the person's own accounts first, and
+   files at each bank account's own threshold (on by
    default), and a small row it isn't sure of is filed with its best guess and marked as guessed rather than
    asked about: its category changes no number a person would act on. What is left, the big or recurring rows
    cashflow can't place, is what the Overview asks about (Attention), one merchant at a time. *)
@@ -157,6 +158,9 @@ let sweep (service : Service.t) access =
     Hashtbl.replace sweeping user ();
     Fun.protect ~finally:(fun () -> Hashtbl.remove sweeping user; Hashtbl.replace last_swept user (Unix.gettimeofday ()))
       (fun () ->
+        (* Moves between the person's own accounts first: what is left over from before, or arrived in an order that
+           couldn't pair, is a move, not something to file as spending. *)
+        (try ignore (Inbox.pair_obvious service access) with exn -> Logs.err (fun m -> m "pairing moves failed: %s" (Printexc.to_string exn)));
         let total_filed = ref 0 and total_guessed = ref 0 in
         List.iter
           (fun owner ->

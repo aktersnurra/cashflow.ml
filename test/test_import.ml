@@ -1075,6 +1075,38 @@ let test_moves_after_undo_and_reupload_of_one_side () =
   import_into service alice shared shared_csv;
   check_moves_net_out service alice
 
+(* A rival of the same amount within three days no longer hides a move: when the outflow arrives and both inflows
+   are already waiting, the one nearest in date is the move. Shared also received 3000 from elsewhere two days later,
+   which used to leave every row unpaired. *)
+let test_moves_with_a_rival_of_the_same_amount () =
+  let service, alice, checking, savings, shared = moves_setup () in
+  import_into service alice savings "Datum;Text;Belopp\n2026-10-05;FRÅN LÖNEKONTO;3000,00\n";
+  import_into service alice shared "Datum;Text;Belopp\n2026-10-07;SWISH KALLE;3000,00\n";
+  import_into service alice checking "Datum;Text;Belopp\n2026-10-05;TILL SPARKONTO;-3000,00\n";
+  Alcotest.(check int) "only the swish waits" 1 (Inbox.count service alice);
+  Alcotest.(check string) "the move nets out, the swish is income" "2026-10 income=3000.00 spending=0.00 in=0.00 out=0.00"
+    (List.hd (cycle_flows service alice ~cycles:1 "family"))
+
+(* Two rivals equally near are still ambiguous: nothing is guessed. *)
+let test_moves_with_equally_near_rivals_stay_unpaired () =
+  let service, alice, checking, savings, shared = moves_setup () in
+  import_into service alice savings "Datum;Text;Belopp\n2026-10-04;FRÅN A;3000,00\n";
+  import_into service alice shared "Datum;Text;Belopp\n2026-10-06;FRÅN B;3000,00\n";
+  import_into service alice checking "Datum;Text;Belopp\n2026-10-05;TILL SPARKONTO;-3000,00\n";
+  Alcotest.(check int) "all three wait" 3 (Inbox.count service alice)
+
+(* Rows left waiting from before, or that a rival kept apart, are paired by the next sweep rather than by a button:
+   here the rival is dismissed after the fact. *)
+let test_sweep_pairs_what_is_left () =
+  let service, alice, checking, savings, shared = moves_setup () in
+  import_into service alice savings "Datum;Text;Belopp\n2026-10-04;FRÅN A;3000,00\n";
+  import_into service alice shared "Datum;Text;Belopp\n2026-10-06;FRÅN B;3000,00\n";
+  import_into service alice checking "Datum;Text;Belopp\n2026-10-05;TILL SPARKONTO;-3000,00\n";
+  ignore (ok (Inbox.dismiss service alice ~transfer_id:(find_item service alice "FRÅN A")));
+  Alcotest.(check int) "still waiting" 2 (Inbox.count service alice);
+  Cashflow_io.Autofile.sweep service alice;
+  Alcotest.(check int) "the sweep paired the move" 0 (Inbox.count service alice)
+
 let () =
   Alcotest.run "import"
     [ ("parsing", [ Alcotest.test_case "amounts and csv" `Quick test_parsing ]);
@@ -1105,6 +1137,9 @@ let () =
           Alcotest.test_case "pair all moves retroactively" `Quick test_pair_all_moves_retroactively;
           Alcotest.test_case "undo doesn't revive a row" `Quick test_undo_does_not_revive_a_row;
           Alcotest.test_case "a manual move confirmed by both statements" `Quick test_manual_move_confirmed_by_both_statements;
+          Alcotest.test_case "a move with a rival of the same amount" `Quick test_moves_with_a_rival_of_the_same_amount;
+          Alcotest.test_case "equally near rivals stay unpaired" `Quick test_moves_with_equally_near_rivals_stay_unpaired;
+          Alcotest.test_case "the sweep pairs what is left" `Quick test_sweep_pairs_what_is_left;
           Alcotest.test_case "a member shares a purchase" `Quick test_member_shares_a_purchase;
           Alcotest.test_case "reconciliation follows the ledger" `Quick test_reconciliation_follows_the_ledger; Alcotest.test_case "reconcile" `Quick test_reconcile ] );
       ( "moves",
