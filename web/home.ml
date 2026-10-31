@@ -330,7 +330,11 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
     let note text = Ui.div ~cls:"figure-note" [ Ui.text text ] in
     let outlook =
       match outlook with
-      | Loaded o when (not complete) && String.equal (J.str (J.path [ "cycle"; "cycle" ] o)) (J.str (J.field "cycle" c)) -> Some o
+      (* Before a statement reaches the cycle there is no figure: the usual spending since payday would be counted
+         while the pay that came in is not, and the number would only say the import is missing. *)
+      | Loaded o
+        when (not complete) && String.equal (J.str (J.path [ "cycle"; "cycle" ] o)) (J.str (J.field "cycle" c))
+             && (match J.field "covered_through" o with `String _ -> true | _ -> false) -> Some o
       | _ -> None
     in
     let main =
@@ -421,6 +425,7 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
             trend;
             (match complete, J.field "covered_through" c with
              | false, (`String _ as d) -> note (Msg.overview_covered_through ~date:(Fmt.date_json d) locale)
+             | false, `Null -> note (Msg.overview_nothing_yet locale)
              | _ -> Vdom.Node.none) ]
     in
     if Option.is_some outlook then Ui.div ~cls:"overview-hero" main

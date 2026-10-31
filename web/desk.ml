@@ -136,6 +136,8 @@ let component ~(ctx : Ctx.t) ~(on_question : (string -> unit Effect.t) Bonsai.t)
               ~attrs:
                 [ Vdom.Attr.class_ "desk-input"; Vdom.Attr.id input_id; Vdom.Attr.create "rows" "1"; Vdom.Attr.create "aria-label" (Msg.desk_placeholder locale);
                   Vdom.Attr.placeholder (if dragging then Msg.desk_drop locale else Msg.desk_placeholder locale); Vdom.Attr.value_prop draft;
+                  (* Grows with what is typed, as the advisor's box does. *)
+                  Vdom.Attr.create_hook "desk-grow" (Advisor_chat_hooks.Grow.create { Advisor_chat_hooks.Grow_input.draft; blocked = false });
                   (if opened then Vdom.Attr.empty else Vdom.Attr.create "tabindex" "-1");
                   Vdom.Attr.on_input (fun _ v -> set_draft v);
                   Vdom.Attr.on_keydown (fun event ->
