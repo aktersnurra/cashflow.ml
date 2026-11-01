@@ -658,11 +658,11 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
 .advisor-composer[data-over-limit] .advisor-input-error { display: block; }
 .advisor-composer[data-over-limit] { border-color: var(--negative); }
 .advisor-composer-bottom { display: flex; }
-/* On the text's own line: the return key to send, a small square to stop; no button shape around either.
-   Dimmed while there is nothing to send. */
-.advisor-send { display: grid; place-items: center; flex: none; width: 36px; height: 36px; margin: 3px 0 3px auto; padding: 0; border: 0; border-radius: 10px; background: transparent; color: var(--chat-ink); cursor: pointer; }
-.advisor-send:disabled { color: var(--chat-muted); cursor: default; }
-.advisor-send:not(:disabled):hover { background: var(--surface-2); }
+/* A round button on the text's own line: an arrow up to send, a small square to stop. Pale while there is
+   nothing to send. */
+.advisor-send { display: grid; place-items: center; flex: none; width: 36px; height: 36px; margin: 3px 0 3px auto; padding: 0; border: 0; border-radius: 50%; background: var(--chat-ink); color: var(--chat-paper); cursor: pointer; }
+.advisor-send:disabled { background: var(--surface-2); color: var(--chat-muted); cursor: default; }
+.advisor-send:not(:disabled):hover { opacity: .85; }
 .advisor-status, .advisor-attempt-status { font: 12px/20px var(--chat-ui); color: var(--chat-muted); margin: 8px 4px 0; }
 .advisor-status:empty { display: none; }
 .advisor-conversation-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; padding: 12px 0 4px; }
@@ -772,9 +772,9 @@ html { touch-action: manipulation; -webkit-text-size-adjust: 100%; text-size-adj
 .desk-attach { display: grid; place-items: center; width: 36px; height: 36px; margin: 3px 0; border-radius: 10px; color: var(--text); cursor: pointer; }
 .desk-attach:hover { background: var(--surface); color: var(--text); }
 .desk-attach input { display: none; }
-.desk-send { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; border: 0; background: transparent; color: var(--text); cursor: pointer; }
-.desk-send:disabled { color: var(--text-3); opacity: .6; cursor: default; }
-.desk-send:not(:disabled):hover { background: var(--surface); }
+.desk-send { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; border: 0; background: var(--text); color: var(--bg); cursor: pointer; }
+.desk-send:disabled { background: var(--surface-2); color: var(--text-3); cursor: default; }
+.desk-send:not(:disabled):hover { opacity: .85; }
 .desk-files { display: grid; gap: 8px; margin-top: 8px; }
 .desk-files > * { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; background: var(--panel); }
 main.page.advisor-page.dropping { outline: 2px dashed var(--accent); outline-offset: -8px; border-radius: 16px; }

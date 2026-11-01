@@ -98,7 +98,7 @@ let component ~(ctx : Ctx.t) ~(on_question : (string -> unit Effect.t) Bonsai.t)
             [ Vdom.Attr.create "viewBox" "0 0 24 24"; Vdom.Attr.create "width" "20"; Vdom.Attr.create "height" "20"; Vdom.Attr.create "fill" "none";
               Vdom.Attr.create "stroke" "currentColor"; Vdom.Attr.create "stroke-width" "2"; Vdom.Attr.create "stroke-linecap" "round";
               Vdom.Attr.create "stroke-linejoin" "round"; Vdom.Attr.create "aria-hidden" "true" ]
-          [ Vdom.Node.create_svg "path" ~attrs:[ Vdom.Attr.create "d" "M20 5v6a4 4 0 0 1-4 4H5M9 11l-4 4 4 4" ] [] ] ]
+          [ Vdom.Node.create_svg "path" ~attrs:[ Vdom.Attr.create "d" "M12 19V5M5 12l7-7 7 7" ] [] ] ]
   in
   let files = if Map.is_empty imports then Vdom.Node.none else Ui.div ~cls:"desk-files" (Map.data imports) in
   (* The handle: a swipe up opens, a swipe down closes, a tap (or a click) toggles. *)

@@ -286,7 +286,7 @@ let render_body ~(attach : Vdom.Node.t option) ~turns ~show_source ~locale ~(vie
                          Vdom.Attr.create "aria-hidden" "true";
                        ]
                      [
-                       (* Stop: a small filled square. Send: the return key. *)
+                       (* Stop: a small filled square. Send: an arrow up. *)
                        (if active then
                           Vdom.Node.create_svg "rect"
                             ~attrs:
@@ -295,7 +295,7 @@ let render_body ~(attach : Vdom.Node.t option) ~turns ~show_source ~locale ~(vie
                             []
                         else
                           Vdom.Node.create_svg "path"
-                            ~attrs:[ Vdom.Attr.create "d" "M20 5v6a4 4 0 0 1-4 4H5M9 11l-4 4 4 4" ]
+                            ~attrs:[ Vdom.Attr.create "d" "M12 19V5M5 12l7-7 7 7" ]
                             []);
                      ];
                  ]);
