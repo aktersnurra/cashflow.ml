@@ -133,6 +133,15 @@ const starter = 'How much can I spend until payday?';
   await side('Overview').click();await here('Overview',/\/$/);
   await page.locator('.page:visible [data-finding-key], .page:visible .overview-hero').first().waitFor();
   await page.screenshot({path:evidence+'/home-sidebar.png'});
+  // Every device gets the same font, from this server.
+  await page.evaluate(()=>document.fonts.ready);
+  assert.ok(await page.evaluate(()=>[...document.fonts].some(f=>f.family.replace(/"/g,'')==='Inter'&&f.status==='loaded')),'Inter loads from the app');
+  // What needs doing is a row with a dot, not a tinted banner.
+  const finding = page.locator('.page:visible .attention-list .card').first();
+  await finding.waitFor();
+  assert.equal(await finding.evaluate(el=>getComputedStyle(el).backgroundColor),'rgba(0, 0, 0, 0)');
+  // The desk's handle says what it opens.
+  await page.locator('.page:visible .desk-handle-label').waitFor();
 
   // A phone has one row and one menu, which opens the same sidebar as a drawer.
   const oneMenu = async target => {

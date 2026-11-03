@@ -21,7 +21,7 @@ out=$(cd "$out" && pwd)
 cd "$(dirname "$0")/.."
 
 # Everything index.html and manifest.webmanifest reference, plus spare favicon/icon sizes.
-files=(index.html main.bc.js style.css manifest.webmanifest
+files=(index.html main.bc.js style.css manifest.webmanifest inter-latin-wght.woff2 inter-LICENSE.txt
   apple-touch-icon.png favicon-16.png favicon-32.png favicon-48.png favicon.ico
   icon-64.png icon-192.png icon-512.png icon-maskable-512.png)
 
