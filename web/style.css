@@ -775,6 +775,8 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
    the composer sits on the keyboard (--keyboard: how much of the page iOS's keyboard covers; 0 where the page
    itself shrinks above it). */
 html { touch-action: manipulation; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+/* Nothing pans sideways: no rubber band, and a stray wide element is cut off rather than scrolled to. */
+html, body { overscroll-behavior-x: none; overflow-x: clip; }
 @media (hover: none) and (pointer: coarse) {
   input, select, textarea, .advisor-conversation .advisor-input { font-size: 16px; }
   html.typing .tabbar { display: none; }
