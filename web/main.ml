@@ -229,7 +229,15 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
       [ Feather_icon.svg ~size:(`Px 20) ~stroke:(`Name "currentColor") ~stroke_width:(`Px 2) Menu ] in
   let navigation = Advisor_navigation.component ~locale ~advisor ~route
     ~on_select:select_conversation ~on_new:new_conversation ~menu_button graph in
+  (* The scope to open on: a conversation with nothing in it yet, when the advisor is enabled. *)
+  let opening_scope = let%arr advisor and advisor_turns and route and selected_finding and selected_scope in
+    let view = advisor.view in
+    match route, view.status with
+    | Route.Advisor None, Some s when s.consent && Option.is_none view.snapshot && List.is_empty advisor_turns && Option.is_none selected_finding ->
+        (match Option.value view.context_scope ~default:selected_scope with W.Personal -> Some "me" | W.Household _ -> Some "household")
+    | _ -> None in
   let outlet = let%arr advisor and advisor_turns and navigation and selected_finding and locale and session and declined and set_declined and selected_scope and navigate and desk in
+    fun ~(opening : Vdom.Node.t) ->
     let view = advisor.view in
     let scope = Option.value view.context_scope ~default:selected_scope in
     Vdom.Node.div ~attrs:[Vdom.Attr.class_ "advisor-outlet"; Vdom.Attr.create "data-advisor-controller" ""]
@@ -242,7 +250,7 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
        | Some s when s.consent && (Option.is_some view.snapshot || s.available) && (match scope, s.household with W.Personal, _ -> true | Household id, Some h -> h.enabled && String.equal id h.household_id | _ -> false) ->
            [(if Option.is_some selected_finding then Ui.muted (Msg.advisor_historical locale) else Vdom.Node.none);
             Advisor_view.render_body ~attach:(Some desk.attach) ~show_source:(Option.is_none selected_finding) ~turns:advisor_turns
-              ~intro:true ~starters:(Option.is_none selected_finding) ~locale ~view ~dispatch:advisor.dispatch]
+              ~intro:true ~opening ~locale ~view ~dispatch:advisor.dispatch]
        | Some s when s.consent && s.available -> [Ui.muted (Msg.advisor_household_off locale); Ui.button (Msg.nav_household locale) (navigate Route.Settings)]
        | _ -> [Advisor_view.consent ~locale ~view ~dispatch:advisor.dispatch ~decline:(set_declined true)]) in
   let access_denied = let%arr advisor in advisor.view.access_denied in
@@ -251,8 +259,8 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
   let home, reset_home = Bonsai.with_model_resetter ~f:(fun graph ->
     match%sub home_access with
     | false, _ -> Bonsai.return Vdom.Node.none
-    | true, true -> let%arr outlet and locale in Ui.page ~title:(Msg.nav_advisor locale) [outlet]
-    | true, false -> Home.page ~ctx ~on_ask ~desk ~selected_finding ~outlet
+    | true, true -> let%arr outlet and locale in Ui.page ~title:(Msg.nav_matters locale) [outlet ~opening:Vdom.Node.none]
+    | true, false -> Home.page ~ctx ~on_ask ~desk ~selected_finding ~outlet ~opening_scope
         ~advisor_route:(let%arr route in match route with Route.Advisor _ -> true | _ -> false)
         ~visible:(let%arr route in match route with Route.Home | Route.Advisor _ -> true | _ -> false) graph) graph in
   let clear_home = let%arr reset_home and set_selected_finding and set_selected_scope in fun denied ->

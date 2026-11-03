@@ -276,9 +276,8 @@ let render_turns ~locale ~(snapshot : W.snapshot option) ~dispatch ~(decided : s
             | None -> [])))
 
 (* [attach]: the "+" that hands files to the desk, on the left of the composer. [intro]: what the conversation says
-   before its first message. [starters]: questions to send with a click; a conversation offering them opens as a
-   landing, in the middle of the page. *)
-let render_body ~(attach : Vdom.Node.t option) ~turns ~show_source ~intro ~starters ~locale ~(view : C.view) ~dispatch =
+   before its first message. [opening]: what the accountant has to say by then (Advisor_opening). *)
+let render_body ~(attach : Vdom.Node.t option) ~turns ~show_source ~intro ~opening ~locale ~(view : C.view) ~dispatch =
   let text = Vdom.Node.text in
   let cls name = [ Vdom.Attr.class_ name ] in
   let button label action =
@@ -324,7 +323,7 @@ let render_body ~(attach : Vdom.Node.t option) ~turns ~show_source ~intro ~start
               [
                 Vdom.Attr.class_ "advisor-input";
                 Vdom.Attr.create "aria-label" (Msg.advisor_draft locale);
-                Vdom.Attr.placeholder (if has_messages then Msg.advisor_reply locale else Msg.advisor_placeholder locale);
+                Vdom.Attr.placeholder (if has_messages || not show_source then Msg.advisor_reply locale else Msg.advisor_placeholder locale);
                 Vdom.Attr.create "rows" "1";
                 Vdom.Attr.value_prop view.draft;
                 Vdom.Attr.create_hook "advisor-grow"
@@ -413,28 +412,9 @@ let render_body ~(attach : Vdom.Node.t option) ~turns ~show_source ~intro ~start
     @ (if generation_ready && Option.is_some view.pending then [ button (Msg.advisor_repeat locale) C.Repeat_pending ]
        else [])
   in
-  let landing = starters && (not has_messages) && Option.is_none view.snapshot in
   let intro_block =
     if has_messages || not intro then Vdom.Node.none
-    else
-      Vdom.Node.div ~attrs:(cls "advisor-intro")
-        ((if landing then
-            [ Vdom.Node.span ~attrs:[ Vdom.Attr.class_ "advisor-mark"; Vdom.Attr.create "aria-hidden" "true" ] [ text "✦" ] ]
-          else [])
-        @ (if Option.is_none view.snapshot then [ Vdom.Node.h2 [ text (Msg.advisor_empty locale) ] ] else [])
-        @ [ Ui.muted (Msg.advisor_readonly locale) ])
-  in
-  let starter_list =
-    if not (landing && can_submit) then Vdom.Node.none
-    else
-      Vdom.Node.div ~attrs:(cls "advisor-starters")
-        (List.map
-           [ Msg.advisor_starter_spend locale; Msg.advisor_starter_change locale; Msg.advisor_starter_recurring locale;
-             Msg.advisor_starter_goals locale ]
-           ~f:(fun question ->
-             Vdom.Node.button
-               ~attrs:[ Vdom.Attr.type_ "button"; Vdom.Attr.on_click (fun _ -> submit (Some question)) ]
-               [ text question ]))
+    else Vdom.Node.div ~attrs:(cls "advisor-intro") [ opening; Ui.muted (Msg.advisor_readonly locale) ]
   in
   let scroll_latest =
     if not has_messages then Vdom.Node.none
@@ -450,7 +430,6 @@ let render_body ~(attach : Vdom.Node.t option) ~turns ~show_source ~intro ~start
     ~attrs:
       [
         Vdom.Attr.class_ "advisor-conversation";
-        (if landing then Vdom.Attr.create "data-landing" "" else Vdom.Attr.empty);
         Vdom.Attr.create_hook "advisor-follow" (Advisor_chat_hooks.Follow.create follow);
       ]
     ((match view.status with
@@ -492,7 +471,6 @@ let render_body ~(attach : Vdom.Node.t option) ~turns ~show_source ~intro ~start
                 ]
               [ text (notice locale view.notice) ];
           ];
-        starter_list;
       ])
 
 let plain_turns ~locale ~(view : C.view) ~dispatch =
@@ -501,11 +479,11 @@ let plain_turns ~locale ~(view : C.view) ~dispatch =
     ~choose_attempt:(fun ~turn_id:_ ~attempt_id:_ ~count:_ -> Effect.Ignore)
 
 let render ~locale ~(view : C.view) ~dispatch =
-  render_body ~attach:None ~turns:(plain_turns ~locale ~view ~dispatch) ~show_source:true ~intro:false ~starters:false
+  render_body ~attach:None ~turns:(plain_turns ~locale ~view ~dispatch) ~show_source:true ~intro:false ~opening:Vdom.Node.none
     ~locale ~view ~dispatch
 
 let render_inline ~locale ~(view : C.view) ~dispatch =
-  render_body ~attach:None ~turns:(plain_turns ~locale ~view ~dispatch) ~show_source:false ~intro:false ~starters:false
+  render_body ~attach:None ~turns:(plain_turns ~locale ~view ~dispatch) ~show_source:false ~intro:false ~opening:Vdom.Node.none
     ~locale ~view ~dispatch
 
 let consent ~locale ~(view : C.view) ~dispatch ~decline =

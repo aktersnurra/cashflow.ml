@@ -37,7 +37,7 @@ let of_path path =
 
 let title locale = function
   | Home -> Msg.nav_home locale
-  | Advisor _ -> Msg.nav_advisor locale
+  | Advisor _ -> Msg.nav_matters locale
   | Transactions _ -> Msg.nav_transactions locale
   | Inbox -> Msg.nav_inbox locale
   | Accounts | Account _ -> Msg.nav_accounts locale

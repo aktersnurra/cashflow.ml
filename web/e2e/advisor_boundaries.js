@@ -35,7 +35,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   await page.setViewportSize({width:1440,height:1000});
   await page.evaluate(()=>{window.scrollTo(0,0);window.dispatchEvent(new Event('scroll'));});await sleep(100);
   const position=await page.evaluate(()=>window.scrollY);const stamp=await page.evaluate(()=>window.documentStamp);
-  await page.locator('.sidebar a[href="/settings"]').click();await nav('Advisor').click();await sleep(100);
+  await page.locator('.sidebar a[href="/settings"]').click();await nav('Matters').click();await sleep(100);
   assert.equal(await page.evaluate(()=>window.scrollY),position,'document scroll-away survives financial-page visits');
   assert.equal(await page.evaluate(()=>window.documentStamp),stamp);
   assert.equal(await page.locator('textarea.advisor-input').inputValue(),'sensitive draft must die at session boundary');

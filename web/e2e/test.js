@@ -83,11 +83,11 @@ Bokföringsdag;Text;Belopp;Saldo
     await page.screenshot({ path: out + '/07-accounts.png', fullPage: true });
     // Five places in one sidebar: Overview, Advisor, Transactions, Accounts and, at its foot, Settings.
     assert.equal(await page.locator('.tabbar').count(), 0, 'no tab bar');
-    assert.deepEqual(await page.locator('.sidebar a').evaluateAll(as => as.map(a => a.getAttribute('aria-label'))), ['Overview', 'Advisor', 'Transactions', 'Accounts', 'Settings']);
-    for (const [label, file] of [['Overview', '09-home'], ['Settings', '10-settings']]) {
+    assert.deepEqual(await page.locator('.sidebar a').evaluateAll(as => as.map(a => a.getAttribute('aria-label'))), ['Review', 'Matters', 'Transactions', 'Accounts', 'Settings']);
+    for (const [label, file] of [['Review', '09-home'], ['Settings', '10-settings']]) {
       await page.click(`.sidebar >> text=${label}`);
       await page.waitForTimeout(800);
-      if (label === 'Overview') {
+      if (label === 'Review') {
         assert.ok(feedCalls > feedBefore, 'Home reloads when it is shown again');
         // Rows are waiting in the inbox: what needs doing shows under the figures, and the chart of where the money
         // went, still nearly all Uncategorized, waits until they are sorted.
@@ -113,7 +113,7 @@ Bokföringsdag;Text;Belopp;Saldo
     // Forecast: one imported month has no recurring payments yet, so Upcoming says so; a one-off
     // draws the what-if line, and removing it takes the line away.
     // It is part of the Overview now, under what is worth knowing.
-    await page.click('.sidebar >> text=Overview');
+    await page.click('.sidebar >> text=Review');
     await page.locator('.page:visible .ahead-details > summary').click();
     await page.waitForSelector('svg.projection >> visible=true', { timeout: 10000 });
     const kpis = await page.locator('.forecast-kpis .kpi').count();
@@ -165,13 +165,13 @@ Bokföringsdag;Text;Belopp;Saldo
     // Switch to Swedish in Settings; the whole UI follows.
     await page.selectOption('.setting-row select >> nth=0', 'sv');
     await page.click('.table-foot .button.primary');
-    await page.waitForSelector('.sidebar >> text=Översikt', { timeout: 10000 });
+    await page.waitForSelector('.sidebar >> text=Genomgång', { timeout: 10000 });
     await page.getByRole('heading', { name: 'Minne', exact: true }).waitFor({ timeout: 10000 });
     await page.getByRole('heading', { name: 'Automatiska kategorier', exact: true }).waitFor({ timeout: 10000 });
     await page.getByPlaceholder('Till exempel: svara i hela kronor').waitFor();
     // The starter categories follow too, with nothing reloaded: they are stored once, in English,
     // and the browser names them in the reader's language.
-    await page.click('.sidebar >> text=Översikt');
+    await page.click('.sidebar >> text=Genomgång');
     await page.click('.sidebar >> text=Konton');
     await page.waitForSelector('h1 >> text=Konton', { timeout: 10000 });
     await page.locator('.page:visible .row-title', { hasText: /^Mat & hushåll$/ }).first().waitFor({ timeout: 10000 });
@@ -194,10 +194,10 @@ Bokföringsdag;Text;Belopp;Saldo
     assert.equal(await groceriesOption.locator('.row-sub').textContent(), 'Utgiftskategori', 'its kind in Swedish too');
     await page.screenshot({ path: out + '/16-inbox-picker-sv.png' });
     await page.keyboard.press('Escape');
-    await page.click('.sidebar >> text=Översikt');
+    await page.click('.sidebar >> text=Genomgång');
     await page.waitForTimeout(800);
     await page.screenshot({ path: out + '/12-home-sv.png', fullPage: true });
-    await page.click('.sidebar >> text=Översikt');
+    await page.click('.sidebar >> text=Genomgång');
     await page.waitForSelector('.page:visible h2 >> text=Framåt', { timeout: 10000 });
   });
   await run('phone', { width: 390, height: 844 }, async page => {

@@ -695,32 +695,25 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
 }
 /* Before the first message, the greeting and its composer stand in the middle of the page, questions under them. */
 .advisor-intro { margin-bottom: 12px; }
-.advisor-intro h2 { margin: 0 0 4px; font: 400 14px/21px var(--font); }
 .advisor-intro p { margin: 0; }
-.advisor-intro .advisor-mark { display: none; }
-.advisor-starters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 16px; }
-.advisor-starters button { padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: var(--text-2); font: 14px/20px var(--chat-ui); text-align: left; cursor: pointer; }
-.advisor-starters button:hover { background: var(--surface); color: var(--text); }
 .advisor-page .advisor-navigation { gap: 4px; padding: 8px 0; }
 .page.advisor-page { display: flex; flex-direction: column; min-height: calc(100dvh - var(--topbar)); padding-top: 0; }
 .advisor-page > .advisor-outlet { flex: 1; display: flex; flex-direction: column; margin-bottom: 0; padding-top: 0; }
 .advisor-page .advisor-conversation { flex: 1; display: flex; flex-direction: column; }
 .advisor-page .advisor-messages { flex: 1; }
-.advisor-page .advisor-conversation[data-landing] { justify-content: center; }
-.advisor-page .advisor-conversation[data-landing] .advisor-messages { flex: none; }
-.advisor-page .advisor-conversation[data-landing] .advisor-intro { margin-bottom: 24px; text-align: center; }
-.advisor-page .advisor-conversation[data-landing] .advisor-intro h2 { margin-bottom: 8px; font: 600 22px/30px var(--display); letter-spacing: -.01em; text-wrap: balance; }
-.advisor-page .advisor-conversation[data-landing] .advisor-intro .advisor-mark { display: block; margin-bottom: 8px; font-size: 28px; line-height: 1; }
-@media (max-width: 760px) {
-  .advisor-starters { grid-template-columns: minmax(0, 1fr); }
-  .advisor-page .advisor-conversation[data-landing] .advisor-intro h2 { font-size: 20px; line-height: 28px; }
-}
+.advisor-opening { margin: 8px 0 20px; }
+.advisor-opening .advisor-facts { margin: 0 0 20px; font: 500 16px/24px var(--font); text-wrap: pretty; }
+.advisor-opening section + section { margin-top: 20px; }
+.advisor-opening h2 { margin: 0 0 4px; font: 500 12px/16px var(--font); color: var(--text-3); }
+.opening-list { border-top: 1px solid var(--line); }
+.opening-row { display: grid; grid-template-columns: minmax(0, 1fr) auto 16px; align-items: center; gap: 12px; width: 100%; min-height: 36px; padding: 6px 4px; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: var(--text); font: 400 14px/20px var(--font); text-align: left; cursor: pointer; }
+.opening-row:hover { background: var(--surface); }
+.opening-row svg { color: var(--text-3); }
+@media (max-width: 760px) { .opening-row { min-height: 44px; } }
 /* On a computer the composer rests on the foot of the screen; on a phone it is docked (below). */
 @media (min-width: 761px) {
   .page.advisor-page { padding-bottom: 0; }
   .advisor-page .advisor-composer-area { bottom: 0; padding-bottom: 16px; }
-  .advisor-page .advisor-conversation[data-landing] { padding-bottom: 12vh; }
-  .advisor-page .advisor-conversation[data-landing] .advisor-composer-area { position: relative; padding-bottom: 0; }
 }
 .advisor-conversation-actions .button { font: 12px/18px var(--chat-ui); border-color: transparent; background: transparent; color: var(--chat-muted); }
 .advisor-conversation :focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }

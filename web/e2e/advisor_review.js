@@ -38,9 +38,9 @@ assert.ok(['name','route','route-history','enable','enable-pending','mobile','re
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);assert.equal(await page.evaluate(()=>window.maxSources),1);assert.equal(posts,1);
   await page.screenshot({path:'/tmp/task11-review/mobile-first-acceptance.png'});
  } else if(kind==='revoke'||kind==='leave'||kind==='disable'){
-  await nav('Advisor').click();await button('Enable Advisor').click();await composer().waitFor();
+  await nav('Matters').click();await button('Enable Advisor').click();await composer().waitFor();
   await nav('Settings').click();await page.getByRole('switch',{name:'Enable household Advisor',exact:true}).click();await page.getByRole('switch',{name:'Disable household Advisor',exact:true}).waitFor();
-  await nav('Overview').click();const source=page.locator('[data-finding-key]').filter({has:page.getByRole('heading',{name:'Shared bills may run short before payday',exact:true,includeHidden:true})});
+  await nav('Review').click();const source=page.locator('[data-finding-key]').filter({has:page.getByRole('heading',{name:'Shared bills may run short before payday',exact:true,includeHidden:true})});
   await source.locator('summary').click();await source.getByRole('button',{name:'Ask advisor',exact:true}).click();await send('Private completed household source');await page.getByText('first',{exact:true}).waitFor();
   await fetch(base+'/release');await page.getByRole('status').filter({hasText:'Answer completed.'}).waitFor();
   await composer().fill('private household draft');assert.equal(await page.evaluate(()=>window.sources.filter(s=>!s.closedByApp).length),0,'completed thread has no live stream');
@@ -55,7 +55,7 @@ assert.ok(['name','route','route-history','enable','enable-pending','mobile','re
   assert.ok(statuses>before,'ordinary route/version refresh must fetch NEW readiness after cached success');if(kind!=='disable')assert.ok(denials>0,'authorized snapshot must deny completed thread');
   await page.getByText(/Access to this conversation has ended/).waitFor({state:'attached'});
   assert.equal(await page.getByTestId('selected-finding').count(),0);assert.equal(await page.getByText('Private completed household source',{exact:true}).count(),0);
-  await nav('Advisor').click();await composer().waitFor();assert.equal(await composer().inputValue(),'');assert.equal(posts,1);assert.equal((await state()).provider_starts,1);
+  await nav('Matters').click();await composer().waitFor();assert.equal(await composer().inputValue(),'');assert.equal(posts,1);assert.equal((await state()).provider_starts,1);
  } else {
   const shortfall=page.locator('[data-finding-key]').filter({has:page.getByRole('heading',{name:'Bills may run short before payday',exact:true})});
   await shortfall.locator('summary').click();await shortfall.getByRole('button',{name:'Ask advisor',exact:true}).click();await button('Enable Advisor').click();await composer().waitFor();
@@ -64,7 +64,7 @@ assert.ok(['name','route','route-history','enable','enable-pending','mobile','re
    const panel=page.locator('.advisor-history-panel');assert.equal(await panel.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+20,r.y+20));}),true,'inline finding does not clip the fixed private menu');
   }else if(kind==='route-history'){
    await send('Original history conversation');await page.getByText('first',{exact:true}).waitFor();await fetch(base+'/release');await page.getByRole('status').filter({hasText:'Answer completed.'}).waitFor();const original=new URL(page.url()).pathname;
-   await history();await page.getByRole('menuitem',{name:'New conversation',exact:true}).click();await page.getByText('What would you like to understand about your money?',{exact:true}).waitFor();
+   await history();await page.getByRole('menuitem',{name:'New conversation',exact:true}).click();await page.locator('.advisor-opening').waitFor();
    let release,ready,id;const held=new Promise(r=>ready=r);
    await page.route('**/api/advisor/turns',async route=>{const response=await route.fetch();id=(await response.json()).data.ids.conversation_id;release=()=>route.fulfill({response});ready();});
    await send('Deferred different conversation');await until(held);await page.locator('.sidebar a[href="/settings"]').click();
@@ -77,7 +77,7 @@ assert.ok(['name','route','route-history','enable','enable-pending','mobile','re
    await send('Delayed first acceptance');await until(held);await page.locator('.sidebar a[href="/settings"]').click();assert.equal(new URL(page.url()).pathname,'/settings');
    await release();for(let i=0;i<100&&await page.evaluate(()=>window.sources.length)===0;i++)await sleep(20);
    assert.equal(new URL(page.url()).pathname,'/settings','acceptance never redirects temporary financial page');
-   const entries=await page.evaluate(()=>history.length);await nav('Advisor').click();await page.waitForURL(/\/advisor\//,{timeout:4000});
+   const entries=await page.evaluate(()=>history.length);await nav('Matters').click();await page.waitForURL(/\/advisor\//,{timeout:4000});
    assert.equal(await page.evaluate(()=>history.length),entries+1,'explicit return pushes once; deferred acceptance only replaces');assert.equal(posts,1);assert.equal((await state()).provider_starts,1);
   }else{
    let releasePending,readyPending;const pendingHeld=new Promise(r=>readyPending=r);
@@ -87,7 +87,7 @@ assert.ok(['name','route','route-history','enable','enable-pending','mobile','re
    if(kind==='personal-leave'||kind==='personal-leave-error'||kind==='personal-change'){
     // A missing legacy readiness member is unknown, not a confirmed membership revocation.
     const legacy=route=>route.fulfill({status:200,contentType:'application/json',json:{available:true,consent:true}});
-    await page.route('**/api/advisor/status',legacy);await page.locator('.sidebar a[href="/settings"]').click();await nav('Advisor').click();await sleep(100);
+    await page.route('**/api/advisor/status',legacy);await page.locator('.sidebar a[href="/settings"]').click();await nav('Matters').click();await sleep(100);
     assert.equal(await source.evaluate(e=>e===document.querySelector('[data-testid="selected-finding"]')),true,'unknown legacy metadata cannot reset Home');
     await page.unroute('**/api/advisor/status',legacy);
     let oldFeed,feedReady;const feedHeld=new Promise(r=>feedReady=r);
@@ -103,22 +103,22 @@ assert.ok(['name','route','route-history','enable','enable-pending','mobile','re
     assert.equal(await page.getByRole('heading',{name:'Shared bills may run short before payday',exact:true,includeHidden:true}).count(),0,'old household feed gone before session reload completes');
     await freshSession();await page.unroute('**/api/session*',holdSession);
     // Home stays mounted but only loads its figures while it is showing, so return to it for the fresh feed.
-    await nav('Overview').click();
+    await nav('Review').click();
     await page.getByRole('heading',{name:'Groceries is higher than usual',exact:true,includeHidden:true}).waitFor({state:'attached'});
     await oldFeed();await sleep(100);assert.equal(await page.getByRole('heading',{name:'Shared bills may run short before payday',exact:true,includeHidden:true}).count(),0,'old late feed completion inert AFTER fresh Home reactivation');
     assert.equal(await page.getByRole('heading',{name:'Groceries is higher than usual',exact:true,includeHidden:true}).count(),1,'old late error cannot replace the fresh feed');
     await page.unroute('**/api/commands/get_attention_feed',holdFeed);
-    await nav('Advisor').click();await composer().waitFor();assert.equal(await composer().inputValue(),'personal draft survives household enable');
+    await nav('Matters').click();await composer().waitFor();assert.equal(await composer().inputValue(),'personal draft survives household enable');
     assert.equal(await page.getByRole('heading',{name:'Shared bills may run short before payday',exact:true,includeHidden:true}).count(),0);
     assert.equal(await page.evaluate(()=>window.sources.length),count);assert.equal(await page.evaluate(()=>window.sources.filter(s=>!s.closedByApp).length),1);
     assert.equal(posts,1);assert.equal((await state()).provider_starts,1);
    }else{
    await nav('Settings').click();await page.getByRole('switch',{name:'Enable household Advisor',exact:true}).click();await page.getByRole('switch',{name:'Disable household Advisor',exact:true}).waitFor();
-   await nav('Advisor').click();if(kind==='enable-pending'){await releasePending();await page.getByText('first',{exact:true}).waitFor();}await composer().waitFor();assert.equal(await composer().inputValue(),'personal draft survives household enable');
+   await nav('Matters').click();if(kind==='enable-pending'){await releasePending();await page.getByText('first',{exact:true}).waitFor();}await composer().waitFor();assert.equal(await composer().inputValue(),'personal draft survives household enable');
    const expectedCount=count+(kind==='enable-pending'?1:0);
    assert.equal(await source.evaluate(e=>e===document.querySelector('[data-testid="selected-finding"]')),true);assert.equal(await page.evaluate(()=>window.sources.length),expectedCount);assert.equal(await page.evaluate(()=>window.sources.filter(s=>!s.closedByApp).length),1);
    assert.equal(posts,1);assert.equal((await state()).provider_starts,1);assert.equal((await state()).released,false);
-   await nav('Settings').click();await page.getByRole('switch',{name:'Disable household Advisor',exact:true}).click();await page.getByRole('switch',{name:'Enable household Advisor',exact:true}).waitFor();await nav('Advisor').click();
+   await nav('Settings').click();await page.getByRole('switch',{name:'Disable household Advisor',exact:true}).click();await page.getByRole('switch',{name:'Enable household Advisor',exact:true}).waitFor();await nav('Matters').click();
    assert.equal(await composer().inputValue(),'personal draft survives household enable');assert.equal(await source.evaluate(e=>e===document.querySelector('[data-testid="selected-finding"]')),true,'household opt-out alone must not reset personal Home');
    assert.equal(await page.evaluate(()=>window.sources.length),expectedCount);assert.equal(await page.evaluate(()=>window.sources.filter(s=>!s.closedByApp).length),1);assert.equal(posts,1);assert.equal((await state()).provider_starts,1);assert.equal((await state()).producer_closed,false,'same native provider run remains alive after unrelated household enable/disable');
 

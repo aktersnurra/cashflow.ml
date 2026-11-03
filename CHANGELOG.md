@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### The accountant speaks first
+
+The app is modelled on working with an accountant, not on a chat app with some transaction logs. Design:
+`design/superpowers/specs/2026-11-04-accountant-review-design.md`.
+
+- **A conversation opens on the facts.** Where you stand this pay cycle, what needs a decision and what can be looked at,
+  each from a real finding with its figure. The greeting and canned questions are gone. Choosing a finding opens it on
+  the review, under its card; anything else can still be raised in the box below.
+- **Review and Matters.** The sidebar and search say Review ("Genomgång") and Matters ("Ärenden").
+- **A plainer voice.** The advisor keeps its bluntness, the verdict first and bad news once, and drops the Sam Vimes
+  character.
+
+### A quieter look, after Linear
+
+- Near-white and charcoal in place of cream, one accent, Inter bundled so every device matches, smaller headings and
+  tighter rows on a computer. What needs doing is a row with a status dot, not a tinted banner.
+
 ### A sidebar, and one menu on a phone
 
 - **A sidebar.** Overview, Advisor, Transactions and Accounts sit in a compact sidebar with labels, search above them and

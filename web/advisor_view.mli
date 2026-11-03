@@ -22,7 +22,7 @@ val render_body :
   show_source:bool ->
   intro:bool ->
   (** say what the advisor is for, before the first message *)
-  starters:bool ->
+  opening:Virtual_dom.Vdom.Node.t ->
   (** open as a landing, offering questions to send with a click *)
   locale:string ->
   view:Cashflow_advisor_protocol.Client_state.view ->

@@ -56,7 +56,7 @@ const file=process.env.ADVISOR_EVIDENCE_DIR+'/unavailable-history.json';
    await page.locator('.sidebar').getByRole('link',{name:'Settings',exact:true}).click();
    await button('Disable Advisor').click();await button('Disable Advisor').waitFor({state:'detached'});
    const status=await(await context.request.get(base+'/api/advisor/status')).json();assert.equal(status.consent,false);assert.equal(status.available,false);
-   await page.locator('.sidebar').getByRole('link',{name:'Advisor',exact:true}).click();
+   await page.locator('.sidebar').getByRole('link',{name:'Matters',exact:true}).click();
    assert.equal(await page.getByText('Retained until individual opt-out',{exact:true}).count(),0);
    assert.equal(await page.getByText('first',{exact:true}).count(),0);
    assert.equal((await snapshot(retained)).status(),403);
