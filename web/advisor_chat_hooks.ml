@@ -25,6 +25,33 @@ let current_draft (event : #Dom_html.event Js.t) ~fallback =
                   (fun () -> None)
                   (fun input -> Some (Js.to_string input##.value)))))
 
+let clipboard () : Js.Unsafe.any Js.optdef = Js.Unsafe.get (Js.Unsafe.get Dom_html.window "navigator") "clipboard"
+let can_copy () = Js.Optdef.test (clipboard ())
+
+(* The button confirms only once the text is on the clipboard, then goes back to being a copy button. *)
+let copy (event : Dom_html.mouseEvent Js.t) ~text ~label ~copied =
+  Js.Opt.iter event##.currentTarget (fun button ->
+      let promise : Js.Unsafe.any =
+        Js.Unsafe.meth_call (clipboard ()) "writeText" [| Js.Unsafe.inject (Js.string text) |]
+      in
+      let confirm =
+        Js.wrap_callback (fun () ->
+            button##setAttribute (Js.string "data-copied") (Js.string "");
+            button##setAttribute (Js.string "aria-label") (Js.string copied);
+            button##setAttribute (Js.string "title") (Js.string copied);
+            ignore
+              (Dom_html.window##setTimeout
+                 (Js.wrap_callback (fun () ->
+                      button##removeAttribute (Js.string "data-copied");
+                      button##setAttribute (Js.string "aria-label") (Js.string label);
+                      button##setAttribute (Js.string "title") (Js.string label)))
+                 1500.))
+      in
+      ignore
+        (Js.Unsafe.meth_call promise "then"
+           [| Js.Unsafe.inject confirm; Js.Unsafe.inject (Js.wrap_callback (fun () -> ())) |]
+          : Js.Unsafe.any))
+
 (* A page-flow transcript follows its tail only while the reader wants it to.
    A genuinely scrollable embedding still works, without imposing one on the app. *)
 module Follow_input = struct
@@ -69,12 +96,24 @@ module Follow = Vdom.Attr.Hooks.Make (struct
           ignore
             (Js.Unsafe.meth_call Dom_html.window "scrollBy" [| Js.Unsafe.inject 0; Js.Unsafe.inject delta |] : unit)
 
+  (* The way back to the end shows only away from it. The reader's place is not model state: it changes with every
+     scroll, and with every line that arrives while they are reading further up. *)
+  let mark_away state (element : Dom_html.element Js.t) =
+    if state.State.alive && visible element then
+      if distance element > 48 then element##setAttribute (Js.string "data-away") (Js.string "")
+      else element##removeAttribute (Js.string "data-away")
+
   let schedule state element =
-    ignore (Dom_html.window##requestAnimationFrame (Js.wrap_callback (fun _ -> follow state element)))
+    ignore
+      (Dom_html.window##requestAnimationFrame
+         (Js.wrap_callback (fun _ ->
+              follow state element;
+              mark_away state element)))
 
   let init input element =
     let state = { State.input; following = input.Input.following; alive = true; listeners = [] } in
     let changed () =
+      mark_away state element;
       (if state.alive && visible element then
          let following = distance element <= 48 in
          if not (Bool.equal following state.following) then (
@@ -92,16 +131,27 @@ module Follow = Vdom.Attr.Hooks.Make (struct
         (Dom_html.handler (fun _ -> if scroll_box element then changed () else Js._true))
         Js._false
     in
-    state.listeners <- [ window_id; element_id ];
+    let resize_id =
+      Dom_html.addEventListener Dom_html.window Dom_html.Event.resize
+        (Dom_html.handler (fun _ ->
+             mark_away state element;
+             Js._true))
+        Js._false
+    in
+    state.listeners <- [ window_id; element_id; resize_id ];
     state
 
-  let on_mount = `Schedule_animation_frame (fun _ state element -> follow state element)
+  let on_mount =
+    `Schedule_animation_frame
+      (fun _ state element ->
+        follow state element;
+        mark_away state element)
 
   let update ~old_input ~new_input state element =
     state.State.input <- new_input;
     if not (Bool.equal old_input.Input.following new_input.Input.following) then state.following <- new_input.following;
-    if new_input.following && ((not old_input.following) || not (String.equal old_input.revision new_input.revision))
-    then schedule state element
+    let arrived = not (String.equal old_input.revision new_input.revision) in
+    if arrived || (new_input.following && not old_input.following) then schedule state element
 
   let destroy _ state _ =
     state.State.alive <- false;

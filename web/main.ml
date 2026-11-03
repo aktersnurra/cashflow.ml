@@ -127,9 +127,16 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
       (* Only a refused undo means "it changed since"; anything else is a failure to try again. *)
       | Error (C.Not_accepted W.Version_conflict) when String.equal action "undo" -> notify (Msg.advisor_proposal_undo_failed locale)
       | Error _ -> notify (Msg.advisor_proposal_failed locale) in
-  let advisor_turns = let%arr advisor_snapshot and advisor_dispatch and advisor_locale and markdown_nodes and proposal_states and decide in
+  let advisor_can_retry = Bonsai.cutoff (let%arr advisor in Advisor_view.can_retry advisor.view) ~equal:Bool.equal in
+  let chosen_attempts, choose_attempt =
+    Bonsai.state_machine0 ~default_model:String.Map.empty
+      ~apply_action:(fun _ model (turn_id, attempt_id, count) -> Map.set model ~key:turn_id ~data:(attempt_id, count)) graph in
+  let advisor_turns = let%arr advisor_snapshot and advisor_dispatch and advisor_locale and markdown_nodes and proposal_states and decide
+    and advisor_can_retry and chosen_attempts and choose_attempt in
     Advisor_view.render_turns ~locale:advisor_locale ~snapshot:advisor_snapshot
-      ~dispatch:advisor_dispatch ~decided:(Map.find proposal_states) ~decide ~markdown:markdown_nodes in
+      ~dispatch:advisor_dispatch ~decided:(Map.find proposal_states) ~decide ~markdown:markdown_nodes
+      ~can_retry:advisor_can_retry ~chosen_attempts
+      ~choose_attempt:(fun ~turn_id ~attempt_id ~count -> choose_attempt (turn_id, attempt_id, count)) in
   let selected_finding, set_selected_finding = Bonsai.state None graph in
   let selected_scope, set_selected_scope = Bonsai.state W.Personal graph in
   let declined, set_declined = Bonsai.state false graph in
@@ -225,10 +232,8 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
        else match view.status with
        | Some s when s.consent && (Option.is_some view.snapshot || s.available) && (match scope, s.household with W.Personal, _ -> true | Household id, Some h -> h.enabled && String.equal id h.household_id | _ -> false) ->
            [(if Option.is_some selected_finding then Ui.muted (Msg.advisor_historical locale) else Vdom.Node.none);
-            (if Option.is_none view.snapshot then Ui.p (Msg.advisor_empty locale) else Vdom.Node.none);
-            Ui.muted (Msg.advisor_readonly locale);
             Advisor_view.render_body ~attach:(Some desk.attach) ~show_source:(Option.is_none selected_finding) ~turns:advisor_turns
-              ~locale ~view ~dispatch:advisor.dispatch]
+              ~intro:true ~starters:(Option.is_none selected_finding) ~locale ~view ~dispatch:advisor.dispatch]
        | Some s when s.consent && s.available -> [Ui.muted (Msg.advisor_household_off locale); Ui.button (Msg.nav_household locale) (navigate Route.Settings)]
        | _ -> [Advisor_view.consent ~locale ~view ~dispatch:advisor.dispatch ~decline:(set_declined true)]) in
   let access_denied = let%arr advisor in advisor.view.access_denied in

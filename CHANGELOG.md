@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### A better advisor chat
+
+Patterns taken from LibreChat and rebuilt in Bonsai; the streaming dot and progress shimmer are adapted from its MIT
+licensed stylesheet.
+
+- **A landing.** A new conversation opens with its greeting and composer in the middle of the page, and four questions
+  under them that send with a click. On a phone the composer stays docked and the questions sit above it.
+- **The composer stays put.** On a computer it rests at the foot of the screen, however short the conversation.
+- **Progress in the answer.** "Thinking…" and "Checking your numbers…" while there is nothing to read yet, then a dot
+  after the last words as they arrive. How an answer ended shows on the answer; screen readers still get it from the
+  status region.
+- **Tools under the answer.** Copy, and Retry when an answer stopped or failed. A retry no longer stacks under the
+  answer before it: a 2/2 switcher moves between the attempts of a turn.
+- **A way back.** A round button over the send button returns to the latest message, shown only away from it.
+- **Quieter evidence.** What an answer looked at is a line that opens, keeping its "Check data" warning. Proposals stay
+  cards, as they ask for a decision.
+
 ### Your accountant's briefing
 
 - **A calmer Overview.** The month is the page's title (the year only when it isn't this one); tapping it lists the

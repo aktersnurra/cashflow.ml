@@ -85,7 +85,7 @@ const markdown = '# A plan for February\n\nSet aside **6,250.00 SEK** each month
   await fetch(base+'/release');
   await page.getByRole('status').filter({hasText:'Answer completed.'}).waitFor();
   assert.equal(await page.evaluate(()=>scrollY),scroll,'actual incoming native text must not steal manual document scroll');
-  await page.getByRole('button',{name:'Follow new output',exact:true}).click();
+  await page.getByRole('button',{name:'Scroll to latest',exact:true}).click();
   await page.waitForFunction(()=>scrollY>100);
   await page.evaluate(()=>window.scrollTo(0,0));
   await composer.fill('');

@@ -626,12 +626,19 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
 .advisor-table th, .advisor-table td { border-bottom: 1px solid var(--line-strong); padding: 10px 12px; text-align: left; overflow-wrap: anywhere; }
 .advisor-table th { background: var(--chat-bubble); font-weight: 600; }
 .advisor-table :is(th, td):last-child { text-align: right; }
-.advisor-evidence { margin: 16px 0; width: fit-content; max-width: 100%; border: 1px solid var(--line-strong); border-radius: 8px; font: 13px/21px var(--chat-ui); background: var(--chat-composer); }
-.advisor-evidence summary { cursor: pointer; padding: 10px 14px; color: var(--chat-muted); overflow-wrap: anywhere; }
-.advisor-evidence summary::marker { color: var(--chat-accent); }
-.advisor-evidence-warning { display: inline-block; margin-left: 10px; color: var(--warning); font-size: 11px; }
-.advisor-evidence[open] { width: 100%; }
-.advisor-evidence-body { padding: 0 16px 14px; }
+/* What an answer looked at is a quiet line that opens; what it asks the person to decide stays a card. */
+.advisor-evidence { margin: 8px 0; max-width: 100%; font: 13px/21px var(--chat-ui); }
+.advisor-evidence summary { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; width: fit-content; max-width: 100%; list-style: none; cursor: pointer; padding: 2px 0; color: var(--chat-muted); overflow-wrap: anywhere; }
+.advisor-evidence summary::-webkit-details-marker { display: none; }
+.advisor-evidence summary:hover { color: var(--chat-ink); }
+.advisor-evidence-chevron { display: inline-grid; transition: transform .15s; }
+.advisor-evidence[open] .advisor-evidence-chevron { transform: rotate(180deg); }
+.advisor-evidence-warning { color: var(--warning); font-size: 12px; }
+.advisor-evidence-body { margin: 4px 0 12px 1px; padding: 2px 0 2px 14px; border-left: 1px solid var(--line-strong); }
+.advisor-evidence[data-proposal] { margin: 16px 0; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--chat-composer); }
+.advisor-evidence[data-proposal] summary { padding: 10px 14px; }
+.advisor-evidence[data-proposal] .advisor-evidence-chevron { display: none; }
+.advisor-evidence[data-proposal] .advisor-evidence-body { margin: 0; padding: 0 16px 14px; border-left: 0; }
 .advisor-evidence time { display: block; color: var(--chat-muted); font-size: 12px; margin-bottom: 10px; }
 .advisor-facts { margin: 0; }
 .advisor-fact { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 20px; padding: 5px 0; border-bottom: 1px solid var(--line); }
@@ -643,6 +650,10 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
 .advisor-proposal-hint { margin: 0 0 8px; color: var(--chat-muted); }
 .advisor-proposal .actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .advisor-composer-area { position: sticky; bottom: 14px; z-index: 2; padding-top: 12px; background: var(--chat-paper); }
+/* The way back to the end of the conversation sits over the send button, and only while away from the end. */
+.advisor-scroll-latest { display: none; position: absolute; right: 8px; bottom: calc(100% + 4px); width: 36px; height: 36px; padding: 0; place-items: center; border: 1px solid var(--line-strong); border-radius: 50%; background: var(--panel); color: var(--text-2); cursor: pointer; }
+.advisor-scroll-latest:hover { color: var(--text); border-color: var(--text-3); }
+.advisor-conversation[data-away] .advisor-scroll-latest { display: grid; }
 .advisor-composer { display: grid; grid-template-columns: 1fr auto; align-items: end; border: 1px solid var(--line-strong); border-radius: 18px; padding: 6px 8px 6px 6px; background: var(--chat-composer); }
 .advisor-composer:focus-within { border-color: var(--focus); }
 .advisor-conversation .advisor-input { display: block; width: 100%; min-height: 42px; max-height: 240px; resize: none; margin: 0;
@@ -665,7 +676,68 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
 .advisor-send:not(:disabled):hover { opacity: .85; }
 .advisor-status, .advisor-attempt-status { font: 12px/20px var(--chat-ui); color: var(--chat-muted); margin: 8px 4px 0; }
 .advisor-status:empty { display: none; }
+.advisor-status-quiet { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .advisor-conversation-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; padding: 12px 0 4px; }
+.advisor-conversation-actions:empty { display: none; }
+/* Under an answer: the quiet tools, and on a computer those of earlier answers wait for the pointer. */
+.advisor-attempt-status { margin-inline: 0; }
+.advisor-answer-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; min-height: 28px; margin: 8px 0 0 -6px; color: var(--chat-muted); font: 13px/20px var(--chat-ui); }
+.advisor-action { display: inline-grid; place-items: center; min-width: 28px; height: 28px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.advisor-action:not(:disabled):hover { background: var(--surface); color: var(--chat-ink); }
+.advisor-action:disabled { opacity: .4; cursor: default; }
+.advisor-action-text { display: inline-flex; gap: 6px; padding: 0 8px 0 6px; color: var(--chat-ink); }
+.advisor-attempts { display: inline-flex; align-items: center; font-variant-numeric: tabular-nums; }
+.advisor-icon-swap { display: inline-grid; }
+.advisor-icon-swap > span { display: grid; grid-area: 1 / 1; transition: opacity .2s ease-in-out, transform .2s ease-in-out; }
+.advisor-icon-swap [data-icon=check], [data-copied] .advisor-icon-swap [data-icon=copy] { opacity: 0; transform: scale(.25); }
+[data-copied] .advisor-icon-swap [data-icon=check] { opacity: 1; transform: none; }
+@media (hover: hover) {
+  .advisor-turn:not(:last-child) .advisor-answer-actions { opacity: 0; transition: opacity .12s; }
+  .advisor-turn:not(:last-child):hover .advisor-answer-actions, .advisor-turn:not(:last-child) .advisor-answer-actions:focus-within { opacity: 1; }
+}
+/* A running answer's progress and streaming dot, adapted from LibreChat, (c) LibreChat, MIT licence:
+   https://github.com/danny-avila/LibreChat/blob/main/LICENSE */
+.advisor-progress { display: inline-block; margin: 0; font: 14px/22px var(--chat-ui); color: var(--chat-muted);
+  background: linear-gradient(90deg, var(--chat-muted) 25%, var(--chat-ink) 50%, var(--chat-muted) 75%) 0 0 / 200% 100%;
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; animation: advisor-shimmer 4s linear infinite; }
+@keyframes advisor-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+.advisor-answer[data-streaming] > .advisor-prose:last-child :is(.advisor-markdown, .advisor-markdown > div) > :not(ul, ol, pre, div, hr):last-child::after,
+.advisor-answer[data-streaming] > .advisor-prose:last-child :is(.advisor-markdown, .advisor-markdown > div) > :is(ul, ol):last-child > li:last-child::after {
+  content: ""; display: inline-block; width: .6em; height: .6em; margin-inline-start: .3em; border-radius: 50%; vertical-align: baseline; background: currentColor; animation: advisor-dot 1.5s ease-in-out infinite; }
+@keyframes advisor-dot { 50% { opacity: .3; } }
+@media (prefers-reduced-motion: reduce) {
+  .advisor-progress { background: none; -webkit-text-fill-color: currentColor; animation: none; }
+  .advisor-answer[data-streaming] .advisor-markdown ::after { animation: none; }
+  .advisor-icon-swap > span, .advisor-evidence-chevron { transition: none; }
+}
+/* Before the first message, the greeting and its composer stand in the middle of the page, questions under them. */
+.advisor-intro { margin-bottom: 12px; }
+.advisor-intro h2 { margin: 0 0 4px; font: 400 14px/21px var(--font); }
+.advisor-intro p { margin: 0; }
+.advisor-intro .advisor-mark { display: none; }
+.advisor-starters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 16px; }
+.advisor-starters button { padding: 10px 16px; border: 0; border-radius: 16px; background: var(--surface); color: var(--text-2); font: 14px/20px var(--chat-ui); text-align: left; cursor: pointer; }
+.advisor-starters button:hover { background: var(--surface-2); color: var(--text); }
+.advisor-page { display: flex; flex-direction: column; min-height: calc(100dvh - var(--topbar)); }
+.advisor-page > .advisor-outlet { flex: 1; display: flex; flex-direction: column; margin-bottom: 0; }
+.advisor-page .advisor-conversation { flex: 1; display: flex; flex-direction: column; }
+.advisor-page .advisor-messages { flex: 1; }
+.advisor-page .advisor-conversation[data-landing] { justify-content: center; }
+.advisor-page .advisor-conversation[data-landing] .advisor-messages { flex: none; }
+.advisor-page .advisor-conversation[data-landing] .advisor-intro { margin-bottom: 24px; text-align: center; }
+.advisor-page .advisor-conversation[data-landing] .advisor-intro h2 { margin-bottom: 8px; font: 600 28px/36px var(--display); letter-spacing: -.01em; text-wrap: balance; }
+.advisor-page .advisor-conversation[data-landing] .advisor-intro .advisor-mark { display: block; margin-bottom: 8px; font-size: 28px; line-height: 1; }
+@media (max-width: 760px) {
+  .advisor-starters { grid-template-columns: minmax(0, 1fr); }
+  .advisor-page .advisor-conversation[data-landing] .advisor-intro h2 { font-size: 20px; line-height: 28px; }
+}
+/* On a computer the composer rests on the foot of the screen; on a phone it is docked (below). */
+@media (min-width: 761px) {
+  .advisor-page { padding-bottom: 0; }
+  .advisor-page .advisor-composer-area { bottom: 0; padding-bottom: 16px; }
+  .advisor-page .advisor-conversation[data-landing] { padding-bottom: 12vh; }
+  .advisor-page .advisor-conversation[data-landing] .advisor-composer-area { position: relative; padding-bottom: 0; }
+}
 .advisor-conversation-actions .button { font: 12px/18px var(--chat-ui); border-color: transparent; background: transparent; color: var(--chat-muted); }
 .advisor-conversation :focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
 .advisor-conversation .advisor-input:focus-visible { outline: none; }
