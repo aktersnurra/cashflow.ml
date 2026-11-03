@@ -95,7 +95,8 @@ module Menu = Vdom.Attr.Hooks.Make (struct
     let pointer = Dom_html.addEventListener Dom_html.document (Dom_html.Event.make "pointerdown") (Dom_html.handler outside) Js._false in
     let focus_listener = Dom_html.addEventListener Dom_html.document (Dom_html.Event.make "focusin") (Dom_html.handler outside) Js._false in
     let scroll = Dom_html.addEventListener Dom_html.window Dom_html.Event.scroll
-      (Dom_html.handler (fun _ -> if state.alive then state.input.close false; Js._true)) Js._false in
+      (* A phone's sheet covers the page and is closed by its backdrop; a swipe that pans the page under it is not a request to close. *)
+      (Dom_html.handler (fun _ -> if state.alive && not (is_mobile ()) then state.input.close false; Js._true)) Js._false in
     let resize = Dom_html.addEventListener Dom_html.window Dom_html.Event.resize
       (Dom_html.handler (fun _ -> place state element; Js._true)) Js._false in
     let keyboard = Dom_html.addEventListener element Dom_html.Event.keydown (Dom_html.handler (fun event ->
