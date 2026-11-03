@@ -490,11 +490,6 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
         (* What was handed over shows where the page starts; the box waits at its foot. *)
         (* What is ahead follows what needs doing, for the current period only. *)
         let ahead = if offset = 0 then Ui.div ~cls:"ahead" [forecast; goals] else Vdom.Node.none in
-        (* The rest of the books, for when they are wanted: every transaction, and the accounts. *)
-        let books =
-          let go r label = Vdom.Node.a ~attrs:[Vdom.Attr.href (Route.to_path r); Vdom.Attr.on_click (fun _ -> Effect.Many [Effect.Prevent_default; navigate r])] [Ui.text label] in
-          Ui.div ~cls:"books-links"
-            [go (Route.Transactions { offset = 0; category = None }) (Msg.overview_all_transactions locale); Ui.span [Ui.text "·"]; go Route.Accounts (Msg.nav_accounts locale)] in
         (* While in a conversation under a card, its composer is the box: the desk steps aside. Back on the
            Overview, the desk is there for the next question. *)
         let in_briefing = match selected_finding with Some k -> String.is_prefix k ~prefix:"question:" | None -> false in
@@ -509,6 +504,6 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
          Ui.div ~cls:"overview-cols"
            [ Ui.div ~cls:"overview-main" [slot ~name:"slot-body" body; slot ~name:"slot-attention" attention; slot ~name:"slot-briefing" briefing_view; slot ~name:"slot-flow" flow_view];
              Ui.div ~cls:"overview-side" [ahead] ];
-         books; slot box]);
+         slot box]);
      (if standalone then desk.files else Vdom.Node.none);
      (if standalone then outlet else Vdom.Node.none)]

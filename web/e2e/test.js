@@ -41,7 +41,7 @@ Bokföringsdag;Text;Belopp;Saldo
     await page.screenshot({ path: out + '/01-home-empty.png' });
     // Open a checking account through the form.
     // One page: the accounts are a link at the foot of the Overview.
-    await page.click('.books-links >> text=Accounts');
+    await page.click('.sidebar >> text=Accounts');
     await page.click('text=Open account');
     await page.fill('.sheet input >> nth=0', 'Lönekonto');
     await page.click('.sheet .button.primary');
@@ -81,12 +81,11 @@ Bokföringsdag;Text;Belopp;Saldo
     await page.keyboard.press('Enter');
     await page.waitForSelector('h1 >> text=Accounts', { timeout: 10000 });
     await page.screenshot({ path: out + '/07-accounts.png', fullPage: true });
-    // Four places: Overview, Advisor, Money and Settings (the household among its sections).
-    // One page: a bar on top leads back to the Overview, to the advisor and to Settings; nothing else to navigate.
-    assert.equal(await page.locator('.sidebar, .tabbar').count(), 0, 'no sidebar or tab bar');
-    assert.deepEqual(await page.locator('.topbar a').evaluateAll(as => as.map(a => a.getAttribute('aria-label'))), ['Overview', 'Advisor', 'Settings']);
+    // Five places in one sidebar: Overview, Advisor, Transactions, Accounts and, at its foot, Settings.
+    assert.equal(await page.locator('.tabbar').count(), 0, 'no tab bar');
+    assert.deepEqual(await page.locator('.sidebar a').evaluateAll(as => as.map(a => a.getAttribute('aria-label'))), ['Overview', 'Advisor', 'Transactions', 'Accounts', 'Settings']);
     for (const [label, file] of [['Overview', '09-home'], ['Settings', '10-settings']]) {
-      await page.click(`.topbar >> text=${label}`);
+      await page.click(`.sidebar >> text=${label}`);
       await page.waitForTimeout(800);
       if (label === 'Overview') {
         assert.ok(feedCalls > feedBefore, 'Home reloads when it is shown again');
@@ -114,7 +113,7 @@ Bokföringsdag;Text;Belopp;Saldo
     // Forecast: one imported month has no recurring payments yet, so Upcoming says so; a one-off
     // draws the what-if line, and removing it takes the line away.
     // It is part of the Overview now, under what is worth knowing.
-    await page.click('.topbar >> text=Overview');
+    await page.click('.sidebar >> text=Overview');
     await page.locator('.page:visible .ahead-details > summary').click();
     await page.waitForSelector('svg.projection >> visible=true', { timeout: 10000 });
     const kpis = await page.locator('.forecast-kpis .kpi').count();
@@ -135,7 +134,7 @@ Bokföringsdag;Text;Belopp;Saldo
     await page.click('.what-if .chip >> text=Sofa');
     await page.waitForSelector('svg.projection .line.what-if', { state: 'detached', timeout: 10000 });
     // Advisor memory: notes the user writes are added, edited and forgotten from Settings.
-    await page.click('.topbar >> text=Settings');
+    await page.click('.sidebar >> text=Settings');
     const noteInput = page.getByPlaceholder('For example: answer in whole kronor');
     await noteInput.waitFor({ timeout: 10000 });
     await page.getByText('No notes yet.').waitFor();
@@ -166,14 +165,14 @@ Bokföringsdag;Text;Belopp;Saldo
     // Switch to Swedish in Settings; the whole UI follows.
     await page.selectOption('.setting-row select >> nth=0', 'sv');
     await page.click('.table-foot .button.primary');
-    await page.waitForSelector('.topbar >> text=Översikt', { timeout: 10000 });
+    await page.waitForSelector('.sidebar >> text=Översikt', { timeout: 10000 });
     await page.getByRole('heading', { name: 'Minne', exact: true }).waitFor({ timeout: 10000 });
     await page.getByRole('heading', { name: 'Automatiska kategorier', exact: true }).waitFor({ timeout: 10000 });
     await page.getByPlaceholder('Till exempel: svara i hela kronor').waitFor();
     // The starter categories follow too, with nothing reloaded: they are stored once, in English,
     // and the browser names them in the reader's language.
-    await page.click('.topbar >> text=Översikt');
-    await page.click('.page:visible .books-links >> text=Konton');
+    await page.click('.sidebar >> text=Översikt');
+    await page.click('.sidebar >> text=Konton');
     await page.waitForSelector('h1 >> text=Konton', { timeout: 10000 });
     await page.locator('.page:visible .row-title', { hasText: /^Mat & hushåll$/ }).first().waitFor({ timeout: 10000 });
     // Categories nothing has moved through yet wait, folded, under one line.
@@ -195,10 +194,10 @@ Bokföringsdag;Text;Belopp;Saldo
     assert.equal(await groceriesOption.locator('.row-sub').textContent(), 'Utgiftskategori', 'its kind in Swedish too');
     await page.screenshot({ path: out + '/16-inbox-picker-sv.png' });
     await page.keyboard.press('Escape');
-    await page.click('.topbar >> text=Översikt');
+    await page.click('.sidebar >> text=Översikt');
     await page.waitForTimeout(800);
     await page.screenshot({ path: out + '/12-home-sv.png', fullPage: true });
-    await page.click('.topbar >> text=Översikt');
+    await page.click('.sidebar >> text=Översikt');
     await page.waitForSelector('.page:visible h2 >> text=Framåt', { timeout: 10000 });
   });
   await run('phone', { width: 390, height: 844 }, async page => {
@@ -237,7 +236,8 @@ Bokföringsdag;Text;Belopp;Saldo
     await page.waitForSelector('h1 >> text=Sparkonto', { timeout: 10000 });
     await page.screenshot({ path: out + '/23-phone-account.png', fullPage: true });
     // A statement for an account it knows is just filed: no preview, no button.
-    await page.click('.topbar a[href="/"]');
+    await page.click('.topbar .menu-button');
+    await page.click('.sidebar a[href="/"]');
     let previews = 0;
     const seen = [];
     page.on('request', r => { if (r.url().includes('_statement')) seen.push(r.url().split('/').pop() + ' ' + (r.postData() || '').replace(/"content[^,]*,/, '').slice(0, 160)); if (r.url().includes('import_statement') && !(r.postData() || '').includes('"confirm":true')) previews++; });
@@ -255,10 +255,6 @@ Bokföringsdag;Text;Belopp;Saldo
     await page.goto(base + '/transactions');
     await page.locator('.page:visible .button', { hasText: 'Lägg till' }).first().click();
     await page.waitForSelector('.add-form', { timeout: 10000 });
-    await page.waitForSelector('.section-nav');
-    const strip = await page.locator('.section-nav').boundingBox();
-    assert.ok(strip.x >= 0 && strip.width <= 390, 'the section strip fits the phone width');
-    assert.ok((await page.locator('.section-nav a').first().boundingBox()).x >= 16, 'the strip keeps the page gutter');
     // A phone has no Escape key: a tap above the category sheet closes it, leaving the row to review.
     await page.goto(base + '/inbox');
     const rows = page.locator('.page:visible .list .row');

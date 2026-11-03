@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### A sidebar, and one menu on a phone
+
+- **A sidebar.** Overview, Advisor, Transactions and Accounts sit in a compact sidebar with labels, search above them and
+  Settings at the foot. This replaces "One page": the bar of icons, the strip above Transactions and the links at the
+  foot of the Overview are gone, as the sidebar leads to all of them.
+- **One menu on a phone.** One row with one menu button, which opens the same sidebar as a drawer; in a conversation the
+  chat's own header is that row. Escape, a tap beside it or choosing a page closes it.
+
 ### A better advisor chat
 
 Patterns taken from LibreChat and rebuilt in Bonsai; the streaming dot and progress shimmer are adapted from its MIT

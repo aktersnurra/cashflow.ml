@@ -44,18 +44,9 @@ let title locale = function
   | Settings -> Msg.nav_settings locale
   | Add -> Msg.nav_add locale
 
-(* Money is the one section with more than one page: a strip above it switches between transactions and
-   accounts. Each keeps its own address. *)
-type section = Money [@@deriving equal]
-
-let section = function Transactions _ | Inbox | Accounts | Account _ | Add -> Some Money | Home | Advisor _ | Settings -> None
-let section_entry = function Money -> Transactions { offset = 0; category = None }
-let section_pages = function Money -> [ Transactions { offset = 0; category = None }; Accounts ]
-
-(* The page a strip highlights: the inbox and adding by hand are part of Transactions, an account part of Accounts. *)
-let section_page = function
+(* The sidebar's place for a page: the inbox and adding by hand are part of Transactions, an account part of Accounts. *)
+let nav_page = function
   | Inbox | Add | Transactions _ -> Transactions { offset = 0; category = None }
   | Account _ -> Accounts
   | route -> route
 
-let section_title locale = function Money -> Msg.nav_money locale

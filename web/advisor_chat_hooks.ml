@@ -131,9 +131,11 @@ module Follow = Vdom.Attr.Hooks.Make (struct
         (Dom_html.handler (fun _ -> if scroll_box element then changed () else Js._true))
         Js._false
     in
+    (* A reader at the end stays there when the window, or a phone's keyboard, changes the room. *)
     let resize_id =
       Dom_html.addEventListener Dom_html.window Dom_html.Event.resize
         (Dom_html.handler (fun _ ->
+             follow state element;
              mark_away state element;
              Js._true))
         Js._false

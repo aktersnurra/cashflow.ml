@@ -3,13 +3,13 @@
 
 app.name = cashflow.ml
 nav.home = Overview
+nav.menu = Menu
 nav.inbox = Inbox
 nav.accounts = Accounts
 nav.budgets = Budgets
 nav.household = Household
 nav.insights = Insights
 nav.settings = Settings
-nav.money = Money
 nav.plan = Plan
 nav.add = Add
 nav.cashflow = Cash flow
@@ -757,7 +757,6 @@ card.questions.row = {$rows} payments · {$amount}
 card.questions.other = Something else
 card.autofiled.title = Filed {$filed} transactions for you
 card.autofiled.body = {$guessed} small ones are best guesses; change any under Money.
-overview.all_transactions = All transactions
 ahead.title = Ahead
 ahead.lowest = Lowest · {$date}
 budgets.nothing_yet = Nothing set aside yet

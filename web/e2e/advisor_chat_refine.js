@@ -105,12 +105,72 @@ const starter = 'How much can I spend until payday?';
 
   // Scroll to latest only shows away from the end of the conversation.
   assert.equal(await button('Scroll to latest').isVisible(),false,'at the end there is nowhere to go');
-  await page.setViewportSize({width:1440,height:240});
+  await page.setViewportSize({width:1440,height:180});
+  await page.waitForTimeout(200); // a reader at the end is kept there as the window shrinks
   await page.evaluate(()=>window.scrollTo(0,0));
   await button('Scroll to latest').waitFor();
   await button('Scroll to latest').click();
   await page.waitForFunction(()=>scrollY>0);
   await page.setViewportSize({width:1440,height:900});
+
+  // A computer has one sidebar with labels; nothing else navigates.
+  const side = name => page.locator('.sidebar').getByRole('link',{name,exact:true});
+  const here = async (name,url) => {await page.waitForURL(url);await page.locator(`.sidebar a[aria-current="page"][aria-label="${name}"]`).waitFor({timeout:4000});};
+  assert.deepEqual(await page.locator('.sidebar a').evaluateAll(as=>as.map(a=>a.getAttribute('aria-label'))),['Overview','Advisor','Transactions','Accounts','Settings']);
+  assert.equal(await page.locator('.topbar').isVisible(),false,'no bar above the page');
+  assert.equal(await page.locator('.menu-button:visible').count(),0,'no menu button beside a sidebar');
+  await here('Advisor',/\/advisor/);
+  await page.evaluate(()=>window.scrollTo(0,document.documentElement.scrollHeight));
+  assert.equal((await page.locator('.sidebar').boundingBox()).y,0,'the sidebar stays when the page scrolls');
+  await page.screenshot({path:evidence+'/chat-header.png'});
+  await side('Transactions').click();await here('Transactions',/\/transactions/);
+  await page.screenshot({path:evidence+'/transactions-sidebar.png'});
+  await side('Accounts').click();await here('Accounts',/\/accounts/);
+  await side('Settings').click();await here('Settings',/\/settings/);
+  await page.locator('.sidebar').getByRole('button',{name:'Search',exact:true}).click();
+  await page.getByPlaceholder('Type a command or search…').waitFor();
+  await page.keyboard.press('Escape');
+  await side('Overview').click();await here('Overview',/\/$/);
+  await page.locator('.page:visible [data-finding-key], .page:visible .overview-hero').first().waitFor();
+  await page.screenshot({path:evidence+'/home-sidebar.png'});
+
+  // A phone has one row and one menu, which opens the same sidebar as a drawer.
+  const oneMenu = async target => {
+   const middle = async locator => {const box = await locator.boundingBox();return box.y+box.height/2;};
+   const header = target.locator('.advisor-navigation');
+   const menu = header.getByRole('button',{name:'Menu',exact:true});
+   const sidebar = target.locator('.sidebar');
+   const closed = () => sidebar.waitFor({state:'hidden'});
+   await menu.waitFor();
+   await closed();
+   assert.equal(await target.locator('.topbar').isVisible(),false,'no second row above the chat');
+   assert.ok(await header.locator('button:visible, a:visible').count()<=3,'menu, title and more, nothing else');
+   assert.ok(Math.abs(await middle(menu)-await middle(target.locator('.advisor-title-button')))<=12,'menu and title share a row');
+   assert.equal(await menu.getAttribute('aria-expanded'),'false');
+   await menu.click();
+   const settings = sidebar.getByRole('link',{name:'Settings',exact:true});
+   await settings.waitFor();
+   await target.waitForTimeout(250);
+   assert.equal(await menu.getAttribute('aria-expanded'),'true');
+   const drawer = await sidebar.boundingBox();
+   assert.ok(drawer.x===0&&drawer.width<=320,'the drawer sits on the screen, at its left');
+   assert.ok(await settings.evaluate(el=>{const r=el.getBoundingClientRect();return r.bottom<=innerHeight;}),'Settings is on the screen');
+   await target.screenshot({path:evidence+'/phone-drawer.png'});
+   assert.equal(await target.evaluate(()=>document.activeElement?.closest('.sidebar')!==null),true,'focus moves into the drawer');
+   await target.keyboard.press('Escape');await closed();
+   assert.equal(await menu.evaluate(el=>el===document.activeElement),true,'focus returns to the menu');
+   await menu.click();await settings.waitFor();
+   await target.mouse.click(370,500);await closed();
+   await menu.click();await settings.click();
+   await target.waitForURL(/\/settings/);await closed();
+   const bar = target.locator('.topbar');
+   await bar.getByRole('button',{name:'Menu',exact:true}).waitFor();
+   assert.equal(await bar.locator('button:visible, a:visible').count(),1,'other pages show the menu and nothing else');
+   await target.screenshot({path:evidence+'/phone-settings.png'});
+   await bar.getByRole('button',{name:'Menu',exact:true}).click();
+   await sidebar.getByRole('link',{name:'Advisor',exact:true}).click();
+   await target.waitForURL(/\/advisor/);await closed();
+  };
 
   // A phone keeps the composer docked and the starters above it, with nothing wider than the screen.
   const phone = await browser.newContext({viewport:{width:390,height:844},hasTouch:true,isMobile:true});
@@ -128,6 +188,7 @@ const starter = 'How much can I spend until payday?';
   assert.ok(last.y+last.height<=small_area.y,'starters end above the docked composer');
   assert.equal(await small.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'nothing wider than the screen');
   await small.screenshot({path:evidence+'/phone-landing.png'});
+  await oneMenu(small);
 
   assert.deepEqual(errors,[]);
   console.log('PASS the advisor chat: landing, starters, pinned composer, progress, actions, attempts');
