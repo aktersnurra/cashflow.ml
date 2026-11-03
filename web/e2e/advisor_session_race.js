@@ -36,8 +36,11 @@ const base='http://127.0.0.1:18197';const sleep=ms=>new Promise(r=>setTimeout(r,
  ];
  for(const c of cases){
   const intercept=route=>route.fulfill({status:200,contentType:'application/json',json:c.value});
-  await p.route('**/api/advisor/status',intercept);await p.goto(base+'/settings');await sleep(200);
-  const toggle=p.getByRole('switch',{name:'Enable household Advisor',exact:true});assert.equal(await toggle.count(),c.switch?1:0);
+  await p.route('**/api/advisor/status',intercept);await p.goto(base+'/settings');
+  const toggle=p.getByRole('switch',{name:'Enable household Advisor',exact:true});
+  // A switch that must appear gets time to; only one that must stay away needs the settled page and a wait.
+  if(c.switch)await toggle.waitFor({timeout:5000});else{await p.getByRole('heading',{name:'Settings',exact:true}).waitFor();await sleep(200);}
+  assert.equal(await toggle.count(),c.switch?1:0);
   if(c.switch)assert.equal(await toggle.getAttribute('aria-checked'),'false');
   assert.equal(await p.getByRole('switch',{name:'Disable household Advisor',exact:true}).count(),0);
   await p.unroute('**/api/advisor/status',intercept);
