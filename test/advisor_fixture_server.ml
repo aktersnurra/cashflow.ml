@@ -450,7 +450,7 @@ let () =
                 | target when product && not (String.starts_with ~prefix:"/api/" target || String.starts_with ~prefix:"/auth/" target) ->
                     let path = List.hd (String.split_on_char '?' target) in
                     let valid = List.mem path ["/"; "/advisor"; "/cashflow"; "/transactions"; "/inbox"; "/accounts"; "/budgets"; "/forecast"; "/household"; "/insights"; "/settings"; "/add";
-                      "/assets/main.bc.js"; "/assets/style.css"; "/assets/manifest.webmanifest"; "/assets/icon.svg"]
+                      "/assets/main.bc.js"; "/assets/style.css"; "/assets/inter-latin-wght.woff2"; "/assets/manifest.webmanifest"; "/assets/icon.svg"]
                       || (match String.split_on_char '/' path with [""; ("advisor" | "accounts"); id] ->
                         Option.is_some (Cashflow_core.Account_id.of_string id)
                         | [""; "transactions"; offset] -> Option.is_some (int_of_string_opt offset)

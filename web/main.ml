@@ -23,11 +23,13 @@ let advisor_currency session scope : W.currency option =
         (match J.field "scale" metadata with `Int scale when scale >= 0 && scale <= 4 -> Some {W.code; scale} | _ -> None)
     | _ -> None
 
-let focus_advisor = Effect.of_thunk (fun () ->
+let focus_next_frame selector = Effect.of_thunk (fun () ->
   ignore (Dom_html.window##requestAnimationFrame (Js.wrap_callback (fun _ ->
-    match Js.Opt.to_option (Dom_html.document##querySelector (Js.string ".advisor-conversation textarea, .advisor-consent button")) with
+    match Js.Opt.to_option (Dom_html.document##querySelector (Js.string selector)) with
     | Some el -> ignore (Js.Unsafe.meth_call el "focus" [|Js.Unsafe.inject (Js.Unsafe.obj [|"preventScroll", Js.Unsafe.inject Js._true|])|])
     | None -> ()))))
+
+let focus_advisor = focus_next_frame ".advisor-conversation textarea, .advisor-consent button"
 
 let session_effect = Effect.of_deferred_thunk (fun () -> Api.session ~publish_csrf:false ())
 
@@ -38,10 +40,9 @@ let navigate_to set_route route =
     [ Effect.of_thunk (fun () -> Dom_html.window##.history##pushState Js.null (Js.string "") (Js.some (Js.string (Route.to_path route))));
       set_route route ]
 
-(* There is one page, the Overview: everything else is reached from it. A slim bar on top leads back to it, to
-   the advisor's conversations and to Settings, with search (the palette) beside them; transactions and accounts
-   open from where they come up (a category, an account, a question) or from search. *)
-let top_items = Route.[ (Advisor None, None); (Settings, None) ]
+(* The sidebar's places, with Settings at its foot and search (the palette) above them. On a phone the same
+   sidebar opens as a drawer from one menu button. *)
+let nav_items = Route.[ Home; Advisor None; Transactions { offset = 0; category = None }; Accounts ]
 
 let icon route =
   let name : Feather_icon.t =
@@ -127,9 +128,16 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
       (* Only a refused undo means "it changed since"; anything else is a failure to try again. *)
       | Error (C.Not_accepted W.Version_conflict) when String.equal action "undo" -> notify (Msg.advisor_proposal_undo_failed locale)
       | Error _ -> notify (Msg.advisor_proposal_failed locale) in
-  let advisor_turns = let%arr advisor_snapshot and advisor_dispatch and advisor_locale and markdown_nodes and proposal_states and decide in
+  let advisor_can_retry = Bonsai.cutoff (let%arr advisor in Advisor_view.can_retry advisor.view) ~equal:Bool.equal in
+  let chosen_attempts, choose_attempt =
+    Bonsai.state_machine0 ~default_model:String.Map.empty
+      ~apply_action:(fun _ model (turn_id, attempt_id, count) -> Map.set model ~key:turn_id ~data:(attempt_id, count)) graph in
+  let advisor_turns = let%arr advisor_snapshot and advisor_dispatch and advisor_locale and markdown_nodes and proposal_states and decide
+    and advisor_can_retry and chosen_attempts and choose_attempt in
     Advisor_view.render_turns ~locale:advisor_locale ~snapshot:advisor_snapshot
-      ~dispatch:advisor_dispatch ~decided:(Map.find proposal_states) ~decide ~markdown:markdown_nodes in
+      ~dispatch:advisor_dispatch ~decided:(Map.find proposal_states) ~decide ~markdown:markdown_nodes
+      ~can_retry:advisor_can_retry ~chosen_attempts
+      ~choose_attempt:(fun ~turn_id ~attempt_id ~count -> choose_attempt (turn_id, attempt_id, count)) in
   let selected_finding, set_selected_finding = Bonsai.state None graph in
   let selected_scope, set_selected_scope = Bonsai.state W.Personal graph in
   let declined, set_declined = Bonsai.state false graph in
@@ -211,9 +219,25 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
         advisor.open_empty ~scope ~currency ~locale; navigate (Route.Advisor None)] in
   let select_conversation = let%arr set_selected_finding and navigate in
     fun id -> Effect.Many [set_selected_finding None; navigate (Route.Advisor (Some id))] in
+  let nav_open, set_nav_open = Bonsai.state false graph in
+  let menu_button = let%arr locale and nav_open and set_nav_open in
+    Vdom.Node.button
+      ~attrs:
+        [ Vdom.Attr.class_ "menu-button"; Vdom.Attr.type_ "button"; Vdom.Attr.create "aria-label" (Msg.nav_menu locale);
+          Vdom.Attr.create "aria-controls" "app-nav"; Vdom.Attr.create "aria-expanded" (Bool.to_string nav_open);
+          Vdom.Attr.on_click (fun _ -> Effect.Many [ set_nav_open true; focus_next_frame ".sidebar a" ]) ]
+      [ Feather_icon.svg ~size:(`Px 20) ~stroke:(`Name "currentColor") ~stroke_width:(`Px 2) Menu ] in
   let navigation = Advisor_navigation.component ~locale ~advisor ~route
-    ~on_select:select_conversation ~on_new:new_conversation graph in
+    ~on_select:select_conversation ~on_new:new_conversation ~menu_button graph in
+  (* The scope to open on: a conversation with nothing in it yet, when the advisor is enabled. *)
+  let opening_scope = let%arr advisor and advisor_turns and route and selected_finding and selected_scope in
+    let view = advisor.view in
+    match route, view.status with
+    | Route.Advisor None, Some s when s.consent && Option.is_none view.snapshot && List.is_empty advisor_turns && Option.is_none selected_finding ->
+        (match Option.value view.context_scope ~default:selected_scope with W.Personal -> Some "me" | W.Household _ -> Some "household")
+    | _ -> None in
   let outlet = let%arr advisor and advisor_turns and navigation and selected_finding and locale and session and declined and set_declined and selected_scope and navigate and desk in
+    fun ~(opening : Vdom.Node.t) ->
     let view = advisor.view in
     let scope = Option.value view.context_scope ~default:selected_scope in
     Vdom.Node.div ~attrs:[Vdom.Attr.class_ "advisor-outlet"; Vdom.Attr.create "data-advisor-controller" ""]
@@ -225,10 +249,8 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
        else match view.status with
        | Some s when s.consent && (Option.is_some view.snapshot || s.available) && (match scope, s.household with W.Personal, _ -> true | Household id, Some h -> h.enabled && String.equal id h.household_id | _ -> false) ->
            [(if Option.is_some selected_finding then Ui.muted (Msg.advisor_historical locale) else Vdom.Node.none);
-            (if Option.is_none view.snapshot then Ui.p (Msg.advisor_empty locale) else Vdom.Node.none);
-            Ui.muted (Msg.advisor_readonly locale);
             Advisor_view.render_body ~attach:(Some desk.attach) ~show_source:(Option.is_none selected_finding) ~turns:advisor_turns
-              ~locale ~view ~dispatch:advisor.dispatch]
+              ~intro:true ~opening ~locale ~view ~dispatch:advisor.dispatch]
        | Some s when s.consent && s.available -> [Ui.muted (Msg.advisor_household_off locale); Ui.button (Msg.nav_household locale) (navigate Route.Settings)]
        | _ -> [Advisor_view.consent ~locale ~view ~dispatch:advisor.dispatch ~decline:(set_declined true)]) in
   let access_denied = let%arr advisor in advisor.view.access_denied in
@@ -237,8 +259,8 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
   let home, reset_home = Bonsai.with_model_resetter ~f:(fun graph ->
     match%sub home_access with
     | false, _ -> Bonsai.return Vdom.Node.none
-    | true, true -> let%arr outlet and locale in Ui.page ~title:(Msg.nav_advisor locale) [outlet]
-    | true, false -> Home.page ~ctx ~on_ask ~desk ~selected_finding ~outlet
+    | true, true -> let%arr outlet and locale in Ui.page ~title:(Msg.nav_matters locale) [outlet ~opening:Vdom.Node.none]
+    | true, false -> Home.page ~ctx ~on_ask ~desk ~selected_finding ~outlet ~opening_scope
         ~advisor_route:(let%arr route in match route with Route.Advisor _ -> true | _ -> false)
         ~visible:(let%arr route in match route with Route.Home | Route.Advisor _ -> true | _ -> false) graph) graph in
   let clear_home = let%arr reset_home and set_selected_finding and set_selected_scope in fun denied ->
@@ -304,42 +326,27 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
   let palette_view = Palette.component ~ctx ~ask:ask_advisor ~open_:palette ~close:(let%arr set_palette in set_palette false) graph in
   let inbox_count = let%arr session in J.int (J.field "inbox_count" session) in
   let%arr page and home and route and locale and navigate and toast and pending_g and set_pending_g and set_palette and palette_view and inbox_count
-  and set_route in
+  and set_route and nav_open and set_nav_open and menu_button in
   (* Back and forward buttons. *)
   Dom_html.window##.onpopstate :=
     Dom_html.handler (fun _ ->
         let dest = Route.of_path (Js.to_string Dom_html.window##.location##.pathname) in
         Effect.Expert.handle_non_dom_event_exn (scroll_transition ~from:route ~dest (set_route dest));
         Js._true);
-  let link ~cls (r, section) =
-    let active =
-      match section with
-      | Some s -> Option.equal Route.equal_section (Route.section route) (Some s)
-      | None -> Route.equal r route || (match r, route with Route.Advisor _, Advisor _ -> true | _ -> false)
-    in
+  let link r =
+    let active = match r, route with Route.Advisor _, Route.Advisor _ -> true | _ -> Route.equal r (Route.nav_page route) in
+    let label = Route.title locale r in
     Vdom.Node.a
       ~attrs:
-        ([ Vdom.Attr.class_ (cls ^ if active then " active" else ""); Vdom.Attr.href (Route.to_path r);
-           Vdom.Attr.create "aria-label" (match section with Some s -> Route.section_title locale s | None -> Route.title locale r);
-          Vdom.Attr.on_click (fun _ -> Effect.Many [ Effect.Prevent_default; navigate r ]) ]
-         @ if active then [Vdom.Attr.create "aria-current" (if Option.is_some section then "true" else "page")] else [])
-      [ Ui.span ~cls:"icon" [ icon r ]; Ui.span ~cls:"label" [ Ui.text (match section with Some s -> Route.section_title locale s | None -> Route.title locale r) ];
+        ([ Vdom.Attr.class_ (if active then "nav-link active" else "nav-link"); Vdom.Attr.href (Route.to_path r);
+           Vdom.Attr.create "aria-label" label;
+           Vdom.Attr.on_click (fun _ -> Effect.Many [ Effect.Prevent_default; set_nav_open false; navigate r ]) ]
+         @ if active then [ Vdom.Attr.create "aria-current" "page" ] else [])
+      [ Ui.span ~cls:"icon" [ icon r ]; Ui.span ~cls:"label" [ Ui.text label ];
         (match r with Route.Transactions _ when inbox_count > 0 -> Ui.span ~cls:"badge" [ Ui.text (Int.to_string inbox_count) ] | _ -> Vdom.Node.none) ]
   in
-  let section_strip =
-    match Route.section route with
-    | None -> Vdom.Node.none
-    | Some s ->
-        Vdom.Node.create "nav" ~attrs:[ Vdom.Attr.class_ "section-nav"; Vdom.Attr.create "aria-label" (Route.section_title locale s) ]
-          (List.map (Route.section_pages s) ~f:(fun r ->
-               let active = Route.equal r (Route.section_page route) in
-               Vdom.Node.a
-                 ~attrs:
-                   ([ Vdom.Attr.class_ (if active then "active" else ""); Vdom.Attr.href (Route.to_path r);
-                      Vdom.Attr.on_click (fun _ -> Effect.Many [ Effect.Prevent_default; navigate r ]) ]
-                    @ if active then [ Vdom.Attr.create "aria-current" "page" ] else [])
-                 [ Ui.text (Route.title locale r) ]))
-  in
+  (* Only one of the two menu buttons is on the screen, and focusing a hidden one does nothing. *)
+  let close_nav = Effect.Many [ set_nav_open false; focus_next_frame ".topbar .menu-button"; focus_next_frame ".advisor-page .menu-button" ] in
   (* Keyboard: ⌘K or / opens the palette; g then a letter goes to a page. Typing in a field is left alone. *)
   let on_key (event : Dom_html.keyboardEvent Js.t) =
     (* A disabled Save can move focus off the sheet while its request is pending. The
@@ -352,7 +359,8 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
     in
     let key = Js.Optdef.case event##.key (fun () -> "") Js.to_string in
     let meta = Js.to_bool event##.metaKey || Js.to_bool event##.ctrlKey in
-    if logo_dialog_open then Effect.Ignore
+    if nav_open && String.equal key "Escape" then close_nav
+    else if logo_dialog_open then Effect.Ignore
     else if meta && String.equal key "k" then Effect.Many [ Effect.Prevent_default; set_palette true ]
     else if target_is_field then Effect.Ignore
     else if String.equal key "/" then Effect.Many [ Effect.Prevent_default; set_palette true ]
@@ -361,19 +369,26 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
     else Effect.Ignore
   in
   Vdom.Node.div
-    ~attrs:[ Vdom.Attr.class_ "shell"; Vdom.Attr.Global_listeners.keydown on_key ]
+    ~attrs:
+      ([ Vdom.Attr.class_ "shell"; Vdom.Attr.Global_listeners.keydown on_key ]
+       @ if nav_open then [ Vdom.Attr.create "data-nav-open" "" ] else [])
     [ Vdom.Node.create "nav"
-        ~attrs:[ Vdom.Attr.class_ "topbar"; Vdom.Attr.create "aria-label" (Msg.app_name locale) ]
-        [ link ~cls:"topbar-home" (Route.Home, None);
-          Ui.div ~cls:"topbar-actions"
-            ([ Vdom.Node.button
-                 ~attrs:
-                   [ Vdom.Attr.class_ "topbar-search"; Vdom.Attr.type_ "button"; Vdom.Attr.title (Msg.command_placeholder locale ^ " (⌘K)");
-                     Vdom.Attr.create "aria-label" (Msg.command_placeholder locale); Vdom.Attr.on_click (fun _ -> set_palette true) ]
-                 [ Feather_icon.svg ~size:(`Px 18) ~stroke:(`Name "currentColor") ~stroke_width:(`Px 2) Search ] ]
-            @ List.map top_items ~f:(link ~cls:"topbar-link")) ];
+        ~attrs:[ Vdom.Attr.class_ "sidebar"; Vdom.Attr.id "app-nav"; Vdom.Attr.create "aria-label" (Msg.app_name locale) ]
+        ([ Ui.div ~cls:"brand" [ Ui.text (Msg.app_name locale) ];
+           Vdom.Node.button
+             ~attrs:
+               [ Vdom.Attr.class_ "nav-link"; Vdom.Attr.type_ "button"; Vdom.Attr.title (Msg.command_placeholder locale);
+                 Vdom.Attr.create "aria-label" (Msg.label_search locale);
+                 Vdom.Attr.on_click (fun _ -> Effect.Many [ set_nav_open false; set_palette true ]) ]
+             [ Ui.span ~cls:"icon" [ Feather_icon.svg ~size:(`Px 18) ~stroke:(`Name "currentColor") ~stroke_width:(`Px 2) Search ];
+               Ui.span ~cls:"label" [ Ui.text (Msg.label_search locale) ]; Vdom.Node.create "kbd" [ Ui.text "⌘K" ] ];
+           Ui.div ~cls:"nav-gap" [] ]
+         @ List.map nav_items ~f:link
+         @ [ Ui.div ~cls:"sidebar-foot" [ link Route.Settings ] ]);
+      Vdom.Node.div ~attrs:[ Vdom.Attr.class_ "nav-scrim"; Vdom.Attr.on_click (fun _ -> close_nav) ] [];
+      Ui.div ~cls:"topbar" [ menu_button ];
       Ui.div ~cls:"content" [Vdom.Node.div
-        ~attrs:(if (match route with Route.Home | Advisor _ -> true | _ -> false) then [] else [Vdom.Attr.create "hidden" ""]) [home]; section_strip; page];
+        ~attrs:(if (match route with Route.Home | Advisor _ -> true | _ -> false) then [] else [Vdom.Attr.create "hidden" ""]) [home]; page];
       palette_view;
       (match toast with Some message -> Ui.div ~cls:"toast" [ Ui.text message ] | None -> Vdom.Node.none) ]
 

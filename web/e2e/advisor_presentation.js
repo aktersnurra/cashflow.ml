@@ -24,8 +24,8 @@ const markdown = '# A plan for February\n\nSet aside **6,250.00 SEK** each month
   page.on('pageerror',e=>errors.push(e.message));
   page.on('request',r=>{if(r.method()==='POST'&&r.url()===base+'/api/advisor/turns')posts++;});
   await page.goto(base+'/advisor');
-  assert.equal(await page.getByRole('heading',{name:'Overview',exact:true}).count(),0,'standalone chat does not stack the financial dashboard above the conversation');
-  await page.getByRole('heading',{name:'Advisor',exact:true}).waitFor();
+  assert.equal(await page.getByRole('heading',{name:'Review',exact:true}).count(),0,'standalone chat does not stack the financial dashboard above the conversation');
+  await page.getByRole('heading',{name:'Matters',exact:true}).waitFor();
   await page.getByRole('button',{name:'Enable Advisor',exact:true}).click();
   const composer=page.getByRole('textbox',{name:'Message advisor',exact:true});
   await composer.fill('Can I save **25k SEK** for a February holiday?');
@@ -36,8 +36,8 @@ const markdown = '# A plan for February\n\nSet aside **6,250.00 SEK** each month
   if(process.env.ADVISOR_CHAT_PAUSED==='1') {
    // Presentation-only readiness change; the running native request/Stop remain real.
    await page.route('**/api/advisor/status',async route=>{const response=await route.fetch();const body=await response.json();body.available=false;await route.fulfill({response,json:body});});
-   await page.locator('.topbar a[href="/settings"]').click();
-   await page.getByRole('link',{name:'Advisor',exact:true}).click();
+   await page.locator('.sidebar a[href="/settings"]').click();
+   await page.getByRole('link',{name:'Matters',exact:true}).click();
    await page.getByText('Advisor is unavailable. Check your settings or try again later.',{exact:true}).waitFor();
    assert.equal(await page.getByRole('button',{name:'Send',exact:true}).count(),0);
    await page.getByRole('button',{name:'Stop',exact:true}).click({timeout:6000});
@@ -85,7 +85,7 @@ const markdown = '# A plan for February\n\nSet aside **6,250.00 SEK** each month
   await fetch(base+'/release');
   await page.getByRole('status').filter({hasText:'Answer completed.'}).waitFor();
   assert.equal(await page.evaluate(()=>scrollY),scroll,'actual incoming native text must not steal manual document scroll');
-  await page.getByRole('button',{name:'Follow new output',exact:true}).click();
+  await page.getByRole('button',{name:'Scroll to latest',exact:true}).click();
   await page.waitForFunction(()=>scrollY>100);
   await page.evaluate(()=>window.scrollTo(0,0));
   await composer.fill('');

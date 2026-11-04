@@ -217,7 +217,7 @@ let mostly_uncategorized categories_json =
   Float.(total uncategorized > total (fun _ -> true) /. 2.)
 
 let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor_protocol.Wire.scope -> unit Effect.t) Bonsai.t)
-    ~(desk : Desk.t Bonsai.t) ~selected_finding ~outlet ~advisor_route ~(visible : bool Bonsai.t) graph =
+    ~(desk : Desk.t Bonsai.t) ~selected_finding ~outlet ~opening_scope ~advisor_route ~(visible : bool Bonsai.t) graph =
   let captured, set_captured = Bonsai.state None graph in
   let offset, set_offset = Bonsai.state 0 graph in
   let picking, set_picking = Bonsai.state false graph in
@@ -232,7 +232,8 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
   (* What is ahead: the forecast, then goals and budgets. *)
   let forecast = Forecast_page.section ~ctx ~visible graph in
   let goals = Budgets_page.section ~ctx ~visible graph in
-  let briefing = Briefing_view.component ~ctx ~scope ~visible ~on_ask ~selected_finding ~outlet graph in
+  let under_card = let%arr outlet in outlet ~opening:Vdom.Node.none in
+  let briefing = Briefing_view.component ~ctx ~scope ~visible ~on_ask ~selected_finding ~outlet:under_card graph in
   let feed = Remote.load ~active:visible ~name:"get_attention_feed" ~args:(Bonsai.return (`Assoc [("narrative", `Bool false)])) ~ctx graph in
   let cards =
     let%arr feed in
@@ -249,17 +250,27 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
     match captured, selected_finding with Some (key, cards), Some selected when String.equal key selected -> cards | _ -> cards in
   let views = Bonsai.assoc (module String) visible_cards ~f:(fun key card graph ->
     let body = card_view ~ctx key card graph in
-    let%arr body and card and on_ask and selected_finding and outlet and cards and set_captured and session = ctx.session and locale = ctx.locale in
+    let%arr body and card and on_ask and selected_finding and outlet = under_card and cards and set_captured and session = ctx.session and locale = ctx.locale in
     let finding_key = J.str (J.field "key" card) in
     let selected = Option.equal String.equal selected_finding (Some finding_key) in
     let eligible = List.mem ["unusual_spend"; "shortfall"] (J.str (J.field "kind" card)) ~equal:String.equal in
-    let scope = if String.equal (J.str (J.path ["data"; "scope"] card)) "household"
-      || String.equal (J.str (J.path ["data"; "account"; "owner"] card)) "household" then
-      Cashflow_advisor_protocol.Wire.Household (J.str (J.path ["household"; "id"] session)) else Personal in
+    let scope = Advisor_opening.card_scope session card in
     let ask = if eligible then [Ui.button (Msg.advisor_ask locale) (Effect.Many [set_captured (Some (finding_key, cards)); on_ask ~finding_key ~scope])] else [] in
     Vdom.Node.div ~attrs:([Vdom.Attr.create "data-finding-key" finding_key] @ if selected then [Vdom.Attr.create "data-testid" "selected-finding"] else [])
       ([body ~extra:ask ~opened:selected] @ if selected then [outlet] else [])) graph in
-  let%arr desk and forecast and goals and summary and outlook and categories and briefing and views and offset and set_offset and picking and set_picking and scope and set_scope and locale = ctx.locale and session = ctx.session
+  (* A new conversation opens on what the accountant found. Choosing a finding goes to the review and opens it there,
+     under its card with its figures, the same way as asking from the review. *)
+  let opening =
+    Advisor_opening.component ~ctx ~scope:opening_scope
+      ~on_ask:(let%arr on_ask and navigate = ctx.navigate in fun ~finding_key ~scope ->
+        Effect.Many [navigate Route.Home; on_ask ~finding_key ~scope; Advisor_opening.reveal_opened])
+      ~cards:(let%arr visible_cards in Map.data visible_cards)
+      ~open_card:(let%arr set_captured and cards and on_ask and navigate = ctx.navigate and session = ctx.session in fun card ->
+        let finding_key = J.str (J.field "key" card) in
+        Effect.Many [navigate Route.Home; set_captured (Some (finding_key, cards)); on_ask ~finding_key ~scope:(Advisor_opening.card_scope session card); Advisor_opening.reveal_opened])
+      graph
+  in
+  let%arr opening and desk and forecast and goals and summary and outlook and categories and briefing and views and offset and set_offset and picking and set_picking and scope and set_scope and locale = ctx.locale and session = ctx.session
   and navigate = ctx.navigate and outlet and selected_finding and visible_cards and advisor_route in
   let cycles = match summary with Loaded json -> J.list (J.field "cycles" json) | Loading | Failed _ -> [] in
   let code = match summary with Loaded json -> J.str ~default:"SEK" (J.field "currency" json) | Loading | Failed _ -> "SEK" in
@@ -482,7 +493,7 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
   let standalone = advisor_route && not hosted in
   (* Statements can be dropped while talking to the advisor too; what became of them shows above the conversation. *)
   Vdom.Node.main ~attrs:[Vdom.Attr.class_ ((if standalone then "page advisor-page" else "page has-desk") ^ if desk.dragging then " dropping" else ""); desk.drop]
-    [(if standalone then Vdom.Node.h1 [Ui.text (Msg.nav_advisor locale)] else Vdom.Node.none);
+    [(if standalone then Vdom.Node.h1 [Ui.text (Msg.nav_matters locale)] else Vdom.Node.none);
      (* Keep the financial surface mounted for Home continuity; an unanchored
         Advisor conversation is not a second dashboard above the chat. *)
      Vdom.Node.div ~attrs:(if standalone then [Vdom.Attr.create "hidden" ""] else [])
@@ -490,11 +501,6 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
         (* What was handed over shows where the page starts; the box waits at its foot. *)
         (* What is ahead follows what needs doing, for the current period only. *)
         let ahead = if offset = 0 then Ui.div ~cls:"ahead" [forecast; goals] else Vdom.Node.none in
-        (* The rest of the books, for when they are wanted: every transaction, and the accounts. *)
-        let books =
-          let go r label = Vdom.Node.a ~attrs:[Vdom.Attr.href (Route.to_path r); Vdom.Attr.on_click (fun _ -> Effect.Many [Effect.Prevent_default; navigate r])] [Ui.text label] in
-          Ui.div ~cls:"books-links"
-            [go (Route.Transactions { offset = 0; category = None }) (Msg.overview_all_transactions locale); Ui.span [Ui.text "·"]; go Route.Accounts (Msg.nav_accounts locale)] in
         (* While in a conversation under a card, its composer is the box: the desk steps aside. Back on the
            Overview, the desk is there for the next question. *)
         let in_briefing = match selected_finding with Some k -> String.is_prefix k ~prefix:"question:" | None -> false in
@@ -509,6 +515,6 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
          Ui.div ~cls:"overview-cols"
            [ Ui.div ~cls:"overview-main" [slot ~name:"slot-body" body; slot ~name:"slot-attention" attention; slot ~name:"slot-briefing" briefing_view; slot ~name:"slot-flow" flow_view];
              Ui.div ~cls:"overview-side" [ahead] ];
-         books; slot box]);
+         slot box]);
      (if standalone then desk.files else Vdom.Node.none);
-     (if standalone then outlet else Vdom.Node.none)]
+     (if standalone then outlet ~opening else Vdom.Node.none)]

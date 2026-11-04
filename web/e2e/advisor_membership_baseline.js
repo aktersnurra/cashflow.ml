@@ -12,7 +12,7 @@ const until=async promise=>{let timer;try{return await Promise.race([promise,new
  const credentials=await(await fetch(base+'/fixture/session')).json();
  await page.context().addCookies([{name:'cashflow_session',value:credentials.a.token,url:base}]);
  await page.addInitScript(()=>{const Native=window.EventSource;window.sources=[];window.EventSource=class extends Native{constructor(...args){super(...args);this.closedByApp=false;window.sources.push(this);}close(){this.closedByApp=true;super.close();}};});
- const button=name=>page.getByRole('button',{name,exact:true}),nav=name=>page.locator('.topbar').getByRole('link',{name,exact:true});
+ const button=name=>page.getByRole('button',{name,exact:true}),nav=name=>page.locator('.sidebar').getByRole('link',{name,exact:true});
  const composer=()=>page.getByRole('textbox',{name:'Message advisor',exact:true});
  const shared=()=>page.getByRole('heading',{name:'Shared bills may run short before payday',exact:true,includeHidden:true});
  const state=async()=>(await fetch(base+'/state')).json();
@@ -56,7 +56,7 @@ const until=async promise=>{let timer;try{return await Promise.race([promise,new
  if(pending)await until(acceptedHeld);else await page.getByText('first',{exact:true}).waitFor();
  await composer().fill('personal draft across initial legacy membership loss');
  const original=await page.getByTestId('selected-finding').elementHandle(),sourceCount=await page.evaluate(()=>window.sources.length);
- await page.locator('.topbar a[href="/settings"]').click();await nav('Advisor').click();await sleep(100);
+ await page.locator('.sidebar a[href="/settings"]').click();await nav('Matters').click();await sleep(100);
  assert.equal(await original.evaluate(e=>e===document.querySelector('[data-testid="selected-finding"]')),true,'unknown initial and repeated readiness cannot erase or revoke Home baseline');
  assert.equal(await shared().count(),1);assert.equal(posts,1);
  // Hold older real status/session replies with H while an ordinary version refresh runs.
@@ -65,7 +65,7 @@ const until=async promise=>{let timer;try{return await Promise.race([promise,new
  await until(Promise.all([oldStatusHeld,oldSessionHeld]));
  const leave=await page.request.post(base+'/api/commands/leave_household',{headers:{'x-csrf-token':credentials.a.csrf,origin:base},data:{}});assert.equal(leave.status(),200);
  afterLoss=true;
- await page.locator('.topbar a[href="/settings"]').click();await until(statusHeld);
+ await page.locator('.sidebar a[href="/settings"]').click();await until(statusHeld);
  assert.equal(await shared().count(),1,'explicit loss has not yet been delivered to the client');
  await freshStatus();
  await shared().waitFor({state:'detached',timeout:4000});
@@ -74,18 +74,18 @@ const until=async promise=>{let timer;try{return await Promise.race([promise,new
  assert.equal(await original.evaluate(e=>document.contains(e)),false,'authorization-boundary reset discards old captured Home');
  await freshSession();
  // Home stays mounted but only loads its figures while it is showing, so return to it for the fresh feed.
- await nav('Overview').click();await until(feedHeld);
+ await nav('Review').click();await until(feedHeld);
  assert.equal(await shared().count(),0,'no old feed while fresh authorized feed is pending');
  await freshFeed();await page.getByRole('heading',{name:'Groceries is higher than usual',exact:true,includeHidden:true}).waitFor({state:'attached'});
  // Delayed obsolete metadata must neither republish the old session nor restore H baseline.
  await staleSession();await staleStatus();await sleep(100);
  const requestsAfterReload=sessionRequests;
  await nav('Settings').click();assert.equal(await page.getByRole('heading',{name:'Synthetic household',exact:true,includeHidden:true}).count(),0);
- await nav('Advisor').click();await composer().waitFor();
+ await nav('Matters').click();await composer().waitFor();
  assert.equal(await composer().inputValue(),'personal draft across initial legacy membership loss');
  if(pending){await accepted();await page.getByText('first',{exact:true}).waitFor();}
  assert.equal(await composer().inputValue(),'personal draft across initial legacy membership loss');
- await page.locator('.topbar a[href="/settings"]').click();await nav('Advisor').click();await sleep(100);
+ await page.locator('.sidebar a[href="/settings"]').click();await nav('Matters').click();await sleep(100);
  assert.equal(sessionRequests,requestsAfterReload,'stale session/status cannot restore old Home baseline or cause another privacy reset');
  assert.equal(await shared().count(),0);assert.equal(await page.evaluate(()=>window.sources.length),sourceCount+(pending?1:0));
  assert.equal(await page.evaluate(()=>window.sources.filter(s=>!s.closedByApp).length),1);

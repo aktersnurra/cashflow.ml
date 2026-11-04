@@ -41,10 +41,37 @@ let sampled_time locale sampled =
   in
   Js.to_string formatted
 
+let generation_ready (view : C.view) = match view.status with Some s -> s.available && s.consent | None -> false
+let can_retry (view : C.view) = generation_ready view && Option.is_none view.pending
+
+(* One attempt of a turn shows at a time: the one picked, as long as no attempt has joined since; else the latest. *)
+let shown_attempt (turn : W.turn) ~(chosen_attempts : (string * int) String.Map.t) =
+  let count = List.length turn.attempts in
+  let picked =
+    match Map.find chosen_attempts turn.turn_id with
+    | Some (attempt_id, seen) when seen = count ->
+        List.findi turn.attempts ~f:(fun _ (a : W.attempt) -> String.equal a.ids.attempt_id attempt_id)
+    | _ -> None
+  in
+  match picked with
+  | Some _ -> picked
+  | None -> Option.map (List.last turn.attempts) ~f:(fun a -> (count - 1, a))
+
 let render_turns ~locale ~(snapshot : W.snapshot option) ~dispatch ~(decided : string -> W.proposal_state option)
-    ~(decide : string -> string -> unit Effect.t) ~(markdown : Vdom.Node.t String.Map.t) =
+    ~(decide : string -> string -> unit Effect.t) ~(markdown : Vdom.Node.t String.Map.t) ~can_retry
+    ~chosen_attempts ~(choose_attempt : turn_id:string -> attempt_id:string -> count:int -> unit Effect.t) =
   let text = Vdom.Node.text in
   let cls name = [ Vdom.Attr.class_ name ] in
+  let icon name = Feather_icon.svg ~size:(`Px 16) ~stroke:(`Name "currentColor") ~stroke_width:(`Px 2) name in
+  let action ?(attrs = []) ?(disabled = false) ~label ~on_click children =
+    Vdom.Node.button
+      ~attrs:
+        ([ Vdom.Attr.class_ "advisor-action"; Vdom.Attr.type_ "button"; Vdom.Attr.title label;
+           Vdom.Attr.create "aria-label" label; Vdom.Attr.on_click on_click;
+           (if disabled then Vdom.Attr.disabled else Vdom.Attr.empty) ]
+        @ attrs)
+      children
+  in
   let segment = function
     | W.Text_segment d ->
         Vdom.Node.div ~key:d.segment_id ~attrs:(cls "advisor-prose")
@@ -89,19 +116,20 @@ let render_turns ~locale ~(snapshot : W.snapshot option) ~dispatch ~(decided : s
         in
         Vdom.Node.details ~key:e.id
           ~attrs:([ Vdom.Attr.class_ "advisor-evidence"; Vdom.Attr.id ("advisor-evidence-" ^ e.id) ]
-                  @ if Option.is_some proposal then [ Vdom.Attr.create "open" "" ] else [])
+                  @ if Option.is_some proposal then [ Vdom.Attr.create "open" ""; Vdom.Attr.create "data-proposal" "" ] else [])
           [
             Vdom.Node.summary
               ~attrs:[ Vdom.Attr.on_click (fun _ -> dispatch (C.Follow false)) ]
               ([ Vdom.Node.span [ text (Advisor_evidence_text.title locale e.title) ] ]
-              @
-              if Option.is_none proposal
-                 && ((not (Poly.equal e.import_status W.Current)) || (not e.reconciled) || not (List.is_empty e.assumptions))
-              then
-                [
-                  Vdom.Node.span ~attrs:(cls "advisor-evidence-warning") [ text (Msg.advisor_evidence_caution locale) ];
-                ]
-              else []);
+              @ (if Option.is_none proposal
+                    && ((not (Poly.equal e.import_status W.Current)) || (not e.reconciled) || not (List.is_empty e.assumptions))
+                 then
+                   [
+                     Vdom.Node.span ~attrs:(cls "advisor-evidence-warning") [ text (Msg.advisor_evidence_caution locale) ];
+                   ]
+                 else [])
+              @ [ Vdom.Node.span ~attrs:[ Vdom.Attr.class_ "advisor-evidence-chevron"; Vdom.Attr.create "aria-hidden" "true" ]
+                    [ Feather_icon.svg ~size:(`Px 14) ~stroke:(`Name "currentColor") ~stroke_width:(`Px 2) Chevron_down ] ]);
             Vdom.Node.div ~attrs:(cls "advisor-evidence-body")
               ([
                  Vdom.Node.create "time"
@@ -138,11 +166,84 @@ let render_turns ~locale ~(snapshot : W.snapshot option) ~dispatch ~(decided : s
                 ]);
           ]
   in
-  let attempt (a : W.attempt) =
+  let attempt ~(turn : W.turn) ~latest_turn ~index (a : W.attempt) =
     let foreground =
       match snapshot with Some s -> Option.equal String.equal s.active_run (Some a.ids.run_id) | None -> false
     in
-    Vdom.Node.create "article" ~key:a.ids.attempt_id ~attrs:(cls "advisor-answer")
+    let count = List.length turn.attempts in
+    let streaming = foreground && Poly.equal a.state (W.Running W.Streaming_text) in
+    (* The status region announces that an answer is running; this is the sighted reader's view of it. *)
+    let progress =
+      let line message =
+        [ Vdom.Node.p ~attrs:[ Vdom.Attr.class_ "advisor-progress"; Vdom.Attr.create "aria-hidden" "true" ] [ text message ] ]
+      in
+      if not foreground then []
+      else
+        match a.state with
+        | W.Queued | Running Awaiting_model -> line (Msg.advisor_progress_thinking locale)
+        | Running Running_tools -> line (Msg.advisor_progress_tools locale)
+        | Running Streaming_text | Cancel_requested | Completed | Cancelled | Failed _ -> []
+    in
+    let copied_text =
+      String.concat ~sep:"\n\n"
+        (List.filter_map a.segments ~f:(function W.Text_segment d -> Some d.text | W.Evidence_segment _ -> None))
+    in
+    let copy =
+      if foreground || String.is_empty copied_text || not (Advisor_chat_hooks.can_copy ()) then []
+      else
+        [
+          action ~label:(Msg.advisor_copy locale)
+            ~attrs:[ Vdom.Attr.create "data-advisor-copy" "" ]
+            ~on_click:(fun event ->
+              Effect.of_thunk (fun () ->
+                  Advisor_chat_hooks.copy event ~text:copied_text ~label:(Msg.advisor_copy locale)
+                    ~copied:(Msg.advisor_copied locale)))
+            [ Vdom.Node.span ~attrs:[ Vdom.Attr.class_ "advisor-icon-swap"; Vdom.Attr.create "aria-hidden" "true" ]
+                [ Vdom.Node.span ~attrs:[ Vdom.Attr.create "data-icon" "copy" ] [ icon Copy ];
+                  Vdom.Node.span ~attrs:[ Vdom.Attr.create "data-icon" "check" ] [ icon Check ] ] ];
+        ]
+    in
+    let retry =
+      let retryable = match a.state with W.Cancelled | Failed _ -> true | _ -> false in
+      if can_retry && latest_turn && index = count - 1 && retryable && not foreground then
+        (* The label stays in words: this is what to do next, not a quiet tool. *)
+        [
+          Vdom.Node.button
+            ~attrs:
+              [ Vdom.Attr.class_ "advisor-action advisor-action-text"; Vdom.Attr.type_ "button";
+                Vdom.Attr.on_click (fun _ -> dispatch (C.Retry_latest (Api.fresh_key "advisor-retry"))) ]
+            [ icon Refresh_cw; text (Msg.advisor_retry locale) ];
+        ]
+      else []
+    in
+    let switcher =
+      if count < 2 || foreground then []
+      else
+        let step label disabled name delta =
+          action ~label ~disabled
+            ~on_click:(fun _ ->
+              match List.nth turn.attempts (index + delta) with
+              | Some (next : W.attempt) ->
+                  choose_attempt ~turn_id:turn.turn_id ~attempt_id:next.ids.attempt_id ~count
+              | None -> Effect.Ignore)
+            [ icon name ]
+        in
+        [
+          Vdom.Node.div ~attrs:(cls "advisor-attempts")
+            [
+              step (Msg.advisor_previous_attempt locale) (index = 0) Chevron_left (-1);
+              Vdom.Node.span [ text (Int.to_string (index + 1) ^ "/" ^ Int.to_string count) ];
+              step (Msg.advisor_next_attempt locale) (index = count - 1) Chevron_right 1;
+            ];
+        ]
+    in
+    let actions =
+      match switcher @ copy @ retry with
+      | [] -> []
+      | children -> [ Vdom.Node.div ~attrs:(cls "advisor-answer-actions") children ]
+    in
+    Vdom.Node.create "article" ~key:a.ids.attempt_id
+      ~attrs:[ Vdom.Attr.class_ "advisor-answer"; (if streaming then Vdom.Attr.create "data-streaming" "" else Vdom.Attr.empty) ]
       ([
          Vdom.Node.div ~attrs:(cls "advisor-answer-heading")
            [
@@ -153,23 +254,30 @@ let render_turns ~locale ~(snapshot : W.snapshot option) ~dispatch ~(decided : s
            ];
        ]
       @ List.map a.segments ~f:segment
-      @
-      if foreground || Poly.equal a.state W.Completed then []
-      else [ Vdom.Node.p ~attrs:(cls "advisor-attempt-status") [ text (run_status locale a.state) ] ])
+      @ progress
+      @ (if foreground || Poly.equal a.state W.Completed then []
+         else [ Vdom.Node.p ~attrs:(cls "advisor-attempt-status") [ text (run_status locale a.state) ] ])
+      @ actions)
   in
   match snapshot with
   | None -> []
   | Some s ->
+      let last_turn = Option.map (List.last s.turns) ~f:(fun (t : W.turn) -> t.turn_id) in
       List.map s.turns ~f:(fun (t : W.turn) ->
+          let latest_turn = Option.equal String.equal last_turn (Some t.turn_id) in
           Vdom.Node.div ~key:t.turn_id ~attrs:(cls "advisor-turn")
             (Vdom.Node.p ~key:t.user_message_id
                ~attrs:
                  [ Vdom.Attr.class_ "advisor-user-message"; Vdom.Attr.create "aria-label" (Msg.advisor_you locale) ]
                [ text t.user_text ]
-            :: List.map t.attempts ~f:attempt))
+            ::
+            (match shown_attempt t ~chosen_attempts with
+            | Some (index, a) -> [ attempt ~turn:t ~latest_turn ~index a ]
+            | None -> [])))
 
-(* [attach]: the "+" that hands files to the desk, on the left of the composer. *)
-let render_body ~(attach : Vdom.Node.t option) ~turns ~show_source ~locale ~(view : C.view) ~dispatch =
+(* [attach]: the "+" that hands files to the desk, on the left of the composer. [intro]: what the conversation says
+   before its first message. [opening]: what the accountant has to say by then (Advisor_opening). *)
+let render_body ~(attach : Vdom.Node.t option) ~turns ~show_source ~intro ~opening ~locale ~(view : C.view) ~dispatch =
   let text = Vdom.Node.text in
   let cls name = [ Vdom.Attr.class_ name ] in
   let button label action =
@@ -178,18 +286,7 @@ let render_body ~(attach : Vdom.Node.t option) ~turns ~show_source ~locale ~(vie
         [ Vdom.Attr.class_ "button secondary"; Vdom.Attr.type_ "button"; Vdom.Attr.on_click (fun _ -> dispatch action) ]
       [ text label ]
   in
-  let retryable =
-    match view.snapshot with
-    | Some s -> (
-        match List.last s.turns with
-        | Some t -> (
-            match List.last t.attempts with
-            | Some a -> ( match a.state with W.Cancelled | W.Failed _ -> true | _ -> false)
-            | None -> false)
-        | None -> false)
-    | None -> false
-  in
-  let generation_ready = match view.status with Some s -> s.available && s.consent | None -> false in
+  let generation_ready = generation_ready view in
   let active = match view.snapshot with Some s -> Option.is_some s.active_run | None -> false in
   let can_submit = generation_ready && (not active) && Option.is_none view.pending in
   let can_send = can_submit && Advisor_chat_hooks.valid_draft view.draft in
@@ -226,7 +323,7 @@ let render_body ~(attach : Vdom.Node.t option) ~turns ~show_source ~locale ~(vie
               [
                 Vdom.Attr.class_ "advisor-input";
                 Vdom.Attr.create "aria-label" (Msg.advisor_draft locale);
-                Vdom.Attr.placeholder (if has_messages then Msg.advisor_reply locale else Msg.advisor_placeholder locale);
+                Vdom.Attr.placeholder (if has_messages || not show_source then Msg.advisor_reply locale else Msg.advisor_placeholder locale);
                 Vdom.Attr.create "rows" "1";
                 Vdom.Attr.value_prop view.draft;
                 Vdom.Attr.create_hook "advisor-grow"
@@ -312,13 +409,22 @@ let render_body ~(attach : Vdom.Node.t option) ~turns ~show_source ~locale ~(vie
          && (active || List.mem [ C.Interrupted; C.Request_failed; C.Invalid_state ] view.notice ~equal:Poly.equal)
        then [ button (Msg.advisor_reconnect locale) C.Reconnect ]
        else [])
-    @ (if generation_ready && (not active) && retryable then
-         [ button (Msg.advisor_retry locale) (C.Retry_latest (Api.fresh_key "advisor-retry")) ]
-       else [])
     @ (if generation_ready && Option.is_some view.pending then [ button (Msg.advisor_repeat locale) C.Repeat_pending ]
        else [])
-    @ (if view.new_output then [ button (Msg.advisor_follow locale) (C.Follow true) ] else [])
-
+  in
+  let intro_block =
+    if has_messages || not intro then Vdom.Node.none
+    else Vdom.Node.div ~attrs:(cls "advisor-intro") [ opening; Ui.muted (Msg.advisor_readonly locale) ]
+  in
+  let scroll_latest =
+    if not has_messages then Vdom.Node.none
+    else
+      let label = Msg.advisor_follow locale in
+      Vdom.Node.button
+        ~attrs:
+          [ Vdom.Attr.class_ "advisor-scroll-latest"; Vdom.Attr.type_ "button"; Vdom.Attr.title label;
+            Vdom.Attr.create "aria-label" label; Vdom.Attr.on_click (fun _ -> dispatch (C.Follow true)) ]
+        [ Feather_icon.svg ~size:(`Px 16) ~stroke:(`Name "currentColor") ~stroke_width:(`Px 2) Chevron_down ]
   in
   Vdom.Node.div
     ~attrs:
@@ -343,32 +449,42 @@ let render_body ~(attach : Vdom.Node.t option) ~turns ~show_source ~locale ~(vie
           ]
       | _ -> [])
     @ [
+        intro_block;
         Vdom.Node.div ~attrs:(cls "advisor-messages") turns;
+        Vdom.Node.div ~attrs:(cls "advisor-conversation-actions") actions;
         Vdom.Node.div ~attrs:(cls "advisor-composer-area")
           [
+            scroll_latest;
             composer;
             Vdom.Node.div
               ~attrs:
                 [
-                  Vdom.Attr.class_ "advisor-status";
+                  (* The answer itself shows how it is going; the words remain for screen readers. *)
+                  Vdom.Attr.class_
+                    (match view.notice with
+                    | C.Answer_running | Answer_completed | Answer_stopped | Answer_failed ->
+                        "advisor-status advisor-status-quiet"
+                    | _ -> "advisor-status");
                   Vdom.Attr.create "role" "status";
                   Vdom.Attr.create "aria-live" "polite";
                   Vdom.Attr.create "aria-atomic" "true";
                 ]
               [ text (notice locale view.notice) ];
           ];
-        Vdom.Node.div ~attrs:(cls "advisor-conversation-actions") actions;
       ])
 
+let plain_turns ~locale ~(view : C.view) ~dispatch =
+  render_turns ~locale ~snapshot:view.snapshot ~dispatch ~decided:(fun _ -> None) ~decide:(fun _ _ -> Effect.Ignore)
+    ~markdown:String.Map.empty ~can_retry:(can_retry view) ~chosen_attempts:String.Map.empty
+    ~choose_attempt:(fun ~turn_id:_ ~attempt_id:_ ~count:_ -> Effect.Ignore)
+
 let render ~locale ~(view : C.view) ~dispatch =
-  render_body ~attach:None
-    ~turns:(render_turns ~locale ~snapshot:view.snapshot ~dispatch ~decided:(fun _ -> None) ~decide:(fun _ _ -> Effect.Ignore) ~markdown:String.Map.empty)
-    ~show_source:true ~locale ~view ~dispatch
+  render_body ~attach:None ~turns:(plain_turns ~locale ~view ~dispatch) ~show_source:true ~intro:false ~opening:Vdom.Node.none
+    ~locale ~view ~dispatch
 
 let render_inline ~locale ~(view : C.view) ~dispatch =
-  render_body ~attach:None
-    ~turns:(render_turns ~locale ~snapshot:view.snapshot ~dispatch ~decided:(fun _ -> None) ~decide:(fun _ _ -> Effect.Ignore) ~markdown:String.Map.empty)
-    ~show_source:false ~locale ~view ~dispatch
+  render_body ~attach:None ~turns:(plain_turns ~locale ~view ~dispatch) ~show_source:false ~intro:false ~opening:Vdom.Node.none
+    ~locale ~view ~dispatch
 
 let consent ~locale ~(view : C.view) ~dispatch ~decline =
   match view.status with

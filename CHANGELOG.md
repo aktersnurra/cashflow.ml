@@ -2,6 +2,48 @@
 
 ## Unreleased
 
+### The accountant speaks first
+
+The app is modelled on working with an accountant, not on a chat app with some transaction logs. Design:
+`design/superpowers/specs/2026-11-04-accountant-review-design.md`.
+
+- **A conversation opens on the facts.** Where you stand this pay cycle, what needs a decision and what can be looked at,
+  each from a real finding with its figure. The greeting and canned questions are gone. Choosing a finding opens it on
+  the review, under its card; anything else can still be raised in the box below.
+- **Review and Matters.** The sidebar and search say Review ("Genomgång") and Matters ("Ärenden").
+- **A plainer voice.** The advisor keeps its bluntness, the verdict first and bad news once, and drops the Sam Vimes
+  character.
+
+### A quieter look, after Linear
+
+- Near-white and charcoal in place of cream, one accent, Inter bundled so every device matches, smaller headings and
+  tighter rows on a computer. What needs doing is a row with a status dot, not a tinted banner.
+
+### A sidebar, and one menu on a phone
+
+- **A sidebar.** Overview, Advisor, Transactions and Accounts sit in a compact sidebar with labels, search above them and
+  Settings at the foot. This replaces "One page": the bar of icons, the strip above Transactions and the links at the
+  foot of the Overview are gone, as the sidebar leads to all of them.
+- **One menu on a phone.** One row with one menu button, which opens the same sidebar as a drawer; in a conversation the
+  chat's own header is that row. Escape, a tap beside it or choosing a page closes it.
+
+### A better advisor chat
+
+Patterns taken from LibreChat and rebuilt in Bonsai; the streaming dot and progress shimmer are adapted from its MIT
+licensed stylesheet.
+
+- **A landing.** A new conversation opens with its greeting and composer in the middle of the page, and four questions
+  under them that send with a click. On a phone the composer stays docked and the questions sit above it.
+- **The composer stays put.** On a computer it rests at the foot of the screen, however short the conversation.
+- **Progress in the answer.** "Thinking…" and "Checking your numbers…" while there is nothing to read yet, then a dot
+  after the last words as they arrive. How an answer ended shows on the answer; screen readers still get it from the
+  status region.
+- **Tools under the answer.** Copy, and Retry when an answer stopped or failed. A retry no longer stacks under the
+  answer before it: a 2/2 switcher moves between the attempts of a turn.
+- **A way back.** A round button over the send button returns to the latest message, shown only away from it.
+- **Quieter evidence.** What an answer looked at is a line that opens, keeping its "Check data" warning. Proposals stay
+  cards, as they ask for a decision.
+
 ### Your accountant's briefing
 
 - **A calmer Overview.** The month is the page's title (the year only when it isn't this one); tapping it lists the

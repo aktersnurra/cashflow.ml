@@ -7,4 +7,5 @@ val component :
   route:Route.t Bonsai.t ->
   on_select:(string -> unit Effect.t) Bonsai.t ->
   on_new:(W.scope -> unit Effect.t) Bonsai.t ->
+  menu_button:Vdom.Node.t Bonsai.t ->
   Bonsai.graph -> Vdom.Node.t Bonsai.t

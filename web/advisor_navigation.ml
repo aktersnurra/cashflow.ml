@@ -60,7 +60,7 @@ let date_caption locale now value =
         | Older -> format "toLocaleDateString" ["month","short";"day","numeric"] in
       group,label
 
-let component ~locale ~advisor ~route ~on_select ~on_new graph =
+let component ~locale ~advisor ~route ~on_select ~on_new ~menu_button graph =
   let menu, set_menu = Bonsai.state ~equal:Poly.equal Closed graph in
   let mobile, set_mobile = Bonsai.state ~equal:Bool.equal (H.is_mobile ()) graph in
   let source = Bonsai.cutoff (let%arr advisor in title_source advisor.Advisor.view) ~equal:Poly.equal in
@@ -83,7 +83,7 @@ let component ~locale ~advisor ~route ~on_select ~on_new graph =
     ~callback:(let%arr set_menu in fun _ -> set_menu Closed) graph;
   Bonsai.Edge.on_change ~equal:Route.equal route
     ~callback:(let%arr set_menu in fun _ -> set_menu Closed) graph;
-  let%arr advisor and locale and title and formatted and menu and set_menu and mobile and set_mobile and on_select and on_new in
+  let%arr advisor and locale and title and formatted and menu and set_menu and mobile and set_mobile and on_select and on_new and menu_button in
   let view = advisor.Advisor.view in
   let text = Vdom.Node.text in
   let close restore = Effect.Many [set_menu Closed;
@@ -167,7 +167,9 @@ let component ~locale ~advisor ~route ~on_select ~on_new graph =
   Vdom.Node.div ~attrs:[Vdom.Attr.class_ "advisor-navigation";
     (if Poly.equal menu Closed then Vdom.Attr.empty else Vdom.Attr.create "data-menu-open" "");
     Vdom.Attr.create_hook "advisor-navigation-viewport" (H.Viewport.create {on_change=(fun value -> Effect.Expert.handle_non_dom_event_exn (set_mobile value))})]
-    [Vdom.Node.button ~attrs:[Vdom.Attr.class_ "advisor-title-button";Vdom.Attr.type_ "button";
+    [(* On a phone this row is the page's whole header, so the menu lives in it. *)
+     menu_button;
+     Vdom.Node.button ~attrs:[Vdom.Attr.class_ "advisor-title-button";Vdom.Attr.type_ "button";
        Vdom.Attr.create "aria-label" (Msg.advisor_switch_conversation locale ~title);Vdom.Attr.create "aria-haspopup" "menu";
        Vdom.Attr.create "aria-controls" "advisor-history-menu";Vdom.Attr.create "aria-expanded" (Bool.to_string (Poly.equal menu History));
        Vdom.Attr.on_click (fun _ -> if Poly.equal menu History then close true else open_history);
@@ -177,12 +179,7 @@ let component ~locale ~advisor ~route ~on_select ~on_new graph =
            Effect.Many [Effect.Prevent_default; (if Poly.equal menu History then Effect.of_thunk (fun () ->
              Js.Opt.iter (Dom_html.document##querySelector (Js.string ".advisor-history-panel")) H.focus_first) else open_history)]
          else Effect.Ignore)]
-       [(* On a phone the conversation list opens from a round menu button, as in a native chat app. *)
-        Vdom.Node.span ~attrs:[Vdom.Attr.class_ "advisor-title-menu";Vdom.Attr.create "aria-hidden" "true"]
-          [Vdom.Node.create_svg "svg" ~attrs:[Vdom.Attr.create "viewBox" "0 0 24 24";Vdom.Attr.create "width" "20";Vdom.Attr.create "height" "20";
-             Vdom.Attr.create "fill" "none";Vdom.Attr.create "stroke" "currentColor";Vdom.Attr.create "stroke-width" "2";Vdom.Attr.create "stroke-linecap" "round"]
-             [Vdom.Node.create_svg "path" ~attrs:[Vdom.Attr.create "d" "M5 8h14M5 12h10M5 16h14"] []]];
-        Vdom.Node.span ~attrs:[Vdom.Attr.class_ "advisor-title-text";Vdom.Attr.create "dir" "auto"] [text title];
+       [Vdom.Node.span ~attrs:[Vdom.Attr.class_ "advisor-title-text";Vdom.Attr.create "dir" "auto"] [text title];
         Vdom.Node.create_svg "svg" ~attrs:[Vdom.Attr.class_ "advisor-title-chevron";Vdom.Attr.create "viewBox" "0 0 24 24";
           Vdom.Attr.create "width" "16";Vdom.Attr.create "height" "16";Vdom.Attr.create "fill" "none";Vdom.Attr.create "stroke" "currentColor";
           Vdom.Attr.create "stroke-width" "2";Vdom.Attr.create "stroke-linecap" "round";Vdom.Attr.create "stroke-linejoin" "round";
