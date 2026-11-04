@@ -25,7 +25,7 @@ type status = {
   household_known : bool; (* Absent legacy metadata is unknown, not confirmed membership loss. *)
 }
 type conversation_preview = { title : string; scope : W.scope }
-type metadata = { conversation_id : string; version : string; updated_at : string; preview : conversation_preview option }
+type metadata = { conversation_id : string; version : string; updated_at : string; preview : conversation_preview option; matter : W.matter }
 type history_page = { conversations : metadata list; next_offset : int option }
 type connection = Disconnected | Connecting | Connected | Reconnecting
 type pending = Submit of W.submit | Retry of W.retry
@@ -38,6 +38,7 @@ type command =
   | Subscribe of token * W.identities * string
   | Unsubscribe
   | Delete_conversation of token * string
+  | Set_matter_state of token * string * W.matter
   | Announce_status of notice
   | Get_status of token
   | Set_consent of token * bool * string option
@@ -52,7 +53,6 @@ type action =
   | Consume_first_acceptance of string
   | Leave_surface
   | Open_conversation of string
-  | Open_latest
   | Open_empty of W.scope * W.currency * string
   | Open_finding of string * W.scope * W.currency * string
   | Draft_changed of string
@@ -63,6 +63,7 @@ type action =
   | Reconnect
   | Delete
   | Delete_owned of string
+  | Set_matter of W.matter
   | Consent of bool * string option
   | Refresh_status
   | Load_history of int
@@ -72,6 +73,7 @@ type action =
   | History of token * (history_page, failure) result
   | Consent_result of token * (unit, failure) result
   | Deleted of token * (unit, failure) result
+  | Matter_set of token * (W.matter, failure) result
   | Stopped of token * (string, failure) result
   | Stream_invalid of token
   | Event of token * W.event

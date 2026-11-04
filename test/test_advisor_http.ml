@@ -748,6 +748,60 @@ let history_titles () =
       Alcotest.(check bool) "end cursor" true (page |> member "next_offset" = `Null);
       Alcotest.(check int) "history titles do not call model" 0 !calls)
 
+let matter_endpoints () =
+  fixture ~available:true (fun _ service token _ req ->
+      let open Yojson.Safe.Util in
+      ignore (req ~meth:POST ~body:"{\"enabled\":true}" "/api/advisor/consent");
+      let command =
+        W.encode_submit
+          {
+            W.conversation_id = None;
+            scope = Personal;
+            currency = { code = "SEK"; scale = 2 };
+            locale = "en";
+            user_text = "synthetic";
+            idempotency_key = "matter";
+            expected_version = "0";
+            source_finding_key = None;
+          }
+      in
+      let accepted = ok (W.decode_accepted (body (req ~meth:POST ~body:command "/api/advisor/turns"))) in
+      let path = "/api/advisor/conversations/" ^ accepted.ids.conversation_id in
+      let set state = req ~meth:POST ~body:(Printf.sprintf "{\"state\":%S}" state) (path ^ "/state") in
+      let listed query = body (req ("/api/advisor/conversations" ^ query)) |> Yojson.Safe.from_string |> member "conversations" |> to_list in
+      let state_of row = member "state" row |> to_string in
+      Alcotest.(check (list string)) "a new matter is open" [ "open" ] (List.map state_of (listed ""));
+      Alcotest.(check int) "an unknown state is refused" 422 (status (set "closed"));
+      Alcotest.(check int) "extra fields are refused" 422
+        (status (req ~meth:POST ~body:"{\"state\":\"parked\",\"x\":1}" (path ^ "/state")));
+      Alcotest.(check int) "a bad filter is refused" 422 (status (req "/api/advisor/conversations?state=closed"));
+      Alcotest.(check int) "needs the CSRF token" 403
+        (status
+           (req ~meth:POST ~body:"{\"state\":\"parked\"}"
+              ~headers:[ ("cookie", Web_auth.session_cookie ^ "=" ^ token); ("origin", "https://cashflow.example"); ("content-type", "application/json") ]
+              (path ^ "/state")));
+      let parked = set "parked" in
+      Alcotest.(check int) "parks" 200 (status parked);
+      Alcotest.(check string) "says what it is now" "parked"
+        (body parked |> Yojson.Safe.from_string |> member "state" |> to_string);
+      Alcotest.(check int) "gone from the open list" 0 (List.length (listed "?state=open"));
+      Alcotest.(check (list string)) "in the parked list" [ "parked" ] (List.map state_of (listed "?state=parked"));
+      Alcotest.(check bool) "the snapshot agrees" true
+        ((ok (W.decode_snapshot (body (req path)))).matter = W.Parked);
+      Alcotest.(check int) "GET is not allowed" 405 (status (req (path ^ "/state")));
+      let other = Test_service_support.sign_in service "other" in
+      let other_token = Web_auth.create_session service.db ~now (Access.user other) in
+      let other_csrf = (Option.get (Web_auth.inspect_session service ~now (Web_auth.session_ref other_token))).csrf_token in
+      Alcotest.(check int) "another person's matter stays hidden" 404
+        (status
+           (req ~meth:POST ~body:"{\"state\":\"decided\"}"
+              ~headers:
+                [ ("cookie", Web_auth.session_cookie ^ "=" ^ other_token); ("x-csrf-token", other_csrf);
+                  ("origin", "https://cashflow.example"); ("content-type", "application/json") ]
+              (path ^ "/state")));
+      ignore (req ~meth:POST ~body:"{\"enabled\":false}" "/api/advisor/consent");
+      Alcotest.(check int) "without consent it can't be changed" 403 (status (set "decided")))
+
 let memory_endpoints () =
   fixture (fun _ _ token _ req ->
       let open Yojson.Safe.Util in
@@ -1282,6 +1336,7 @@ let () =
           Alcotest.test_case "origin and unavailable" `Quick origin_and_fields;
           Alcotest.test_case "commands idempotency retry deletion" `Quick commands;
           Alcotest.test_case "memory notes endpoints" `Quick memory_endpoints;
+          Alcotest.test_case "matter status endpoints" `Quick matter_endpoints;
           Alcotest.test_case "proposal endpoints" `Quick proposal_endpoints;
           Alcotest.test_case "categorize proposal endpoints" `Quick categorize_proposal_endpoints;
           Alcotest.test_case "undo endpoints" `Quick undo_endpoints;

@@ -946,6 +946,40 @@ let memory_cap_and_owners () =
   error_code A.Not_found (Advisor_store.forget_memory store ~owner:stranger ~id:mine.id);
   Alcotest.(check int) "the owner's notes are untouched" Advisor_store.memory_limit (List.length (ok (Advisor_store.memories store ~owner)))
 
+let matter_state () =
+  with_fixture @@ fun _ store owner _ ->
+  let first = accept store owner (submit "first") in
+  let id = first.ids.conversation_id in
+  fail store first.ids.run_id;
+  let matter () = (ok (Advisor_store.snapshot store ~owner id)).matter in
+  let listed state = List.length (ok (Advisor_store.list store ~owner ~matter:state ())) in
+  Alcotest.(check bool) "a new matter is open" true (matter () = A.Open);
+  Alcotest.(check int) "listed as open" 1 (listed A.Open);
+  ok (Advisor_store.set_matter store ~owner id A.Parked);
+  Alcotest.(check bool) "the snapshot says parked" true (matter () = A.Parked);
+  Alcotest.(check bool) "so does the metadata" true ((ok (Advisor_store.metadata store ~owner id)).matter = A.Parked);
+  Alcotest.(check int) "no longer open" 0 (listed A.Open);
+  Alcotest.(check int) "listed as parked" 1 (listed A.Parked);
+  let unfiltered = ok (Advisor_store.list store ~owner ()) in
+  Alcotest.(check bool) "the whole list carries the state" true
+    (List.map (fun (e : Advisor_store.history_entry) -> e.conversation.matter) unfiltered = [ A.Parked ]);
+  let version = (ok (Advisor_store.metadata store ~owner id)).version in
+  Alcotest.(check bool) "a status isn't a new turn, so a reply's expected version still holds" true (version = first.accepted_version);
+  let stranger = User_id.of_string "00000000-0000-4000-8000-000000000000" |> Option.get in
+  error_code A.Not_found (Advisor_store.set_matter store ~owner:stranger id A.Decided);
+  Alcotest.(check bool) "a stranger can't change it" true (matter () = A.Parked);
+  let repeated = accept store owner (submit "first") in
+  Alcotest.(check bool) "a repeated request is not a reply" true (repeated.idempotent_repeat && matter () = A.Parked);
+  let retried : A.retry =
+    { turn_id = first.ids.turn_id; expected_version = version; idempotency_key = Test_service_support.key "matter-retry" }
+  in
+  let second = ok (Advisor_store.retry store ~owner ~session ~now ~model:"synthetic" retried) in
+  Alcotest.(check bool) "trying again takes it up again" true (matter () = A.Open);
+  fail store second.ids.run_id;
+  ok (Advisor_store.set_matter store ~owner id A.Decided);
+  ignore (accept store owner (submit ~conversation:id ~version:second.accepted_version "matter-reply"));
+  Alcotest.(check bool) "replying reopens a decided matter" true (matter () = A.Open)
+
 let () =
   Alcotest.run "advisor_store"
     [
@@ -977,5 +1011,6 @@ let () =
             ("memory_validation", memory_validation);
             ("memory_cap_and_owners", memory_cap_and_owners);
             ("memory_follows_the_user", memory_follows_the_user);
+            ("matter_state", matter_state);
           ] );
     ]

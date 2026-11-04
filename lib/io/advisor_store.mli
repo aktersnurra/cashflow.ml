@@ -12,6 +12,7 @@ type metadata = {
   version : int64;
   updated_at : Ptime.t;
   active_run : A.Run_id.t option;
+  matter : A.matter;
 }
 
 type history_entry = { conversation : metadata; title : string option }
@@ -118,8 +119,14 @@ val update_memory : t -> owner:Cashflow_core.User_id.t -> now:Ptime.t -> id:stri
 val forget_memory : t -> owner:Cashflow_core.User_id.t -> id:string -> (unit, A.error) result
 (** Deletes the row. Another owner's or an unknown id is [Not_found]. *)
 
-val list : t -> owner:Cashflow_core.User_id.t -> ?limit:int -> ?offset:int -> unit -> (history_entry list, A.error) result
-(** Owner-bound preview projection. The caller must still authorize history before disclosure. *)
+val list :
+  t -> owner:Cashflow_core.User_id.t -> ?limit:int -> ?offset:int -> ?matter:A.matter -> unit -> (history_entry list, A.error) result
+(** Owner-bound preview projection, optionally only the matters in one state. The caller must still authorize history
+    before disclosure. *)
+
+val set_matter : t -> owner:Cashflow_core.User_id.t -> A.Conversation_id.t -> A.matter -> (unit, A.error) result
+(** Says where a matter stands. Neither its version nor its place in the list changes, as no turn was added. Unknown and
+    other-owner IDs both return [Not_found]; a new turn or retry sets it back to [Open]. *)
 val metadata : t -> owner:Cashflow_core.User_id.t -> A.Conversation_id.t -> (metadata, A.error) result
 val find_run : t -> owner:Cashflow_core.User_id.t -> A.Run_id.t -> (A.run, A.error) result
 (** Unknown and other-owner IDs both return [Not_found], including terminal runs. *)

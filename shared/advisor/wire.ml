@@ -57,6 +57,8 @@ type finding = { kind : string; key : string; scope : scope; title : string; sum
 type display_value = Text of string | Money of money | Date of string
 type fact = { label : string; value : display_value }
 type import_status = Current | Stale | Incomplete | Unknown
+type matter = Open | Decided | Parked
+
 type proposal_state = Awaiting | Applied | Declined | Out_of_date | Not_applied | Lapsed | Reverted
 
 type evidence = {
@@ -131,6 +133,7 @@ type snapshot = {
   turns : turn list;
   active_run : string option;
   version : string;
+  matter : matter;
 }
 
 type decode_error = Invalid_json | Invalid_field of string | Unknown_variant of string | Unknown_version
@@ -506,6 +509,9 @@ let import_status_of_json j =
   | "Unknown" -> Unknown
   | s -> raise (Decode (Unknown_variant s))
 
+let matter_to_string = function Open -> "open" | Decided -> "decided" | Parked -> "parked"
+let matter_of_string = function "open" -> Some Open | "decided" -> Some Decided | "parked" -> Some Parked | _ -> None
+
 let proposal_state_to_string = function
   | Awaiting -> "awaiting" | Applied -> "applied" | Declined -> "declined" | Out_of_date -> "out_of_date" | Not_applied -> "not_applied" | Lapsed -> "lapsed" | Reverted -> "reverted"
 
@@ -740,6 +746,7 @@ let snapshot_to_json (v : snapshot) =
       ("turns", jlist (fun x -> turn_to_json x) v.turns);
       ("active_run", joption (fun x -> `String x) v.active_run);
       ("version", `String v.version);
+      ("matter", `String (matter_to_string v.matter));
     ]
 
 let snapshot_of_json j : snapshot =
@@ -752,6 +759,11 @@ let snapshot_of_json j : snapshot =
     turns = list (fun x -> turn_of_json x) (field "turns" j);
     active_run = option (fun x -> uuid (str x)) (field "active_run" j);
     version = counter (str (field "version" j));
+    (* A conversation's stored descriptor predates this field; its column is what counts. *)
+    matter =
+      (match List.assoc_opt "matter" (fields j) with
+      | None -> Open
+      | Some m -> (match matter_of_string (str m) with Some x -> x | None -> invalid "matter"));
   }
 
 let same_currency (a : currency) (b : currency) = a.code = b.code && a.scale = b.scale

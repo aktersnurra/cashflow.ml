@@ -187,6 +187,20 @@ let memory_text json =
   let* fields = object_fields [ "text" ] json in
   match List.assoc_opt "text" fields with Some (`String text) -> Ok text | _ -> Error invalid
 
+let matter_name matter = W.matter_of_string matter |> Option.map Advisor_codec.matter_in
+
+let matter_body json =
+  let* fields = object_fields [ "state" ] json in
+  match List.assoc_opt "state" fields with
+  | Some (`String state) -> Option.to_result ~none:invalid (matter_name state)
+  | _ -> Error invalid
+
+let matter_filter query =
+  match List.assoc_opt "state" query with
+  | None -> Ok None
+  | Some [ state ] -> Result.map Option.some (Option.to_result ~none:invalid (matter_name state))
+  | Some _ -> Error invalid
+
 let route t req p path query parsed =
   let result f = match f () with Ok r -> r | Error e -> error e in
   match (req.meth, path) with
@@ -284,10 +298,11 @@ let route t req p path query parsed =
       result (fun () ->
           let* limit = query_int query "limit" 20 100 in
           let* offset = query_int query "offset" 0 max_int in
+          let* matter = matter_filter query in
           if limit = 0 then Error invalid
           else
             read t p (fun user store ->
-                let* entries = Advisor_store.list store ~owner:user.id ~limit ~offset () in
+                let* entries = Advisor_store.list store ~owner:user.id ~limit ~offset ?matter () in
                 (* Advance over the owned page, including rows whose current scope
                    is no longer readable. Their private previews are never emitted. *)
                 let next_offset = if List.length entries = limit && offset <= max_int - limit
@@ -302,6 +317,7 @@ let route t req p path query parsed =
                       ("version", `String (Int64.to_string m.version));
                       ("updated_at", `String (Ptime.to_rfc3339 m.updated_at));
                       ("title", match entry.title with Some title -> `String title | None -> `Null);
+                      ("state", `String (W.matter_to_string (Advisor_codec.matter_out m.matter)));
                       ("scope", match m.scope with
                         | A.Personal -> `Assoc [("type", `String "Personal")]
                         | Household id -> `Assoc [("type", `String "Household"); ("value", `String (Household_id.to_string id))]);
@@ -315,6 +331,14 @@ let route t req p path query parsed =
               let* () = X.authorize_history t.service p id in
               let* snapshot = Advisor_store.snapshot store ~owner:user.id id in
               Ok (Buffered (200, headers, W.encode_snapshot (Advisor_codec.snapshot snapshot)))))
+  | POST, [ "conversations"; id; "state" ] ->
+      result (fun () ->
+          let* matter = matter_body (Option.get parsed) in
+          let* id = conversation_id id in
+          let* () = Sql.read_snapshot t.service.db (fun () -> X.authorize_history t.service p id) in
+          write t p (fun user store ->
+              let* () = Advisor_store.set_matter store ~owner:user.id id matter in
+              Ok (json 200 (`Assoc [ ("state", `String (W.matter_to_string (Advisor_codec.matter_out matter))) ]))))
   | POST, [ "conversations"; id; "delete" ] ->
       result (fun () ->
           let* () = unit_body (Option.get parsed) in
@@ -351,6 +375,7 @@ let route t req p path query parsed =
       | [ "conversations"; _ ]
       | [ "turns"; _; "retry" ]
       | [ "conversations"; _; "delete" ]
+      | [ "conversations"; _; "state" ]
       | [ "runs"; _; "cancel" ]
       | [ "runs"; _; "events" ] ) ) ->
       code 405 "Method_not_allowed"

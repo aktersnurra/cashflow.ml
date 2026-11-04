@@ -150,6 +150,7 @@ let snapshot : W.snapshot =
       ];
     active_run = None;
     version = "2";
+    matter = W.Open;
   }
 
 let ok = function Ok v -> v | Error _ -> Alcotest.fail "unexpected codec error"
@@ -283,6 +284,7 @@ let roundtrips () =
       turns = [];
       active_run = Some native_ids.run_id;
       version = 2L;
+      matter = Open;
     }
   in
   check "native snapshot projection" true

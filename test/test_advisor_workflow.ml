@@ -565,6 +565,7 @@ let history () =
       turns;
       active_run = None;
       version = 1L;
+      matter = A.Open;
     }
   in
   let turns =
@@ -605,7 +606,7 @@ let proposal_outcomes () =
   let said evidence_cards =
     let segments = A.Text_segment { segment_id = context.segment_id; text = "ok" } :: List.map (fun e -> A.Evidence_segment e) evidence_cards in
     let snapshot : A.snapshot =
-      { conversation_id = ids.conversation_id; scope = A.Personal; currency; locale = "en"; source_finding = None; active_run = None; version = 1L;
+      { conversation_id = ids.conversation_id; scope = A.Personal; currency; locale = "en"; source_finding = None; active_run = None; matter = A.Open; version = 1L;
         turns = [ { A.turn_id = ids.turn_id; user_message_id = ids.user_message_id; user_text = "u"; attempts = [ attempt segments ] } ] }
     in
     (List.hd (Result.get_ok (W.select_history snapshot))).assistant_text

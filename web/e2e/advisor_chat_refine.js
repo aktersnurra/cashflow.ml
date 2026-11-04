@@ -48,7 +48,7 @@ const starter = 'How much can I spend until payday?';
   assert.equal(bodies.length,1);assert.ok(bodies[0].includes(starter));
   await page.getByText('first',{exact:true}).waitFor();
   assert.equal(await opening.count(),0,'the opening leaves when the conversation starts');
-  assert.equal(await page.getByText(/Advisor can explain/).count(),0,'the intro leaves with it');
+  assert.equal(await page.getByText(/I can explain/).count(),0,'the intro leaves with it');
 
   // A short conversation still has its composer at the foot of the screen.
   const area_box = await area().boundingBox();
@@ -121,7 +121,7 @@ const starter = 'How much can I spend until payday?';
   // A computer has one sidebar with labels; nothing else navigates.
   const side = name => page.locator('.sidebar').getByRole('link',{name,exact:true});
   const here = async (name,url) => {await page.waitForURL(url);await page.locator(`.sidebar a[aria-current="page"][aria-label="${name}"]`).waitFor({timeout:4000});};
-  assert.deepEqual(await page.locator('.sidebar a').evaluateAll(as=>as.map(a=>a.getAttribute('aria-label'))),['Review','Matters','Transactions','Accounts','Settings']);
+  assert.deepEqual(await page.locator('.sidebar a.nav-link').evaluateAll(as=>as.map(a=>a.getAttribute('aria-label'))),['Review','Matters','Transactions','Accounts','Settings']);
   assert.equal(await page.locator('.topbar').isVisible(),false,'no bar above the page');
   assert.equal(await page.locator('.menu-button:visible').count(),0,'no menu button beside a sidebar');
   await here('Matters',/\/advisor/);
@@ -193,7 +193,7 @@ const starter = 'How much can I spend until payday?';
   small.on('pageerror',e=>errors.push(e.message));
   await small.goto(base+'/advisor');
   await small.locator('.advisor-title-button').click();
-  await small.getByRole('menuitem',{name:'New conversation',exact:true}).click();
+  await small.getByRole('menuitem',{name:'New matter',exact:true}).click();
   const small_topics = small.locator('.advisor-opening button');
   await small_topics.first().waitFor();
   await small.locator('.advisor-opening').getByRole('button',{name:/What do you pay regularly/}).waitFor();
@@ -207,7 +207,7 @@ const starter = 'How much can I spend until payday?';
 
   // A topic opens as a conversation about that finding, with its question and figures, not as a blank page.
   await small.locator('.advisor-title-button').click();
-  await small.getByRole('menuitem',{name:'New conversation',exact:true}).click();
+  await small.getByRole('menuitem',{name:'New matter',exact:true}).click();
   await small.locator('.advisor-opening').getByRole('button',{name:/What do you pay regularly/}).click();
   await small.locator('.advisor-opening').waitFor({state:'detached'});
   const card = small.locator('.page:visible [data-finding-key]',{hasText:'What do you pay regularly?'});

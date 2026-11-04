@@ -25,6 +25,7 @@ let snapshot : W.snapshot =
     turns = [ { turn_id = "t"; user_message_id = "u"; user_text = "hej"; attempts = [ attempt ] } ];
     active_run = Some "r";
     version = "1";
+    matter = W.Open;
   }
 
 let apply s a = fst (C.reduce s a)
@@ -191,16 +192,12 @@ let concurrent_and_consent () =
 
 let list_races () =
   let s = apply C.empty C.Activate in
-  let s, cs = C.reduce s C.Open_latest in
-  let old = token_of (function C.List_conversations (t, 1, 0) -> Some t | _ -> None) cs in
   let s = apply s (C.Open_empty (W.Personal, snapshot.currency, "en")) in
-  let s, cs = C.reduce s (C.History (old, Ok (history_page [{conversation_id="c"; version="1"; updated_at="now"; preview=None}]))) in
-  Alcotest.(check int) "stale latest cannot select" 0 (List.length cs);
   let s, cs = C.reduce s (C.Load_history 0) in
   let old = token_of (function C.List_conversations (t, _, _) -> Some t | _ -> None) cs in
   let s, cs = C.reduce s (C.Load_history 0) in
   let newer = token_of (function C.List_conversations (t, _, _) -> Some t | _ -> None) cs in
-  let page : C.metadata list = [{conversation_id="current-page"; version="2"; updated_at="now"; preview=None}] in
+  let page : C.metadata list = [{conversation_id="current-page"; version="2"; updated_at="now"; preview=None; matter=W.Open}] in
   let s = apply s (C.History (old, Error C.Access_lost)) |> fun s -> apply s (C.History (newer, Ok (history_page page))) in
   let s = apply s (C.Draft_changed "still active") in
   Alcotest.(check string) "stale page denial preserves active draft" "still active" (C.view s).draft;
@@ -331,25 +328,13 @@ let session_and_owned_deletion () =
 
 let delayed_readiness () =
   List.iter
-    (fun (selection, latest_empty) ->
+    (fun selection ->
       List.iter
         (fun (status : C.status) ->
           let s, cs = C.reduce C.empty C.Activate in
           let original = token_of (function C.Get_status t -> Some t | _ -> None) cs in
           let s, cs = C.reduce s selection in
-          let s, more =
-            match selection with
-            | C.Open_latest ->
-                let t = token_of (function C.List_conversations (t, _, _) -> Some t | _ -> None) cs in
-                C.reduce s
-                  (C.History
-                     ( t,
-                       Ok
-                         (history_page (if latest_empty then [] else [{conversation_id="c"; version="1"; updated_at="now"; preview=None}]))
-                     ))
-            | _ -> (s, [])
-          in
-          let effective = List.fold_left (fun old -> function C.Get_status t -> t | _ -> old) original (cs @ more) in
+          let effective = List.fold_left (fun old -> function C.Get_status t -> t | _ -> old) original cs in
           let s = apply s (C.Status (effective, Ok status)) in
           Alcotest.(check bool) "delayed initial readiness reaches view" true ((C.view s).status = Some status);
           let s = apply s (C.Status (original, Error C.Session_lost)) in
@@ -364,11 +349,9 @@ let delayed_readiness () =
           Alcotest.(check bool) "new-session readiness still applies" true ((C.view s).status = Some status))
         [ { available = false; consent = true; household = None; household_known = true }; { available = true; consent = false; household = None; household_known = true } ])
     [
-      (C.Open_empty (W.Personal, snapshot.currency, "en"), false);
-      (C.Open_finding ("finding", W.Personal, snapshot.currency, "en"), false);
-      (C.Open_conversation "c", false);
-      (C.Open_latest, false);
-      (C.Open_latest, true);
+      C.Open_empty (W.Personal, snapshot.currency, "en");
+      C.Open_finding ("finding", W.Personal, snapshot.currency, "en");
+      C.Open_conversation "c";
     ]
 
 let definitive_post_rejection () =
@@ -705,7 +688,7 @@ let revoked_pending_household_context () =
 
 let history_append () =
   let s = apply C.empty C.Activate |> fun s -> apply s (C.Open_empty (W.Personal, snapshot.currency, "en")) in
-  let entry id : C.metadata = {conversation_id=id; version="1"; updated_at="2026-10-25T12:00:00Z"; preview=None} in
+  let entry id : C.metadata = {conversation_id=id; version="1"; updated_at="2026-10-25T12:00:00Z"; preview=None; matter=W.Open} in
   let s, commands = C.reduce s (C.Load_history 0) in
   let first = token_of (function C.List_conversations (token, _, _) -> Some token | _ -> None) commands in
   let s = apply s (C.History (first, Ok (history_page ~next_offset:20 [entry "newest"]))) in
@@ -730,7 +713,7 @@ let history_preview_revocation () =
     let stream = token_of (function C.Subscribe (token, _, _) -> Some token | _ -> None) commands in
     let s = apply s (C.Draft_changed "personal draft survives") in
     let entry id scope : C.metadata = {conversation_id=id; version="1"; updated_at="2026-10-25T12:00:00Z";
-      preview=Some {C.title=id; scope}} in
+      preview=Some {C.title=id; scope}; matter=W.Open} in
     let personal = entry "personal preview" W.Personal and household = entry "private household preview" (W.Household "h") in
     let s, commands = C.reduce s (C.Load_history 0) in
     let token = token_of (function C.List_conversations (token, _, _) -> Some token | _ -> None) commands in
@@ -757,6 +740,30 @@ let history_preview_revocation () =
     let s = apply s (C.Event (stream, event 1 delta)) |> fun s -> apply s (C.Flush stream) in
     Alcotest.(check string) "personal stream remains current" "héllo <img onerror=evil()>" (text s)
   ) ["membership"; "consent"; "legacy"]
+
+let matter_status () =
+  let s = apply C.empty C.Activate in
+  let _, cs = C.reduce s (C.Set_matter W.Parked) in
+  Alcotest.(check int) "nothing to set without a conversation" 0 (List.length cs);
+  let s, cs = C.reduce s (C.Open_conversation "c") in
+  let s = apply s (C.Snapshot (snapshot_token cs, Ok {snapshot with active_run=None; turns=[]})) in
+  let s, cs = C.reduce s (C.Set_matter W.Parked) in
+  let token = token_of (function C.Set_matter_state (t, "c", W.Parked) -> Some t | _ -> None) cs in
+  Alcotest.(check bool) "unchanged until the server says so" true
+    (Option.map (fun (x : W.snapshot) -> x.matter) (C.view s).snapshot = Some W.Open);
+  let failed = apply s (C.Matter_set (token, Error C.Rejected)) in
+  Alcotest.(check bool) "a refusal leaves it as it was" true
+    (Option.map (fun (x : W.snapshot) -> x.matter) (C.view failed).snapshot = Some W.Open);
+  let s = apply s (C.Matter_set (token, Ok W.Parked)) in
+  Alcotest.(check bool) "the snapshot shows it" true
+    (Option.map (fun (x : W.snapshot) -> x.matter) (C.view s).snapshot = Some W.Parked);
+  let s, cs = C.reduce s (C.Set_matter W.Decided) in
+  let stale = token_of (function C.Set_matter_state (t, _, _) -> Some t | _ -> None) cs in
+  let s, cs = C.reduce s (C.Open_conversation "other") in
+  let s = apply s (C.Snapshot (snapshot_token cs, Ok {snapshot with conversation_id="other"; active_run=None; turns=[]})) in
+  let s = apply s (C.Matter_set (stale, Ok W.Decided)) in
+  Alcotest.(check bool) "a late answer can't touch the next conversation" true
+    (Option.map (fun (x : W.snapshot) -> x.matter) (C.view s).snapshot = Some W.Open)
 
 let () =
   Alcotest.run "advisor client state"
@@ -791,7 +798,8 @@ let () =
             ("Stop errors", stop_error);
             ("retry prior attempts", retry_partials);
             ("request lanes and household consent", concurrent_and_consent);
-            ("latest and pagination races", list_races);
+            ("pagination races", list_races);
+            ("matter status", matter_status);
             ("bounded buffering", bounds);
           ] );
     ]

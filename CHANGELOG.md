@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Matters
+
+Each conversation with the accountant is now a matter that stands somewhere: open, decided or parked.
+
+- **Where it stands.** Once an answer is in, a row above the box asks, and a decided or parked matter says so with a way
+  to reopen it. Replying takes it up again.
+- **What's still open.** The sidebar lists open matters under Matters, and the opening names them under "Still open". On
+  a phone they're in the menu.
+- **Arriving at Matters.** It opens on the facts rather than resuming the latest conversation.
+- **The whole list.** The menu at the top of a matter groups them as Open, Parked and Decided, not by date.
+- **The words follow.** "New matter" and "Raise this" replace "New conversation" and "Ask advisor", in English and
+  Swedish, and answers no longer carry an "Advisor" label.
+
 ### The accountant speaks first
 
 The app is modelled on working with an accountant, not on a chat app with some transaction logs. Design:

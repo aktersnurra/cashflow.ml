@@ -1,5 +1,12 @@
 open Bonsai_web.Cont
 module W = Cashflow_advisor_protocol.Wire
+module C = Cashflow_advisor_protocol.Client_state
+
+val can_read_scope : C.status option -> W.scope -> bool
+val now_ms : unit -> float
+val age_caption : string -> float -> string -> string
+(** [age_caption locale now updated_at]: how long ago, for a row in a list of matters. *)
+
 
 val component :
   locale:string Bonsai.t ->

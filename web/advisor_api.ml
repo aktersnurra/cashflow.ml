@@ -105,8 +105,9 @@ let history_scope j =
        | _ -> None)
   | _ -> None
 
-let history ~limit ~offset =
-  request (sprintf "conversations?limit=%d&offset=%d" limit offset)
+let history ?matter ~limit ~offset () =
+  let state = Option.value_map matter ~default:"" ~f:(fun m -> "&state=" ^ W.matter_to_string m) in
+  request (sprintf "conversations?limit=%d&offset=%d%s" limit offset state)
     (json (fun j -> match field "conversations" j with
       | Some (`List xs) when List.length xs <= limit ->
           let entries = List.map xs ~f:(fun j ->
@@ -116,9 +117,10 @@ let history ~limit ~offset =
                   String.equal title (Cashflow_advisor_protocol.Conversation_title.of_first_message title) ->
                     Some (Some {C.title; scope})
               | _ -> None in
-            match str (field "conversation_id" j), str (field "version" j), str (field "updated_at" j), preview with
-            | Some conversation_id, Some version, Some updated_at, Some preview ->
-                Some {C.conversation_id; version; updated_at; preview}
+            match str (field "conversation_id" j), str (field "version" j), str (field "updated_at" j), preview,
+                  Option.bind (str (field "state" j)) ~f:W.matter_of_string with
+            | Some conversation_id, Some version, Some updated_at, Some preview, Some matter ->
+                Some {C.conversation_id; version; updated_at; preview; matter}
             | _ -> None) |> Option.all in
           let next = match field "next_offset" j with
             | None -> Some (if List.length xs=limit && offset <= Int.max_value-limit then Some (offset+limit) else None)
@@ -137,6 +139,11 @@ let cancel id =
          match str (field "state" j) with
          | Some (("queued" | "running" | "cancel_requested" | "completed" | "cancelled" | "failed") as s) -> Some s
          | _ -> None))
+
+let set_matter id matter =
+  request ~body:(Yojson.Safe.to_string (`Assoc [ ("state", `String (W.matter_to_string matter)) ]))
+    ("conversations/" ^ Js_of_ocaml.Url.urlencode id ^ "/state")
+    (json (fun j -> Option.bind (str (field "state" j)) ~f:W.matter_of_string))
 
 let delete id =
   request ~body:"{}"

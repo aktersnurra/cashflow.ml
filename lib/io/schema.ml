@@ -370,6 +370,13 @@ CREATE TABLE autofile_runs (
   PRIMARY KEY (user_id, ran_at)
 );
 |}
+    );
+    ( 15,
+      {|
+-- Where a conversation with the accountant stands. Replying takes it up again, so a new turn sets it back to open.
+ALTER TABLE advisor_conversations ADD COLUMN matter_state TEXT NOT NULL DEFAULT 'open'
+  CHECK (matter_state IN ('open', 'decided', 'parked'));
+|}
     ) ]
 
 let latest_version = List.fold_left (fun latest (version, _) -> max latest version) 0 migrations
