@@ -232,6 +232,16 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
   (* What is ahead: the forecast, then goals and budgets. *)
   let forecast = Forecast_page.section ~ctx ~visible graph in
   let goals = Budgets_page.section ~ctx ~visible graph in
+  let selected_cycle =
+    let%arr summary and offset in
+    match summary with
+    | Loaded json ->
+        let cycles = J.list (J.field "cycles" json) in
+        List.nth cycles (List.length cycles - 1 + offset)
+    | Loading | Failed _ -> None
+  in
+  let summary_code = let%arr summary in match summary with Loaded json -> J.str ~default:"SEK" (J.field "currency" json) | Loading | Failed _ -> "SEK" in
+  let past = Past_review.component ~ctx ~scope ~offset ~cycle:selected_cycle ~code:summary_code ~visible ~select:select_matter graph in
   let under_card = let%arr outlet in outlet ~opening:Vdom.Node.none in
   let briefing = Briefing_view.component ~ctx ~scope ~visible ~on_ask ~selected_finding ~outlet:under_card graph in
   let feed = Remote.load ~active:visible ~name:"get_attention_feed" ~args:(Bonsai.return (`Assoc [("narrative", `Bool false)])) ~ctx graph in
@@ -270,7 +280,7 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
         Effect.Many [navigate Route.Home; set_captured (Some (finding_key, cards)); on_ask ~finding_key ~scope:(Advisor_opening.card_scope session card); Advisor_opening.reveal_opened])
       graph
   in
-  let%arr opening and desk and forecast and goals and summary and outlook and categories and briefing and views and offset and set_offset and picking and set_picking and scope and set_scope and locale = ctx.locale and session = ctx.session
+  let%arr past and opening and desk and forecast and goals and summary and outlook and categories and briefing and views and offset and set_offset and picking and set_picking and scope and set_scope and locale = ctx.locale and session = ctx.session
   and navigate = ctx.navigate and outlet and selected_finding and visible_cards and advisor_route in
   let cycles = match summary with Loaded json -> J.list (J.field "cycles" json) | Loading | Failed _ -> [] in
   let code = match summary with Loaded json -> J.str ~default:"SEK" (J.field "currency" json) | Loading | Failed _ -> "SEK" in
@@ -280,8 +290,8 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
   let scopes =
     if Ctx.has_household session then [ ("me", Msg.label_personal locale); ("household", Msg.label_household locale); ("family", Msg.label_family locale) ] else []
   in
-  (* The month is the page's title, and picking another is tapping it: the last seven months, newest first. The
-     year is said only when it isn't this one. *)
+  (* The month is the page's title, and picking another is tapping it: every cycle loaded, newest first. The year is said
+     only when it isn't this one. *)
   let month_picker =
     let current_year = match List.last cycles with Some c -> String.prefix (J.str (J.field "cycle" c)) 4 | None -> "" in
     let name c =
@@ -289,7 +299,7 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
       let label = Fmt.month_label locale cycle in
       if String.equal (String.prefix cycle 4) current_year then String.chop_suffix_if_exists label ~suffix:(" " ^ current_year) else label
     in
-    let choices = List.filter_mapi cycles ~f:(fun i c -> let o = i - (List.length cycles - 1) in if o >= -6 then Some (o, c) else None) |> List.rev in
+    let choices = List.mapi cycles ~f:(fun i c -> (i - (List.length cycles - 1), c)) |> List.rev in
     Ui.div ~cls:("month-picker" ^ if picking then " open" else "")
       ([ Vdom.Node.button
            ~attrs:
@@ -485,6 +495,8 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
   let attention =
     match Map.data views with
     | [] -> Vdom.Node.none
+    (* What needs doing is about today, not about a month that is over. *)
+    | _ when offset <> 0 -> Vdom.Node.none
     | items ->
         (* What needs doing, as slim banners straight under the number; no heading needed. *)
         Ui.div ~cls:"attention" [ Ui.div ~cls:"attention-list" items ]
@@ -513,7 +525,7 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
            what needs doing beside the number, and what is ahead under it, on the right (placed by the stylesheet). *)
         [head; slot desk.files;
          Ui.div ~cls:"overview-cols"
-           [ Ui.div ~cls:"overview-main" [slot ~name:"slot-body" body; slot ~name:"slot-attention" attention; slot ~name:"slot-briefing" briefing_view; slot ~name:"slot-flow" flow_view];
+           [ Ui.div ~cls:"overview-main" [slot ~name:"slot-past" past; slot ~name:"slot-body" body; slot ~name:"slot-attention" attention; slot ~name:"slot-briefing" briefing_view; slot ~name:"slot-flow" flow_view];
              Ui.div ~cls:"overview-side" [ahead] ];
          slot box]);
      (if standalone then desk.files else Vdom.Node.none);

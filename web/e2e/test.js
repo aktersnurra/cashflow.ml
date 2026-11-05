@@ -102,11 +102,19 @@ Bokföringsdag;Text;Belopp;Saldo
           const at = sel => { const el = page.querySelector(sel); return el ? [...page.querySelectorAll('*')].indexOf(el) : -1; };
           return { attention: at('.attention'), figures: at('.figures'), flow: at('.flow') };
         });
-        // What needs doing sits directly under the number, as banners.
-        assert.ok(order.attention >= 0 && order.figures >= 0 && order.attention > order.figures, 'banners under the figures: ' + JSON.stringify(order));
+        // What needs doing is about today, so a month that is over doesn't show it.
+        assert.equal(order.attention, -1, "no to-dos under a past month: " + JSON.stringify(order));
         assert.equal(order.flow, -1, 'no chart while spending is mostly uncategorized');
         await page.locator('.page:visible .month-picker-button').click();
         await page.locator('.page:visible .month-menu [role=option]').first().click();
+        // This month, what needs doing sits directly under the number, as banners.
+        await page.locator('.page:visible .attention').waitFor({ timeout: 10000 });
+        const current = await page.evaluate(() => {
+          const page = [...document.querySelectorAll('.page')].find(p => p.offsetParent);
+          const at = sel => { const el = page.querySelector(sel); return el ? [...page.querySelectorAll('*')].indexOf(el) : -1; };
+          return { attention: at('.attention'), body: at('.slot-body > *') };
+        });
+        assert.ok(current.attention >= 0 && current.body >= 0 && current.attention > current.body, 'banners under the figures: ' + JSON.stringify(current));
       }
       await page.screenshot({ path: `${out}/${file}.png`, fullPage: true });
     }

@@ -963,6 +963,13 @@ let agreed_endpoints () =
            Alcotest.(check bool) "the record keeps it, undone" true (evidence.proposal = Some W.Reverted)
        | _ -> Alcotest.fail "expected the undone change on the record");
       Alcotest.(check int) "a bad limit is refused" 422 (status (req "/api/advisor/agreed?limit=0"));
+      let today = String.sub (Ptime.to_rfc3339 now) 0 10 in
+      let within first last = (ok (W.decode_agreed_page (body (req (Printf.sprintf "/api/advisor/agreed?from=%s&to=%s" first last))))).entries in
+      Alcotest.(check int) "one pay cycle's worth" 1 (List.length (within today today));
+      Alcotest.(check int) "a cycle long past has none" 0 (List.length (within "2001-01-01" "2001-01-31"));
+      Alcotest.(check int) "a bad date is refused" 422 (status (req "/api/advisor/agreed?from=soon&to=later"));
+      Alcotest.(check int) "half a range is refused" 422 (status (req ("/api/advisor/agreed?from=" ^ today)));
+      Alcotest.(check int) "a range the wrong way round is refused" 422 (status (req "/api/advisor/agreed?from=2001-02-01&to=2001-01-01"));
       Alcotest.(check int) "wrong method" 405 (status (req ~meth:H.OTHER "/api/advisor/agreed"));
       Alcotest.(check int) "needs a session" 401 (status (req ~headers:[] "/api/advisor/agreed"));
       let other = Test_service_support.sign_in service "agreed-other" in

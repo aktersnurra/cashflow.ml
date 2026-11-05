@@ -92,6 +92,17 @@ kbd { font: 11px/16px var(--mono); padding: 0 4px; border: 1px solid var(--line-
 .nav-matter:hover { background: var(--surface-2); color: var(--text); }
 .nav-matter[aria-current] { color: var(--text); font-weight: 500; }
 
+/* A past review: the cycle's dates and verdict, then how the budgets held and what was agreed. */
+.past-review { margin-bottom: 20px; }
+.past-period { color: var(--text-2); font-size: 13px; }
+.past-verdict { max-width: 65ch; margin: 4px 0 0; font-size: 16px; line-height: 24px; }
+.past-part { margin-top: 16px; }
+.past-part h2 { margin: 0 0 4px; font-size: 13px; font-weight: 500; }
+.past-agreed { display: flex; align-items: baseline; gap: 12px; padding: 6px 0; border-top: 1px solid var(--line); color: var(--text); text-decoration: none; }
+.past-agreed:hover { background: var(--surface); }
+.past-agreed-title { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.past-agreed-status { flex: none; color: var(--text-2); font-size: 13px; }
+
 /* What we agreed: a matter, where it stands, and what it changed. */
 .agreed-intro { margin: -8px 0 20px; color: var(--text-2); }
 .agreed-matter { padding: 16px 0; border-top: 1px solid var(--line); }
@@ -1037,6 +1048,11 @@ summary { list-style: none; } summary::-webkit-details-marker { display: none; }
   .overview-cols:has(.slot-attention [data-testid="selected-finding"]) .overview-side .ahead { grid-row: 1 / span 4; }
   /* Nothing needs doing: what is ahead moves up beside the number. */
   .overview-cols:not(:has(.attention)) .overview-side .ahead { grid-row: 1 / span 3; }
+  /* A past review reads from the top: its verdict across the page, then the figures it rests on. Nothing is beside them. */
+  .overview-cols:has(.past-review) :is(.slot-past, .slot-body) > * { grid-column: 1 / -1; }
+  .overview-cols:has(.past-review) .slot-past > * { grid-row: 1; }
+  .overview-cols:has(.past-review) .slot-body > * { grid-row: 2; }
+  .overview-cols:has(.past-review) .slot-flow > * { grid-row: 3; }
   .has-desk .slot-attention .attention { margin-top: 0; margin-bottom: var(--s6); }
   .has-desk .overview-side .ahead, .overview-side .ahead > :first-child .section-title { margin-top: 0; }
 }

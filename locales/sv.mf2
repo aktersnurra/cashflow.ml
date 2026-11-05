@@ -795,3 +795,11 @@ agreed.change_category = Kategori tillagd
 agreed.change_entry = Post tillagd
 agreed.budget_was = Budgeten var
 agreed.budget_now = Ny budget
+
+review.past_period = Löneperiod {$first :date} till {$last :date}
+review.past_saved = I {$month} sparade du {$amount}. {$income} kom in och {$spending} gick ut.
+review.past_short = I {$month} gjorde du av med {$amount} mer än som kom in. {$income} kom in och {$spending} gick ut.
+review.past_budgets = Budgetar
+review.past_budgets_held = {$held} av {$total} budgetar höll
+review.past_budget_over = {$spent} av {$budget}
+review.past_agreed = Överenskommet under den här löneperioden

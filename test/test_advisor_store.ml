@@ -1003,7 +1003,7 @@ let agreed_record () =
   proposed a 1L;
   proposed b 2L;
   let matter () = (ok (Advisor_store.metadata store ~owner id)).matter in
-  let record () = ok (Advisor_store.agreed store ~owner ~limit:10 ~offset:0) in
+  let record () = ok (Advisor_store.agreed store ~owner ~limit:10 ~offset:0 ()) in
   Alcotest.(check int) "nothing is agreed while it is only proposed" 0 (List.length (record ()));
   ok (Advisor_store.settle_matter store ~owner id);
   Alcotest.(check bool) "nothing applied settles nothing" true (matter () = A.Open);
@@ -1052,9 +1052,18 @@ let agreed_record () =
        Alcotest.(check bool) "newest first, nothing changed in the books" true (newest.conversation_id = plain.ids.conversation_id && newest.changes = []);
        Alcotest.(check bool) "the other follows" true (older.conversation_id = id)
    | rows -> Alcotest.failf "expected two entries, got %d" (List.length rows));
-  Alcotest.(check int) "paged" 1 (List.length (ok (Advisor_store.agreed store ~owner ~limit:1 ~offset:1)));
+  Alcotest.(check int) "paged" 1 (List.length (ok (Advisor_store.agreed store ~owner ~limit:1 ~offset:1 ())));
+  (* A past review asks for one pay cycle's worth, by the day each was settled. *)
+  let day t = Result.get_ok (Date.of_string (String.sub (Ptime.to_rfc3339 t) 0 10)) in
+  let today = day now in
+  let in_days n = Date.add_days today n in
+  let within first last = List.length (ok (Advisor_store.agreed store ~owner ~within:(first, last) ~limit:10 ~offset:0 ())) in
+  Alcotest.(check int) "the day itself" 2 (within today today);
+  Alcotest.(check int) "a range around it" 2 (within (in_days (-3)) (in_days 3));
+  Alcotest.(check int) "a cycle that ended before" 0 (within (in_days (-30)) (in_days (-1)));
+  Alcotest.(check int) "a cycle that starts after" 0 (within (in_days 1) (in_days 30));
   let stranger = User_id.of_string "00000000-0000-4000-8000-000000000000" |> Option.get in
-  Alcotest.(check int) "a stranger sees nothing" 0 (List.length (ok (Advisor_store.agreed store ~owner:stranger ~limit:10 ~offset:0)));
+  Alcotest.(check int) "a stranger sees nothing" 0 (List.length (ok (Advisor_store.agreed store ~owner:stranger ~limit:10 ~offset:0 ())));
   error_code A.Not_found (Advisor_store.settle_matter store ~owner:stranger id);
   error_code A.Not_found (Advisor_store.reopen_decided store ~owner:stranger id);
   ok (Advisor_store.set_matter store ~owner plain.ids.conversation_id A.Open);

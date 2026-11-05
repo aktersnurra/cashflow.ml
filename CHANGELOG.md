@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Past reviews
+
+- Choosing an earlier month on the Review opens on its dates and how it ended, how the budgets held, and what was agreed in that pay cycle.
+- Today's to-dos no longer show under a past month.
+- The month picker reaches every pay cycle loaded, not only the last seven.
+
 ### What we agreed
 
 - A new page lists what was settled in each matter and what it changed, newest first. A change can be undone from there, and the record then says it was undone.

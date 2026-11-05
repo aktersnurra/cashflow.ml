@@ -180,8 +180,9 @@ let forget_memory id =
 
 (* Apply or dismiss a proposal: the answer is the recorded state, which may differ from what was asked
    (already decided, out of date, lapsed). *)
-let agreed ~limit ~offset =
-  request (sprintf "agreed?limit=%d&offset=%d" limit offset) (wire W.decode_agreed_page)
+let agreed ?within ~limit ~offset () =
+  let range = match within with Some (first, last) -> sprintf "&from=%s&to=%s" first last | None -> "" in
+  request (sprintf "agreed?limit=%d&offset=%d%s" limit offset range) (wire W.decode_agreed_page)
 
 let decide_proposal ~id action =
   request ~body:"{}" ("proposals/" ^ Js_of_ocaml.Url.urlencode id ^ "/" ^ action)

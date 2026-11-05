@@ -128,10 +128,17 @@ type agreed_entry = {
   changes : agreed_change list;  (** newest first; empty when the matter was decided without changing anything *)
 }
 
-val agreed : t -> owner:Cashflow_core.User_id.t -> limit:int -> offset:int -> (agreed_entry list, A.error) result
+val agreed :
+  t ->
+  owner:Cashflow_core.User_id.t ->
+  ?within:Cashflow_core.Date.t * Cashflow_core.Date.t ->
+  limit:int ->
+  offset:int ->
+  unit ->
+  (agreed_entry list, A.error) result
 (** The record of what was agreed, newest first: matters that stand decided or had a change applied, including changes
-    since undone. Owner-bound; the caller must still authorize history before disclosure. A deleted matter takes its
-    record with it. *)
+    since undone. [within] keeps those last settled between two days, inclusive, in UTC. Owner-bound; the caller must
+    still authorize history before disclosure. A deleted matter takes its record with it. *)
 
 val memories : t -> owner:Cashflow_core.User_id.t -> (memory list, A.error) result
 (** The owner's notes, oldest first. *)
