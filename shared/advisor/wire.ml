@@ -75,6 +75,19 @@ type evidence = {
   proposal : proposal_state option;
 }
 
+type agreed_change = { evidence : evidence; applied_at : string; undone_at : string option }
+
+type agreed_entry = {
+  conversation_id : string;
+  scope : scope;
+  title : string option;
+  matter : matter;
+  decided_at : string option;
+  changes : agreed_change list;
+}
+
+type agreed_page = { entries : agreed_entry list; next_offset : int option }
+
 type identities = {
   conversation_id : string;
   turn_id : string;
@@ -766,6 +779,48 @@ let snapshot_of_json j : snapshot =
       | Some m -> (match matter_of_string (str m) with Some x -> x | None -> invalid "matter"));
   }
 
+let agreed_change_to_json (v : agreed_change) =
+  `Assoc
+    [
+      ("evidence", evidence_to_json v.evidence);
+      ("applied_at", `String v.applied_at);
+      ("undone_at", joption (fun x -> `String x) v.undone_at);
+    ]
+
+let agreed_change_of_json j : agreed_change =
+  {
+    evidence = evidence_of_json (field "evidence" j);
+    applied_at = timestamp (str (field "applied_at" j));
+    undone_at = option (fun x -> timestamp (str x)) (field "undone_at" j);
+  }
+
+let agreed_entry_to_json (v : agreed_entry) =
+  `Assoc
+    [
+      ("conversation_id", `String v.conversation_id);
+      ("scope", scope_to_json v.scope);
+      ("title", joption (fun x -> `String x) v.title);
+      ("matter", `String (matter_to_string v.matter));
+      ("decided_at", joption (fun x -> `String x) v.decided_at);
+      ("changes", jlist agreed_change_to_json v.changes);
+    ]
+
+let agreed_entry_of_json j : agreed_entry =
+  {
+    conversation_id = uuid (str (field "conversation_id" j));
+    scope = scope_of_json (field "scope" j);
+    title = option (fun x -> str x) (field "title" j);
+    matter = (match matter_of_string (str (field "matter" j)) with Some x -> x | None -> invalid "matter");
+    decided_at = option (fun x -> timestamp (str x)) (field "decided_at" j);
+    changes = list agreed_change_of_json (field "changes" j);
+  }
+
+let agreed_page_to_json (v : agreed_page) =
+  `Assoc [ ("entries", jlist agreed_entry_to_json v.entries); ("next_offset", joption (fun x -> `Int x) v.next_offset) ]
+
+let agreed_page_of_json j : agreed_page =
+  { entries = list agreed_entry_of_json (field "entries" j); next_offset = option integer (field "next_offset" j) }
+
 let same_currency (a : currency) (b : currency) = a.code = b.code && a.scale = b.scale
 
 let validate_evidence (e : evidence) =
@@ -836,3 +891,8 @@ let encode_event = envelope event_to_json
 let decode_event = decode event_of_json validate_event
 let encode_snapshot = envelope snapshot_to_json
 let decode_snapshot = decode snapshot_of_json validate_snapshot
+let encode_agreed_page = envelope agreed_page_to_json
+
+let decode_agreed_page =
+  decode agreed_page_of_json (fun (p : agreed_page) ->
+      List.iter (fun (e : agreed_entry) -> List.iter (fun (c : agreed_change) -> validate_evidence c.evidence) e.changes) p.entries)

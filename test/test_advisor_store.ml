@@ -980,6 +980,88 @@ let matter_state () =
   ignore (accept store owner (submit ~conversation:id ~version:second.accepted_version "matter-reply"));
   Alcotest.(check bool) "replying reopens a decided matter" true (matter () = A.Open)
 
+(* What we agreed: what was applied, and matters marked decided. Applying settles a matter once nothing else waits on the
+   person; undoing takes it up again. The record keeps what was undone. *)
+let agreed_record () =
+  with_fixture @@ fun _ store owner clock ->
+  let first = accept store owner (submit "agreed") in
+  let id = first.ids.conversation_id in
+  let run = first.ids.run_id in
+  ignore (ok (Advisor_store.transition store ~run A.Start));
+  let later = Option.get (Ptime.add_span now (Ptime.Span.of_int_s 3600)) in
+  let currency = (submit "unused").currency in
+  let proposed evidence_id sequence =
+    let e : A.evidence =
+      { id = Option.get (A.Evidence_id.of_string evidence_id); scope = Personal; currency; sampled_at = now;
+        title = "propose_set_budget"; facts = [ { label = "Category"; value = Text "Groceries" } ]; source_references = [];
+        import_status = Current; reconciled = true; assumptions = []; proposal = Some A.Awaiting }
+    in
+    ignore (ok (Advisor_store.append store ~run ~expected_sequence:sequence [ A.Evidence_added e ]));
+    ok (Advisor_store.add_proposal store ~owner ~conversation_id:id ~id:evidence_id ~kind:"set_budget" ~arguments:(`Assoc []) ~precondition:(`Assoc []) ~now ~expires:later)
+  in
+  let a = "00000000-0000-4000-8000-00000000000a" and b = "00000000-0000-4000-8000-00000000000b" in
+  proposed a 1L;
+  proposed b 2L;
+  let matter () = (ok (Advisor_store.metadata store ~owner id)).matter in
+  let record () = ok (Advisor_store.agreed store ~owner ~limit:10 ~offset:0) in
+  Alcotest.(check int) "nothing is agreed while it is only proposed" 0 (List.length (record ()));
+  ok (Advisor_store.settle_matter store ~owner id);
+  Alcotest.(check bool) "nothing applied settles nothing" true (matter () = A.Open);
+  Alcotest.(check bool) "claimed" true (ok (Advisor_store.decide_proposal store ~owner ~id:a A.Applied));
+  ok (Advisor_store.settle_matter store ~owner id);
+  Alcotest.(check bool) "still running, so more may come" true (matter () = A.Open);
+  ignore (ok (Advisor_store.transition store ~run A.Finish));
+  ok (Advisor_store.settle_matter store ~owner id);
+  Alcotest.(check bool) "another proposal still waits, so it stays open" true (matter () = A.Open);
+  (match record () with
+   | [ entry ] ->
+       Alcotest.(check bool) "listed with what was applied, though not decided yet" true
+         (entry.matter = A.Open && entry.conversation_id = id && Option.is_some entry.title && entry.decided_at = None);
+       Alcotest.(check (list string)) "only what was applied" [ a ]
+         (List.map (fun (c : Advisor_store.agreed_change) -> A.Evidence_id.to_string c.evidence.id) entry.changes);
+       Alcotest.(check bool) "reads as applied, not as the card first said" true
+         ((List.hd entry.changes).evidence.proposal = Some A.Applied)
+   | rows -> Alcotest.failf "expected one entry, got %d" (List.length rows));
+  ignore (ok (Advisor_store.decide_proposal store ~owner ~id:b A.Declined));
+  ok (Advisor_store.settle_matter store ~owner id);
+  Alcotest.(check bool) "nothing left waiting: decided" true (matter () = A.Decided);
+  let decided_at () = (List.hd (record ())).decided_at in
+  Alcotest.(check bool) "with a date" true (Option.is_some (decided_at ()));
+  let first_date = decided_at () in
+  ok (Advisor_store.set_matter store ~owner id A.Decided);
+  Alcotest.(check bool) "saying it again keeps the date" true (decided_at () = first_date);
+  Alcotest.(check bool) "undone once" true (ok (Advisor_store.undo_proposal store ~owner ~id:a));
+  ok (Advisor_store.reopen_decided store ~owner id);
+  Alcotest.(check bool) "undoing takes the matter up again" true (matter () = A.Open);
+  (match record () with
+   | [ entry ] ->
+       let change = List.hd entry.changes in
+       Alcotest.(check bool) "the record keeps it, undone" true (change.evidence.proposal = Some A.Reverted && Option.is_some change.undone_at);
+       Alcotest.(check bool) "no longer decided" true (entry.decided_at = None)
+   | rows -> Alcotest.failf "expected one entry, got %d" (List.length rows));
+  ok (Advisor_store.set_matter store ~owner id A.Parked);
+  ok (Advisor_store.reopen_decided store ~owner id);
+  Alcotest.(check bool) "undoing leaves a parked matter parked" true (matter () = A.Parked);
+  (* A matter settled by word alone is part of the record too. *)
+  let plain = accept store owner (submit "just-a-decision") in
+  fail store plain.ids.run_id;
+  clock := later;
+  ok (Advisor_store.set_matter store ~owner plain.ids.conversation_id A.Decided);
+  (match record () with
+   | [ newest; older ] ->
+       Alcotest.(check bool) "newest first, nothing changed in the books" true (newest.conversation_id = plain.ids.conversation_id && newest.changes = []);
+       Alcotest.(check bool) "the other follows" true (older.conversation_id = id)
+   | rows -> Alcotest.failf "expected two entries, got %d" (List.length rows));
+  Alcotest.(check int) "paged" 1 (List.length (ok (Advisor_store.agreed store ~owner ~limit:1 ~offset:1)));
+  let stranger = User_id.of_string "00000000-0000-4000-8000-000000000000" |> Option.get in
+  Alcotest.(check int) "a stranger sees nothing" 0 (List.length (ok (Advisor_store.agreed store ~owner:stranger ~limit:10 ~offset:0)));
+  error_code A.Not_found (Advisor_store.settle_matter store ~owner:stranger id);
+  error_code A.Not_found (Advisor_store.reopen_decided store ~owner:stranger id);
+  ok (Advisor_store.set_matter store ~owner plain.ids.conversation_id A.Open);
+  Alcotest.(check int) "reopening takes a change-free matter off the record" 1 (List.length (record ()));
+  ignore (ok (Advisor_store.delete store ~owner ~now id));
+  Alcotest.(check int) "deleting a matter deletes its record" 0 (List.length (record ()))
+
 let () =
   Alcotest.run "advisor_store"
     [
@@ -1012,5 +1094,6 @@ let () =
             ("memory_cap_and_owners", memory_cap_and_owners);
             ("memory_follows_the_user", memory_follows_the_user);
             ("matter_state", matter_state);
+            ("agreed_record", agreed_record);
           ] );
     ]

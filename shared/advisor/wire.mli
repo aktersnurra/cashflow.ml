@@ -77,6 +77,19 @@ type evidence = {
   proposal : proposal_state option;
 }
 
+type agreed_change = { evidence : evidence; applied_at : string; undone_at : string option }
+
+type agreed_entry = {
+  conversation_id : string;
+  scope : scope;
+  title : string option;
+  matter : matter;
+  decided_at : string option;
+  changes : agreed_change list;
+}
+
+type agreed_page = { entries : agreed_entry list; next_offset : int option }
+
 type identities = {
   conversation_id : string;
   turn_id : string;
@@ -159,3 +172,5 @@ val proposal_state_to_string : proposal_state -> string
 val proposal_state_of_string : string -> proposal_state option
 val encode_snapshot : snapshot -> string
 val decode_snapshot : string -> (snapshot, decode_error) result
+val encode_agreed_page : agreed_page -> string
+val decode_agreed_page : string -> (agreed_page, decode_error) result

@@ -105,6 +105,34 @@ val undo_proposal : t -> owner:Cashflow_core.User_id.t -> id:string -> (bool, A.
 val decide_proposal : t -> owner:Cashflow_core.User_id.t -> id:string -> A.proposal_state -> (bool, A.error) result
 (** Moves an [Awaiting] proposal to the given state; [Ok false] when it was already decided. Terminal states are final. *)
 
+val settle_matter : t -> owner:Cashflow_core.User_id.t -> A.Conversation_id.t -> (unit, A.error) result
+(** Marks the matter decided if a change in it stands applied, no proposal still awaits an answer and no run is going.
+    Otherwise it stays as it is. Unknown and other-owner IDs return [Not_found]. *)
+
+val reopen_decided : t -> owner:Cashflow_core.User_id.t -> A.Conversation_id.t -> (unit, A.error) result
+(** Sets a decided matter back to open, as when what was agreed in it is undone. Unknown and other-owner IDs return
+    [Not_found]. *)
+
+type agreed_change = {
+  evidence : A.evidence;  (** the card that was applied; its [proposal] reads [Applied] or [Reverted] *)
+  applied_at : Ptime.t;
+  undone_at : Ptime.t option;
+}
+
+type agreed_entry = {
+  conversation_id : A.Conversation_id.t;
+  scope : A.scope;
+  title : string option;
+  matter : A.matter;
+  decided_at : Ptime.t option;  (** set while it stands decided *)
+  changes : agreed_change list;  (** newest first; empty when the matter was decided without changing anything *)
+}
+
+val agreed : t -> owner:Cashflow_core.User_id.t -> limit:int -> offset:int -> (agreed_entry list, A.error) result
+(** The record of what was agreed, newest first: matters that stand decided or had a change applied, including changes
+    since undone. Owner-bound; the caller must still authorize history before disclosure. A deleted matter takes its
+    record with it. *)
+
 val memories : t -> owner:Cashflow_core.User_id.t -> (memory list, A.error) result
 (** The owner's notes, oldest first. *)
 

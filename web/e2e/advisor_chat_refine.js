@@ -121,7 +121,7 @@ const starter = 'How much can I spend until payday?';
   // A computer has one sidebar with labels; nothing else navigates.
   const side = name => page.locator('.sidebar').getByRole('link',{name,exact:true});
   const here = async (name,url) => {await page.waitForURL(url);await page.locator(`.sidebar a[aria-current="page"][aria-label="${name}"]`).waitFor({timeout:4000});};
-  assert.deepEqual(await page.locator('.sidebar a.nav-link').evaluateAll(as=>as.map(a=>a.getAttribute('aria-label'))),['Review','Matters','Transactions','Accounts','Settings']);
+  assert.deepEqual(await page.locator('.sidebar a.nav-link').evaluateAll(as=>as.map(a=>a.getAttribute('aria-label'))),['Review','Matters','What we agreed','Transactions','Accounts','Settings']);
   assert.equal(await page.locator('.topbar').isVisible(),false,'no bar above the page');
   assert.equal(await page.locator('.menu-button:visible').count(),0,'no menu button beside a sidebar');
   await here('Matters',/\/advisor/);

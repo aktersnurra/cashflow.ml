@@ -377,6 +377,13 @@ CREATE TABLE autofile_runs (
 ALTER TABLE advisor_conversations ADD COLUMN matter_state TEXT NOT NULL DEFAULT 'open'
   CHECK (matter_state IN ('open', 'decided', 'parked'));
 |}
+    );
+    ( 16,
+      {|
+-- When a matter was decided, for the record of what was agreed. Set while it stands decided and cleared when it is taken up again.
+ALTER TABLE advisor_conversations ADD COLUMN decided_at TEXT;
+UPDATE advisor_conversations SET decided_at = updated_at WHERE matter_state = 'decided';
+|}
     ) ]
 
 let latest_version = List.fold_left (fun latest (version, _) -> max latest version) 0 migrations

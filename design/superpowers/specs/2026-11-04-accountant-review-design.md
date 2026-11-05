@@ -1,6 +1,6 @@
 # The accountant's review
 
-Status: direction agreed with the user on 2026-11-03/04. Steps 1 and 2 are built; steps 3 and 4 follow. This extends
+Status: direction agreed with the user on 2026-11-03/04. Steps 1, 2 and 3 are built; step 4 follows. This extends
 `2026-10-29-accountant-briefing-design.md`, whose first principles still hold.
 
 ## Why
@@ -51,7 +51,7 @@ start open.
 - Saying where a matter stands changes neither its version nor its place in the list, as no turn was added. A new turn
   or a retry sets it back to open, so talking about a matter takes it up again.
 - Once an answer is in, a row above the composer asks where it stands, or says it is decided or parked with a way to
-  reopen it. Nothing closes a matter by itself; tying that to applied proposals belongs to step 3.
+  reopen it.
 - The open list comes from its own request (`state=open`, five rows), shown in the sidebar and under "Still open" on the
   opening. It is separate from the conversation menu's list because opening a conversation empties that one. Its titles
   are private: they show only once access is known, and clear when it is lost.
@@ -59,3 +59,22 @@ start open.
 - Arriving at Matters no longer resumes the latest conversation. It shows the opening, which names what is still open.
 - Inside a conversation the words follow: "New matter", "Raise this". An answer no longer has an "Advisor" label, and
   the disclosure speaks in the first person. Settings still calls the feature Advisor.
+
+## Step 3 as built
+
+`/agreed`, "What we agreed" / "Det vi enats om", sits under Matters in the sidebar. It lists every matter that stands
+decided or had a change applied, newest first, with what each change did, taken from the card that was applied.
+
+- Applying a change settles its matter once no other proposal awaits an answer and no answer is still being written.
+  Dismissing the last open proposal does the same if a change stands applied. A matter with nothing applied is only ever
+  decided by the person saying so.
+- Undoing, from the record or the conversation, sets a decided matter back to open. A parked one stays parked. The record
+  keeps the change, marked undone with its date: it happened.
+- A matter decided by word alone is on the record and says nothing changed in the books. Reopening it takes it off the
+  record, as there is then nothing agreed.
+- `advisor_conversations.decided_at` holds the date while a matter stands decided. Saying "decided" again keeps the first
+  date, and a new turn clears it.
+- Deleting a matter deletes its record, as a proposal has always been deleted with its conversation. Withdrawing consent
+  hides the record without deleting it.
+- "Their effect" means what changed and whether it still stands. The figures since, such as what has been spent against
+  a budget that was agreed, are not here yet.

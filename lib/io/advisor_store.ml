@@ -292,13 +292,16 @@ let list t ~owner ?(limit = 20) ?(offset = 0) ?matter () =
 
 let set_matter t ~owner id matter =
   tx t (fun () ->
+      let state = matter_to_db matter in
       match
         Sql.(
           run t.db
-            (stmt "UPDATE advisor_conversations SET matter_state=? WHERE id=? AND owner_id=? RETURNING id"
-               (text @-> text @-> text @-> nil)
+            (stmt
+               "UPDATE advisor_conversations SET matter_state=?,decided_at=CASE WHEN ?='decided' THEN COALESCE(decided_at,?) END \
+                WHERE id=? AND owner_id=? RETURNING id"
+               (text @-> text @-> text @-> text @-> text @-> nil)
                (opt (row (text @-> nil) Fun.id))))
-          (matter_to_db matter) (cid id) (uid owner)
+          state state (stamp (t.clock ())) (cid id) (uid owner)
       with
       | None -> reject A.Not_found
       | Some _ -> ())
@@ -477,7 +480,7 @@ let new_ids conversation turn user : A.identities =
 let bump t id version now =
   Sql.(
     run t.db
-      (stmt "UPDATE advisor_conversations SET version=?,updated_at=?,matter_state='open' WHERE id=?"
+      (stmt "UPDATE advisor_conversations SET version=?,updated_at=?,matter_state='open',decided_at=NULL WHERE id=?"
          (int64 @-> text @-> text @-> nil) exec))
     version (stamp now) (cid id)
 
@@ -1287,6 +1290,91 @@ let decide_proposal t ~owner ~id state =
                 (text @-> text @-> text @-> text @-> nil) (opt (row (text @-> nil) Fun.id))))
         (proposal_state_to_db state) now id (uid owner)
       |> Option.is_some)
+
+(* Applying a change settles the matter, unless the person still has something to answer or the model is still going. *)
+let settle_matter t ~owner id =
+  tx t (fun () ->
+      ignore (conversation t owner id);
+      let now = stamp (t.clock ()) in
+      Sql.(
+        run t.db
+          (stmt
+             "UPDATE advisor_conversations SET matter_state='decided',decided_at=COALESCE(decided_at,?) WHERE id=? \
+              AND NOT EXISTS (SELECT 1 FROM advisor_runs r WHERE r.conversation_id=advisor_conversations.id AND r.terminal_at IS NULL) \
+              AND NOT EXISTS (SELECT 1 FROM advisor_proposals p WHERE p.conversation_id=advisor_conversations.id AND p.state='awaiting' AND p.expires_at>?) \
+              AND EXISTS (SELECT 1 FROM advisor_proposals p WHERE p.conversation_id=advisor_conversations.id AND p.state='applied' AND p.undone_at IS NULL)"
+             (text @-> text @-> text @-> nil) exec))
+        now (cid id) now)
+
+(* What was agreed no longer holds, so a decided matter is open again. A parked one stays where the person put it. *)
+let reopen_decided t ~owner id =
+  tx t (fun () ->
+      ignore (conversation t owner id);
+      Sql.(
+        run t.db
+          (stmt "UPDATE advisor_conversations SET matter_state='open',decided_at=NULL WHERE id=? AND matter_state='decided'" (text @-> nil) exec))
+        (cid id))
+
+type agreed_change = { evidence : A.evidence; applied_at : Ptime.t; undone_at : Ptime.t option }
+
+type agreed_entry = {
+  conversation_id : A.Conversation_id.t;
+  scope : A.scope;
+  title : string option;
+  matter : A.matter;
+  decided_at : Ptime.t option;
+  changes : agreed_change list;
+}
+
+let agreed t ~owner ~limit ~offset =
+  read t (fun () ->
+      if limit < 1 || offset < 0 then reject A.Invalid_request;
+      let rows =
+        Sql.(
+          run t.db
+            (stmt
+               "SELECT c.id,(SELECT t.user_text FROM advisor_turns t WHERE t.conversation_id=c.id ORDER BY t.ordinal LIMIT 1),c.decided_at \
+                FROM advisor_conversations c WHERE c.owner_id=? AND (c.matter_state='decided' OR EXISTS \
+                (SELECT 1 FROM advisor_proposals p WHERE p.conversation_id=c.id AND p.state='applied')) \
+                ORDER BY max(COALESCE(c.decided_at,''),COALESCE((SELECT max(p.decided_at) FROM advisor_proposals p \
+                WHERE p.conversation_id=c.id AND p.state='applied'),'')) DESC,c.id DESC LIMIT ? OFFSET ?"
+               (text @-> int @-> int @-> nil)
+               (many
+                  (row (text @-> nullable text @-> nullable text @-> nil) (fun id first decided ->
+                       (require (A.Conversation_id.of_string id), first, Option.map time decided))))))
+          (uid owner) (min 100 limit) offset
+      in
+      List.map
+        (fun (id, first_message, decided_at) ->
+          let s, _ = conversation t owner id in
+          let changes =
+            Sql.(
+              run t.db
+                (stmt
+                   "SELECT e.projection,p.decided_at,p.undone_at FROM advisor_proposals p JOIN advisor_runs r ON r.conversation_id=p.conversation_id \
+                    JOIN advisor_evidence e ON e.run_id=r.id AND e.id=p.id WHERE p.conversation_id=? AND p.state='applied' ORDER BY p.decided_at DESC,p.id"
+                   (text @-> nil)
+                   (many
+                      (row (text @-> text @-> nullable text @-> nil) (fun projection applied undone ->
+                           match (decode_event projection).payload with
+                           | Evidence_added evidence ->
+                               {
+                                 evidence = { evidence with proposal = Some (if Option.is_some undone then A.Reverted else A.Applied) };
+                                 applied_at = time applied;
+                                 undone_at = Option.map time undone;
+                               }
+                           | _ -> raise (Sql.Sql_error "invalid materialized evidence"))))))
+              (cid id)
+          in
+          {
+            conversation_id = id;
+            scope = s.scope;
+            title = Option.map Cashflow_advisor_protocol.Conversation_title.of_first_message first_message;
+            matter = s.matter;
+            decided_at;
+            changes;
+          })
+        rows)
 
 (* Marks an applied proposal as taken back, once. [Ok false] when it was never applied or is already undone. *)
 let undo_proposal t ~owner ~id =

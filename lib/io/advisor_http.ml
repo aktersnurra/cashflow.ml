@@ -201,6 +201,21 @@ let matter_filter query =
   | Some [ state ] -> Result.map Option.some (Option.to_result ~none:invalid (matter_name state))
   | Some _ -> Error invalid
 
+let agreed_entry (v : Advisor_store.agreed_entry) : W.agreed_entry =
+  let stamp t = Ptime.to_rfc3339 t in
+  {
+    conversation_id = A.Conversation_id.to_string v.conversation_id;
+    scope = Advisor_codec.scope_out v.scope;
+    title = v.title;
+    matter = Advisor_codec.matter_out v.matter;
+    decided_at = Option.map stamp v.decided_at;
+    changes =
+      List.map
+        (fun (c : Advisor_store.agreed_change) : W.agreed_change ->
+          { evidence = Advisor_codec.evidence_out c.evidence; applied_at = stamp c.applied_at; undone_at = Option.map stamp c.undone_at })
+        v.changes;
+  }
+
 let route t req p path query parsed =
   let result f = match f () with Ok r -> r | Error e -> error e in
   match (req.meth, path) with
@@ -264,7 +279,33 @@ let route t req p path query parsed =
           let* () = unit_body (Option.get parsed) in
           let decide = match action with "apply" -> Advisor_proposals.apply | "undo" -> Advisor_proposals.undo | _ -> Advisor_proposals.dismiss in
           let* state = decide t.service ~principal:p ~id in
-          Ok (json 200 (`Assoc [ ("state", `String (W.proposal_state_to_string (Advisor_codec.proposal_state_out state))) ])))
+          read t p (fun user store ->
+              let* proposal = Advisor_store.proposal store ~owner:user.id id in
+              let* matter = Advisor_store.metadata store ~owner:user.id proposal.conversation_id in
+              Ok
+                (json 200
+                   (`Assoc
+                     [
+                       ("state", `String (W.proposal_state_to_string (Advisor_codec.proposal_state_out state)));
+                       ("conversation_id", `String (A.Conversation_id.to_string proposal.conversation_id));
+                       ("matter", `String (W.matter_to_string (Advisor_codec.matter_out matter.matter)));
+                     ]))))
+  | GET, [ "agreed" ] ->
+      result (fun () ->
+          let* limit = query_int query "limit" 20 100 in
+          let* offset = query_int query "offset" 0 max_int in
+          if limit = 0 then Error invalid
+          else
+            read t p (fun user store ->
+                let* entries = Advisor_store.agreed store ~owner:user.id ~limit ~offset in
+                let next_offset = if List.length entries = limit && offset <= max_int - limit then Some (offset + limit) else None in
+                (* As with the list of matters: a matter whose scope can no longer be read is passed over, never shown. *)
+                let entries =
+                  List.filter
+                    (fun (entry : Advisor_store.agreed_entry) -> Result.is_ok (X.authorize_history t.service p entry.conversation_id))
+                    entries
+                in
+                Ok (Buffered (200, headers, W.encode_agreed_page { entries = List.map agreed_entry entries; next_offset }))))
   | POST, [ "turns" ] ->
       result (fun () ->
           let* () =
@@ -370,6 +411,7 @@ let route t req p path query parsed =
       | [ "memories"; _ ]
       | [ "memories"; _; "forget" ]
       | [ "proposals"; _; ("apply" | "dismiss" | "undo") ]
+      | [ "agreed" ]
       | [ "turns" ]
       | [ "conversations" ]
       | [ "conversations"; _ ]

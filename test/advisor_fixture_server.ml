@@ -449,7 +449,7 @@ let () =
                       (Http_server.respond 200 (if path = "/" then "text/html" else "application/javascript") body)
                 | target when product && not (String.starts_with ~prefix:"/api/" target || String.starts_with ~prefix:"/auth/" target) ->
                     let path = List.hd (String.split_on_char '?' target) in
-                    let valid = List.mem path ["/"; "/advisor"; "/cashflow"; "/transactions"; "/inbox"; "/accounts"; "/budgets"; "/forecast"; "/household"; "/insights"; "/settings"; "/add";
+                    let valid = List.mem path ["/"; "/advisor"; "/agreed"; "/cashflow"; "/transactions"; "/inbox"; "/accounts"; "/budgets"; "/forecast"; "/household"; "/insights"; "/settings"; "/add";
                       "/assets/main.bc.js"; "/assets/style.css"; "/assets/inter-latin-wght.woff2"; "/assets/manifest.webmanifest"; "/assets/icon.svg"]
                       || (match String.split_on_char '/' path with [""; ("advisor" | "accounts"); id] ->
                         Option.is_some (Cashflow_core.Account_id.of_string id)

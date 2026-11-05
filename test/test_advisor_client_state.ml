@@ -763,7 +763,14 @@ let matter_status () =
   let s = apply s (C.Snapshot (snapshot_token cs, Ok {snapshot with conversation_id="other"; active_run=None; turns=[]})) in
   let s = apply s (C.Matter_set (stale, Ok W.Decided)) in
   Alcotest.(check bool) "a late answer can't touch the next conversation" true
-    (Option.map (fun (x : W.snapshot) -> x.matter) (C.view s).snapshot = Some W.Open)
+    (Option.map (fun (x : W.snapshot) -> x.matter) (C.view s).snapshot = Some W.Open);
+  (* Applying or undoing a change moves a matter too, from anywhere; only the one on screen is touched. *)
+  let s = apply s (C.Matter_changed ("c", W.Decided)) in
+  Alcotest.(check bool) "another matter's change leaves this one" true
+    (Option.map (fun (x : W.snapshot) -> x.matter) (C.view s).snapshot = Some W.Open);
+  let s = apply s (C.Matter_changed ("other", W.Decided)) in
+  Alcotest.(check bool) "its own shows at once" true
+    (Option.map (fun (x : W.snapshot) -> x.matter) (C.view s).snapshot = Some W.Decided)
 
 let () =
   Alcotest.run "advisor client state"

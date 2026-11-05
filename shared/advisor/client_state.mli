@@ -64,6 +64,7 @@ type action =
   | Delete
   | Delete_owned of string
   | Set_matter of W.matter
+  | Matter_changed of string * W.matter
   | Consent of bool * string option
   | Refresh_status
   | Load_history of int

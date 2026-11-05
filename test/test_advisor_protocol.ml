@@ -176,6 +176,17 @@ let roundtrips () =
   let accepted : W.accepted = { ids; accepted_version = "1"; idempotent_repeat = true } in
   check "accepted roundtrip" true (W.decode_accepted (W.encode_accepted accepted) = Ok accepted);
   check "snapshot roundtrip" true (W.decode_snapshot (W.encode_snapshot snapshot) = Ok snapshot);
+  let agreed : W.agreed_page =
+    {
+      entries =
+        [ { conversation_id = snapshot.conversation_id; scope = snapshot.scope; title = Some "A matter"; matter = W.Decided;
+            decided_at = Some evidence.sampled_at;
+            changes = [ { evidence = { evidence with proposal = Some W.Reverted }; applied_at = evidence.sampled_at; undone_at = Some evidence.sampled_at } ] };
+          { conversation_id = snapshot.conversation_id; scope = snapshot.scope; title = None; matter = W.Open; decided_at = None; changes = [] } ];
+      next_offset = Some 20;
+    }
+  in
+  check "agreed page roundtrip" true (W.decode_agreed_page (W.encode_agreed_page agreed) = Ok agreed);
   let decoded = ok (W.decode_event (W.encode_event (event (Evidence_added evidence)))) in
   (match decoded.payload with
   | Evidence_added e -> (

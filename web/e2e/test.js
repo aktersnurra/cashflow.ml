@@ -83,7 +83,7 @@ Bokföringsdag;Text;Belopp;Saldo
     await page.screenshot({ path: out + '/07-accounts.png', fullPage: true });
     // Five places in one sidebar: Overview, Advisor, Transactions, Accounts and, at its foot, Settings.
     assert.equal(await page.locator('.tabbar').count(), 0, 'no tab bar');
-    assert.deepEqual(await page.locator('.sidebar a').evaluateAll(as => as.map(a => a.getAttribute('aria-label'))), ['Review', 'Matters', 'Transactions', 'Accounts', 'Settings']);
+    assert.deepEqual(await page.locator('.sidebar a').evaluateAll(as => as.map(a => a.getAttribute('aria-label'))), ['Review', 'Matters', 'What we agreed', 'Transactions', 'Accounts', 'Settings']);
     for (const [label, file] of [['Review', '09-home'], ['Settings', '10-settings']]) {
       await page.click(`.sidebar >> text=${label}`);
       await page.waitForTimeout(800);

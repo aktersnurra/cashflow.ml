@@ -180,6 +180,13 @@ let forget_memory id =
 
 (* Apply or dismiss a proposal: the answer is the recorded state, which may differ from what was asked
    (already decided, out of date, lapsed). *)
+let agreed ~limit ~offset =
+  request (sprintf "agreed?limit=%d&offset=%d" limit offset) (wire W.decode_agreed_page)
+
 let decide_proposal ~id action =
   request ~body:"{}" ("proposals/" ^ Js_of_ocaml.Url.urlencode id ^ "/" ^ action)
-    (json (fun j -> Option.bind (str (field "state" j)) ~f:W.proposal_state_of_string))
+    (json (fun j ->
+         match Option.bind (str (field "state" j)) ~f:W.proposal_state_of_string, str (field "conversation_id" j),
+               Option.bind (str (field "matter" j)) ~f:W.matter_of_string with
+         | Some state, Some conversation_id, Some matter -> Some (state, conversation_id, matter)
+         | _ -> None))

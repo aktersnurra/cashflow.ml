@@ -91,6 +91,20 @@ kbd { font: 11px/16px var(--mono); padding: 0 4px; border: 1px solid var(--line-
 .nav-matter { display: block; padding: 3px 8px; border-radius: 6px; color: var(--text-3); font-size: 13px; line-height: 20px; text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .nav-matter:hover { background: var(--surface-2); color: var(--text); }
 .nav-matter[aria-current] { color: var(--text); font-weight: 500; }
+
+/* What we agreed: a matter, where it stands, and what it changed. */
+.agreed-intro { margin: -8px 0 20px; color: var(--text-2); }
+.agreed-matter { padding: 16px 0; border-top: 1px solid var(--line); }
+.agreed-matter-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; }
+.agreed-title { flex: 1 1 240px; min-width: 0; color: var(--text); font-weight: 500; text-decoration: none; overflow-wrap: anywhere; }
+.agreed-title:hover { text-decoration: underline; }
+.agreed-scope, .agreed-status { flex: none; color: var(--text-2); font-size: 13px; }
+.agreed-nothing { margin: 6px 0 0; color: var(--text-2); font-size: 13px; }
+.agreed-change { margin-top: 12px; padding-left: 12px; border-left: 2px solid var(--line); }
+.agreed-change-head { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; }
+.agreed-change-title { flex: 1 1 160px; font-size: 13px; font-weight: 500; }
+.agreed-effect { color: var(--text-2); font-size: 13px; }
+.agreed-change .advisor-facts { margin: 8px 0 0; }
 .sidebar-foot { margin-top: auto; display: flex; align-items: center; gap: 4px; } .sidebar-foot .nav-link { flex: 1; }
 .content { min-width: 0; }
 .page { max-width: 760px; margin: 0 auto; padding: 28px 32px 96px; }

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### What we agreed
+
+- A new page lists what was settled in each matter and what it changed, newest first. A change can be undone from there, and the record then says it was undone.
+- Applying a change marks its matter decided once nothing else is waiting on you. Undoing it reopens the matter.
+- A matter decided without changing anything is on the record too, and says so.
+
 ### Matters
 
 Each conversation with the accountant is now a matter that stands somewhere: open, decided or parked.

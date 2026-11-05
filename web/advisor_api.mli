@@ -18,5 +18,8 @@ val add_memory : string -> (unit, C.failure) result Async_kernel.Deferred.t
 val update_memory : id:string -> string -> (unit, C.failure) result Async_kernel.Deferred.t
 val forget_memory : string -> (unit, C.failure) result Async_kernel.Deferred.t
 
-val decide_proposal : id:string -> string -> (W.proposal_state, Cashflow_advisor_protocol.Client_state.failure) result Async_kernel.Deferred.t
-(** [action] is "apply" or "dismiss". The result is the state the server recorded. *)
+val decide_proposal : id:string -> string -> (W.proposal_state * string * W.matter, C.failure) result Async_kernel.Deferred.t
+(** [action] is "apply", "dismiss" or "undo". The result is the state the server recorded, the matter it belongs to and
+    where that matter now stands. *)
+
+val agreed : limit:int -> offset:int -> (W.agreed_page, C.failure) result Async_kernel.Deferred.t
