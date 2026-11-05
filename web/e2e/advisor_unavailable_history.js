@@ -14,7 +14,7 @@ const file=process.env.ADVISOR_EVIDENCE_DIR+'/unavailable-history.json';
   let generations=0;page.on('request',r=>{if(r.method()==='POST'&&/\/api\/advisor\/turns(?:\/|$)/.test(r.url()))generations++;});
   const button=name=>page.getByRole('button',{name,exact:true});
   const menuItem=name=>page.getByRole('menuitem',{name,exact:true});
-  const openDelete=async()=>button('Matter actions').click();
+  const openDelete=async()=>page.locator('.advisor-title-button').click();
   const state=async()=> (await(await fetch(base+'/state')).json());
   const snapshot=id=>context.request.get(base+'/api/advisor/conversations/'+id);
   if(process.env.ADVISOR_HISTORY_PHASE==='before'){
@@ -42,8 +42,8 @@ const file=process.env.ADVISOR_EVIDENCE_DIR+'/unavailable-history.json';
    assert.equal(await menuItem('New matter').isDisabled(),true);
    await page.keyboard.press('Escape');
    // Explicit cancel preserves the stored conversation; confirmation deletes it.
-   await openDelete();page.once('dialog',d=>d.dismiss());await menuItem('Delete matter').click();assert.equal((await snapshot(id)).status(),200);
-   await openDelete();page.once('dialog',d=>d.accept());await menuItem('Delete matter').click();
+   await openDelete();page.once('dialog',d=>d.dismiss());await menuItem('Delete this matter').click();assert.equal((await snapshot(id)).status(),200);
+   await openDelete();page.once('dialog',d=>d.accept());await menuItem('Delete this matter').click();
    await page.getByText('first',{exact:true}).waitFor({state:'detached'});
    assert.equal((await snapshot(id)).status(),404);
    // Denied is not authority inferred from a readiness status 200.

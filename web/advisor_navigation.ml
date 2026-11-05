@@ -7,7 +7,7 @@ module W = Cashflow_advisor_protocol.Wire
 module H = Advisor_navigation_hooks
 module Title = Cashflow_advisor_protocol.Conversation_title
 
-type menu = Closed | History | Actions
+type menu = Closed | History
 type title_source = New | Existing | Unavailable | First_message of string
 type date_group = Today | Yesterday | Week | Older
 
@@ -76,9 +76,11 @@ let component ~locale ~advisor ~route ~on_select ~on_new ~menu_button graph =
     let now = now_ms () in List.map history ~f:(fun entry -> entry,age_caption locale now entry.C.updated_at) in
   let boundary = let%arr advisor in
     let v = advisor.Advisor.view in
+    (* Losing access closes the menu. After that a newer status has nothing left to take away, and opening the menu asks
+       for one: closing again would shut the only way left to delete the matter. *)
     v.authenticated,v.access_denied,v.selected_conversation,v.context_scope,v.denied_conversation,
-      (match v.status with Some status -> not status.consent | None -> false),
-      (match v.context_scope with Some scope -> not (can_read_scope v.status scope) | None -> false) in
+      (match v.status with Some status when not v.access_denied -> not status.consent | _ -> false),
+      (match v.context_scope with Some scope when not v.access_denied -> not (can_read_scope v.status scope) | _ -> false) in
   Bonsai.Edge.on_change ~equal:Poly.equal boundary
     ~callback:(let%arr set_menu in fun _ -> set_menu Closed) graph;
   Bonsai.Edge.on_change ~equal:Route.equal route
@@ -87,7 +89,7 @@ let component ~locale ~advisor ~route ~on_select ~on_new ~menu_button graph =
   let view = advisor.Advisor.view in
   let text = Vdom.Node.text in
   let close restore = Effect.Many [set_menu Closed;
-    (if restore then Effect.of_thunk (fun () -> H.restore_trigger (Poly.equal menu Actions)) else Effect.Ignore)] in
+    (if restore then Effect.of_thunk (fun () -> H.restore_trigger ()) else Effect.Ignore)] in
   let open_history = Effect.Many [set_menu History;advisor.dispatch (C.Follow false);advisor.dispatch C.Refresh_status;advisor.dispatch (C.Load_history 0)] in
   let scope = Option.value view.context_scope ~default:W.Personal in
   let can_new scope = match view.status with
@@ -127,28 +129,30 @@ let component ~locale ~advisor ~route ~on_select ~on_new ~menu_button graph =
     | Some id -> Effect.Many [close true; Effect.of_thunk (fun () ->
         if Js.to_bool (Dom_html.window##confirm (Js.string (Msg.advisor_delete_confirm locale))) then
           Effect.Expert.handle_non_dom_event_exn (advisor.dispatch (C.Delete_owned id)))] in
-  let panel_label = if Poly.equal menu Actions then Msg.advisor_conversation_actions locale else Msg.advisor_history locale in
+  let panel_label = Msg.advisor_history locale in
   let panel = if Poly.equal menu Closed then Vdom.Node.none else
-    Vdom.Node.div ~key:(if Poly.equal menu Actions then "actions" else "history")
-      ~attrs:[Vdom.Attr.class_ (if Poly.equal menu Actions then "advisor-menu-panel advisor-action-panel" else "advisor-menu-panel advisor-history-panel");
+    Vdom.Node.div ~key:"history"
+      ~attrs:[Vdom.Attr.class_ "advisor-menu-panel advisor-history-panel";
         (if mobile then Vdom.Attr.create "role" "dialog" else Vdom.Attr.empty);
         (if mobile then Vdom.Attr.create "aria-modal" "true" else Vdom.Attr.empty);
         Vdom.Attr.create "aria-label" panel_label;
-        Vdom.Attr.create_hook "advisor-navigation-menu" (H.Menu.create {actions=Poly.equal menu Actions;
+        Vdom.Attr.create_hook "advisor-navigation-menu" (H.Menu.create {
           close=(fun restore -> Effect.Expert.handle_non_dom_event_exn (close restore))})]
       [Vdom.Node.div ~attrs:[Vdom.Attr.class_ "advisor-sheet-heading"]
         [Vdom.Node.h2 [text panel_label];Vdom.Node.button ~attrs:[Vdom.Attr.type_ "button";Vdom.Attr.class_ "advisor-sheet-close";
           Vdom.Attr.create "aria-label" (Msg.advisor_close_history locale);Vdom.Attr.on_click (fun _ -> close true)] [text "×"]];
        Vdom.Node.div ~attrs:[Vdom.Attr.create "role" "menu";Vdom.Attr.create "aria-label" panel_label;
-         Vdom.Attr.id (if Poly.equal menu Actions then "advisor-action-menu" else "advisor-history-menu")]
-         (if Poly.equal menu Actions then [item ~attrs:[Vdom.Attr.class_ "advisor-menu-delete"] [text (Msg.advisor_delete locale)] delete]
-          else
-            [new_item scope (Msg.advisor_new_conversation locale)] @
+         Vdom.Attr.id "advisor-history-menu"]
+         ([new_item scope (Msg.advisor_new_conversation locale)] @
             (match scope,view.status with
              | W.Household _,_ when can_new W.Personal -> [new_item W.Personal (Msg.advisor_new_personal locale)]
              | W.Personal,Some {household=Some h;_} when can_new (W.Household h.household_id) ->
                  [new_item (W.Household h.household_id) (Msg.advisor_new_household locale)]
              | _ -> []) @
+            (* Deleting lives here so the header stays the menu button and the title. It outlasts lost access, when the
+               conversation itself no longer shows. *)
+            (if Option.is_none delete_target then [] else
+              [item ~key:"delete" ~attrs:[Vdom.Attr.class_ "advisor-menu-delete"] [text (Msg.advisor_delete locale)] delete]) @
             [Vdom.Node.div ~attrs:[Vdom.Attr.class_ "advisor-history-list";
               Vdom.Attr.create "aria-busy" (Bool.to_string view.history_loading)]
               groups] @
@@ -187,11 +191,6 @@ let component ~locale ~advisor ~route ~on_select ~on_new ~menu_button graph =
           [Vdom.Node.create_svg "path" ~attrs:[Vdom.Attr.create "d" "M6 9l6 6 6-6"] []]];
      Vdom.Node.span ~attrs:[Vdom.Attr.class_ "advisor-navigation-meta"] [text
        ((match view.context_scope with None->"" | Some W.Personal->Msg.label_personal locale ^ " · " | Some (W.Household _)->Msg.label_household locale ^ " · ") ^ Msg.advisor_private locale)];
-     (if Option.is_none delete_target then Vdom.Node.none else Vdom.Node.button ~attrs:[Vdom.Attr.class_ "advisor-actions-button";
-       Vdom.Attr.type_ "button";Vdom.Attr.create "aria-label" (Msg.advisor_conversation_actions locale);Vdom.Attr.create "aria-haspopup" "menu";
-       Vdom.Attr.create "aria-controls" "advisor-action-menu";Vdom.Attr.create "aria-expanded" (Bool.to_string (Poly.equal menu Actions));
-       Vdom.Attr.on_click (fun _ -> if Poly.equal menu Actions then close true else Effect.Many [set_menu Actions;advisor.dispatch (C.Follow false)])]
-       [Vdom.Node.span ~attrs:[Vdom.Attr.create "aria-hidden" "true"] [text "⋯"]]);
      (if Poly.equal menu Closed then Vdom.Node.none else Vdom.Node.div ~attrs:[Vdom.Attr.class_ "advisor-menu-backdrop";
        Vdom.Attr.create "aria-hidden" "true";Vdom.Attr.on_click (fun _ -> close true)] []);
      panel]
