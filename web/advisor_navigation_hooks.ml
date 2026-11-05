@@ -22,10 +22,9 @@ let focus_first element =
   | Some current -> focus current
   | None -> Option.iter (List.hd (menu_items element)) ~f:focus
 
-let restore_trigger actions =
+let restore_trigger () =
   ignore (Dom_html.window##requestAnimationFrame (Js.wrap_callback (fun _ ->
-    Js.Opt.iter (Dom_html.document##querySelector (Js.string
-      (if actions then ".advisor-actions-button" else ".advisor-title-button"))) focus)))
+    Js.Opt.iter (Dom_html.document##querySelector (Js.string ".advisor-title-button")) focus)))
 
 module Viewport_input = struct
   type t = { on_change : bool -> unit }
@@ -48,7 +47,7 @@ module Viewport = Vdom.Attr.Hooks.Make (struct
 end)
 
 module Menu_input = struct
-  type t = { actions : bool; close : bool -> unit }
+  type t = { close : bool -> unit }
   let sexp_of_t _ = Sexp.Atom "conversation-menu"
   let combine _ b = b
 end
@@ -65,14 +64,13 @@ module Menu = Vdom.Attr.Hooks.Make (struct
         element##.style##.left := Js.string ""; element##.style##.right := Js.string "";
         element##.style##.maxHeight := Js.string "")
       else Js.Opt.iter (closest element ".advisor-navigation") (fun root ->
-        let selector = if state.input.actions then ".advisor-actions-button" else ".advisor-title-button" in
-        Js.Opt.iter (root##querySelector (Js.string selector)) (fun trigger ->
+        Js.Opt.iter (root##querySelector (Js.string ".advisor-title-button")) (fun trigger ->
           let rect = trigger##getBoundingClientRect in
           let width = element##.offsetWidth and viewport = Dom_html.document##.documentElement in
           let below = viewport##.clientHeight - Int.of_float rect##.bottom - 16 in
           let above = Int.of_float rect##.top - 16 in
           let up = below < 180 && above > below in
-          let left = Int.of_float (if state.input.actions then rect##.right -. Float.of_int width else rect##.left) in
+          let left = Int.of_float rect##.left in
           element##.style##.left := px (Int.max 12 (Int.min left (viewport##.clientWidth - width - 12)));
           element##.style##.right := Js.string "auto";
           element##.style##.maxHeight := px (Int.min 420 (Int.max 80 (if up then above else below)));

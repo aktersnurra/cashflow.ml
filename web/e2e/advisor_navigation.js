@@ -81,13 +81,14 @@ const wait=async f=>{const end=Date.now()+6000;while(Date.now()<end){const x=awa
   const sideways=await page.evaluate(()=>{const wide=document.createElement('div');wide.style.cssText='width:2000px;height:1px';document.body.append(wide);window.scrollTo(500,scrollY);const x=scrollX;wide.remove();return x;});
   assert.equal(sideways,0,'the page does not scroll sideways');
   await page.goto(base+'/advisor/'+first);await wait(async()=>/Holiday savings for February/.test(await trigger.innerText()));
-  await page.getByRole('button',{name:'Matter actions',exact:true}).click();
-  const actions=page.getByRole('menu',{name:'Matter actions',exact:true});await actions.waitFor();
-  assert.equal(await page.locator('.advisor-conversation-actions').getByRole('button',{name:'Delete matter',exact:true}).count(),0,'delete is not in the transcript footer');
-  page.once('dialog',d=>d.dismiss());await actions.getByRole('menuitem',{name:'Delete matter',exact:true}).click();
+  // The menu button and the title are all there is at the top of a matter: the title's menu holds deleting too.
+  assert.deepEqual(await page.locator('.advisor-navigation > button').evaluateAll(all=>all.map(b=>b.getAttribute('aria-label').split(':')[0])),['Menu','Switch matter'],'nothing else beside the menu');
+  assert.equal(await page.locator('.advisor-conversation-actions').getByRole('button',{name:'Delete this matter',exact:true}).count(),0,'delete is not in the transcript footer');
+  await trigger.click();
+  page.once('dialog',d=>d.dismiss());await page.getByRole('menuitem',{name:'Delete this matter',exact:true}).click();
   assert.equal((await context.request.get(base+'/api/advisor/conversations/'+first)).status(),200,'cancelled confirmation keeps conversation');
-  await page.getByRole('button',{name:'Matter actions',exact:true}).click();
-  page.once('dialog',d=>d.accept());await page.getByRole('menuitem',{name:'Delete matter',exact:true}).click();
+  await trigger.click();
+  page.once('dialog',d=>d.accept());await page.getByRole('menuitem',{name:'Delete this matter',exact:true}).click();
   await wait(async()=> (await context.request.get(base+'/api/advisor/conversations/'+first)).status()===404);
   assert.equal((await context.request.get(base+'/api/advisor/conversations/'+second)).status(),200,'unrelated conversation survives');
   assert.equal(posts,0);assert.deepEqual(errors,[]);

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### A quieter matter header
+
+- The "⋯" beside the title is gone: it opened a menu with one item. "Delete this matter" now sits in the title's menu, and the top of a matter is the menu button and the title.
+
 ### Past reviews
 
 - Choosing an earlier month on the Review opens on its dates and how it ended, how the budgets held, and what was agreed in that pay cycle.

@@ -145,7 +145,7 @@ const sleep = ms => new Promise(r => setTimeout(r,ms));
   await historyMenu.getByRole('menuitem',{name:/Please change my budget and move money/}).click();
   await page.waitForFunction(()=>document.querySelector('textarea.advisor-input')?.value==='second conversation draft');assert.equal(await composer().inputValue(),'second conversation draft');
   // Real deletion endpoint; dialog holds only the currently selected opaque ID.
-  await button('Matter actions').click();page.once('dialog',dialog=>dialog.accept());await menuItem('Delete matter').click();
+  await page.locator('.advisor-title-button').click();page.once('dialog',dialog=>dialog.accept());await menuItem('Delete this matter').click();
   for(let n=0;n<100 && await page.getByText(/I cannot change budgets/).count();n++)await sleep(20);
   assert.equal((await page.request.get(base+'/api/advisor/conversations/'+second.split('/').pop())).status(),404);
   assert.equal(await page.getByText(/I cannot change budgets/).count(),0);

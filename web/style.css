@@ -559,19 +559,17 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
 .advisor-navigation { position: relative; display: flex; align-items: center; gap: 12px; min-width: 0; margin: 0 0 20px; padding: 6px 0; background: var(--bg); z-index: 3; }
 .advisor-page .advisor-navigation { position: sticky; top: var(--topbar); }
 .advisor-navigation[data-menu-open] { z-index: 40; }
-.advisor-title-button, .advisor-actions-button, .advisor-sheet-close { border: 0; border-radius: 8px; background: transparent; color: var(--text); cursor: pointer; font: inherit; }
+.advisor-title-button, .advisor-sheet-close { border: 0; border-radius: 8px; background: transparent; color: var(--text); cursor: pointer; font: inherit; }
 .advisor-title-button { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 8px; margin-left: -8px; font: 600 16px/24px var(--font); text-align: left; }
 .advisor-title-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; unicode-bidi: plaintext; }
 .advisor-title-chevron { flex: none; display: block; margin-top: 2px; color: var(--muted); }
 .advisor-navigation-meta { flex: none; margin-left: auto; color: var(--chat-muted); font: 11px/18px var(--font); white-space: nowrap; }
-.advisor-actions-button { flex: none; width: 36px; height: 36px; font: 24px/1 var(--font); }
-.advisor-title-button:hover, .advisor-actions-button:hover, .advisor-sheet-close:hover { background: var(--surface); }
+.advisor-title-button:hover, .advisor-sheet-close:hover { background: var(--surface); }
 .advisor-navigation :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 /* Fixed positioning escapes the finding list's clipping without moving private
    nodes outside the controller's synchronous clearing boundary. */
 .advisor-menu-panel { position: fixed; width: 360px; max-width: calc(100vw - 24px); padding: 6px; margin: 0; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--panel); color: var(--text); box-shadow: var(--overlay-shadow); z-index: 2; overflow-y: auto; overscroll-behavior: contain; visibility: hidden; }
 .advisor-menu-panel[data-menu-placed] { visibility: visible; }
-.advisor-action-panel { width: 236px; }
 .advisor-menu-item { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 40px; padding: 9px 10px; border: 0; border-radius: 6px; background: transparent; color: inherit; text-align: left; cursor: pointer; font: 13px/20px var(--font); }
 .advisor-menu-item:hover, .advisor-menu-item:focus { background: var(--surface); }
 .advisor-menu-item[aria-current=page] { background: var(--surface); font-weight: 500; }
@@ -585,9 +583,8 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
 .advisor-menu-delete { color: var(--negative); }
 .advisor-sheet-heading, .advisor-menu-backdrop { display: none; }
 @media (max-width: 600px) {
-  .advisor-navigation { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 8px; }
+  .advisor-navigation { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0 8px; }
   .advisor-title-button { grid-column: 1; grid-row: 1; font-size: 15px; }
-  .advisor-actions-button { grid-column: 2; grid-row: 1; }
   .advisor-navigation-meta { grid-column: 1 / -1; grid-row: 2; margin: 0; font-size: 11px; }
   .advisor-menu-backdrop { display: block; position: fixed; inset: 0; background: var(--scrim); z-index: 1; touch-action: none; }
   .advisor-menu-panel { left: 0; right: 0; bottom: 0; top: auto; width: 100%; max-width: none; max-height: 80dvh; border-radius: 16px 16px 0 0; padding: 8px 10px calc(12px + env(safe-area-inset-bottom)); }
@@ -762,14 +759,13 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
    above and the send button at its lower right, always there. */
 @media (max-width: 760px) {
   .advisor-page .advisor-navigation { top: 0; margin: 0 -16px 12px; padding: calc(6px + env(safe-area-inset-top)) 8px 6px;
-    grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; }
+    grid-template-columns: auto minmax(0, 1fr); align-items: center; }
   .advisor-title-button { gap: 4px; margin-left: 0; padding: 0; font-size: 16px; }
   .advisor-title-button:hover { background: transparent; }
   .advisor-navigation-meta { font-size: 12px; line-height: 16px; }
   .advisor-page .menu-button { grid-column: 1; grid-row: 1 / span 2; }
   .advisor-page .advisor-title-button { grid-column: 2; grid-row: 1; }
   .advisor-page .advisor-navigation-meta { grid-column: 2; grid-row: 2; }
-  .advisor-page .advisor-actions-button { grid-column: 3; grid-row: 1 / span 2; width: 40px; height: 40px; font-size: 22px; }
   .advisor-composer { grid-template-columns: 1fr auto; gap: 4px; border-radius: 12px; padding: 4px 6px 4px 8px;
     background: var(--surface); border-color: var(--line); box-shadow: 0 -8px 24px color-mix(in srgb, var(--bg) 70%, transparent); }
   .advisor-composer-bottom { justify-content: flex-end; }
