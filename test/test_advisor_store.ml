@@ -982,6 +982,60 @@ let matter_state () =
 
 (* What we agreed: what was applied, and matters marked decided. Applying settles a matter once nothing else waits on the
    person; undoing takes it up again. The record keeps what was undone. *)
+(* A database that already holds conversations takes the two matter migrations: rows are put there by the store itself,
+   then the columns are taken away again, which is what those rows look like before the migrations ran. *)
+let matter_migrations_on_existing_data () =
+  with_fixture @@ fun db store owner clock ->
+  let first = accept store owner (submit "before the migrations") in
+  let id = first.ids.conversation_id and run = first.ids.run_id in
+  ignore (ok (Advisor_store.transition store ~run A.Start));
+  let evidence_id = "00000000-0000-4000-8000-00000000000a" in
+  let later = Option.get (Ptime.add_span now (Ptime.Span.of_int_s 3600)) in
+  let e : A.evidence =
+    { id = Option.get (A.Evidence_id.of_string evidence_id); scope = Personal; currency = (submit "unused").currency; sampled_at = now;
+      title = "propose_set_budget"; facts = [ { label = "Category"; value = Text "Groceries" } ]; source_references = [];
+      import_status = Current; reconciled = true; assumptions = []; proposal = Some A.Awaiting }
+  in
+  ignore (ok (Advisor_store.append store ~run ~expected_sequence:1L [ A.Evidence_added e ]));
+  ok (Advisor_store.add_proposal store ~owner ~conversation_id:id ~id:evidence_id ~kind:"set_budget" ~arguments:(`Assoc []) ~precondition:(`Assoc []) ~now ~expires:later);
+  Alcotest.(check bool) "claimed" true (ok (Advisor_store.decide_proposal store ~owner ~id:evidence_id A.Applied));
+  ignore (ok (Advisor_store.transition store ~run A.Finish));
+  let plain = (accept store owner (submit "nothing came of this")).ids.conversation_id in
+  let foreign_key_violations () =
+    Sql.(run db (stmt "PRAGMA foreign_key_check" nil (many (row (text @-> int @-> text @-> int @-> nil) (fun a _ _ _ -> a)))))
+  in
+  let matter c = (ok (Advisor_store.metadata store ~owner c)).matter in
+  let record () = ok (Advisor_store.agreed store ~owner ~limit:10 ~offset:0 ()) in
+
+  (* From before matters had a status. *)
+  Sql.exec_script db
+    "ALTER TABLE advisor_conversations DROP COLUMN decided_at; ALTER TABLE advisor_conversations DROP COLUMN matter_state; \
+     DELETE FROM schema_migrations WHERE version >= 15;";
+  Schema.migrate db;
+  Schema.migrate db;
+  Alcotest.(check int) "each applied once" Schema.latest_version (count db "schema_migrations");
+  Alcotest.(check int) "every conversation kept" 2 (List.length (ok (Advisor_store.list store ~owner ())));
+  Alcotest.(check bool) "an old conversation starts open" true (matter id = A.Open && matter plain = A.Open);
+  (match record () with
+   | [ entry ] ->
+       Alcotest.(check bool) "a change applied earlier is on the record, with no decision date" true
+         (entry.conversation_id = id && entry.decided_at = None && List.length entry.changes = 1)
+   | rows -> Alcotest.failf "expected one entry, got %d" (List.length rows));
+  Alcotest.(check int) "foreign keys hold" 0 (List.length (foreign_key_violations ()));
+
+  (* From after matters had a status, before a decision had a date: it takes the conversation's last update. *)
+  advance clock 60;
+  ok (Advisor_store.set_matter store ~owner id A.Decided);
+  let updated_at = (ok (Advisor_store.metadata store ~owner id)).updated_at in
+  Alcotest.(check bool) "dated later than the last update, for now" false
+    (Option.equal Ptime.equal (List.hd (record ())).decided_at (Some updated_at));
+  Sql.exec_script db
+    "ALTER TABLE advisor_conversations DROP COLUMN decided_at; DELETE FROM schema_migrations WHERE version = 16;";
+  Schema.migrate db;
+  Alcotest.(check bool) "still decided" true (matter id = A.Decided && matter plain = A.Open);
+  Alcotest.(check bool) "dated by its last update" true
+    (Option.equal Ptime.equal (List.hd (record ())).decided_at (Some updated_at))
+
 let agreed_record () =
   with_fixture @@ fun _ store owner clock ->
   let first = accept store owner (submit "agreed") in
@@ -1104,5 +1158,6 @@ let () =
             ("memory_follows_the_user", memory_follows_the_user);
             ("matter_state", matter_state);
             ("agreed_record", agreed_record);
+            ("matter_migrations_on_existing_data", matter_migrations_on_existing_data);
           ] );
     ]
