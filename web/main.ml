@@ -42,13 +42,14 @@ let navigate_to set_route route =
 
 (* The sidebar's places, with Settings at its foot and search (the palette) above them. On a phone the same
    sidebar opens as a drawer from one menu button. *)
-let nav_items = Route.[ Home; Advisor None; Transactions { offset = 0; category = None }; Accounts ]
+let nav_items = Route.[ Home; Advisor None; Agreed; Transactions { offset = 0; category = None }; Accounts ]
 
 let icon route =
   let name : Feather_icon.t =
     match route with
     | Route.Home -> Home
     | Advisor _ -> Message_circle
+    | Agreed -> Check_circle
     | Inbox -> Inbox
     | Transactions _ -> List
     | Accounts | Account _ -> Credit_card
@@ -121,10 +122,12 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
   let proposal_states, record_proposal_state =
     Bonsai.state_machine0 ~default_model:String.Map.empty
       ~apply_action:(fun _ model (id, state) -> Map.set model ~key:id ~data:state) graph in
-  let decide = let%arr record_proposal_state and notify and locale in
+  let decide = let%arr record_proposal_state and notify and locale and advisor and changed in
     fun id action ->
       match%bind.Effect Effect.of_deferred_thunk (fun () -> Advisor_api.decide_proposal ~id action) with
-      | Ok state -> record_proposal_state (id, state)
+      (* Applying or undoing can move the matter, wherever the click came from; it is a write like any other. *)
+      | Ok (state, conversation_id, matter) ->
+          Effect.Many [ record_proposal_state (id, state); advisor.dispatch (C.Matter_changed (conversation_id, matter)); changed ]
       (* Only a refused undo means "it changed since"; anything else is a failure to try again. *)
       | Error (C.Not_accepted W.Version_conflict) when String.equal action "undo" -> notify (Msg.advisor_proposal_undo_failed locale)
       | Error _ -> notify (Msg.advisor_proposal_failed locale) in
@@ -219,7 +222,7 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
         advisor.open_empty ~scope ~currency ~locale; navigate (Route.Advisor None)] in
   let select_conversation = let%arr set_selected_finding and navigate in
     fun id -> Effect.Many [set_selected_finding None; navigate (Route.Advisor (Some id))] in
-  let matters = Advisor_matters.component ~advisor graph in
+  let matters = Advisor_matters.component ~advisor ~version graph in
   let nav_open, set_nav_open = Bonsai.state false graph in
   let menu_button = let%arr locale and nav_open and set_nav_open in
     Vdom.Node.button
@@ -312,6 +315,7 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
   let page =
     match%sub route with
     | Home | Advisor _ -> Bonsai.return Vdom.Node.none
+    | Agreed -> Agreed_page.page ~ctx ~advisor ~decide ~select:select_conversation graph
     | Inbox -> Transactions_page.page ~ctx ~review:true ~offset:(Bonsai.return 0) ~category:(Bonsai.return None) graph
     | Transactions { offset; category } -> Transactions_page.page ~ctx ~review:false ~offset ~category graph
     | Accounts -> Accounts_page.list ~ctx graph

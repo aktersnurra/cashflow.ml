@@ -1,4 +1,5 @@
-(** Applying and dismissing advisor proposals. Only an explicit click reaches these. *)
+(** Applying and dismissing advisor proposals. Only an explicit click reaches these. Applying or dismissing settles the
+    matter once a change stands applied and nothing else awaits an answer; undoing takes a decided matter up again. *)
 
 val apply :
   Service.t -> principal:Advisor_access.principal -> id:string -> (Cashflow_core.Advisor.proposal_state, Cashflow_core.Advisor.error) result

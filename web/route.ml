@@ -2,15 +2,16 @@ open! Core
 
 (* Transactions carries its filters, the pay cycle (0 the current one, -1 the one before) and
    optionally a category, so Back and links keep them. *)
-(* Four places: the Overview (where things stand, what is worth knowing, what is ahead: the forecast, goals and
-   budgets), the Advisor, Money (transactions and accounts, with the inbox, an account and adding by hand as views
-   within it) and Settings (the household among them). *)
-type t = Home | Advisor of string option | Transactions of { offset : int; category : string option } | Inbox | Accounts | Account of string | Settings | Add [@@deriving equal, sexp]
+(* The review (where things stand, what is worth knowing, what is ahead: the forecast, goals and budgets), Matters, what
+   we agreed, the books (transactions and accounts, with the inbox, an account and adding by hand as views within them)
+   and Settings (the household among them). *)
+type t = Home | Advisor of string option | Agreed | Transactions of { offset : int; category : string option } | Inbox | Accounts | Account of string | Settings | Add [@@deriving equal, sexp]
 
 let to_path = function
   | Home -> "/"
   | Advisor None -> "/advisor"
   | Advisor (Some id) -> "/advisor/" ^ id
+  | Agreed -> "/agreed"
   | Transactions { offset = 0; category = None } -> "/transactions"
   | Transactions { offset; category } -> "/transactions/" ^ Int.to_string offset ^ Option.value_map category ~default:"" ~f:(fun c -> "/" ^ c)
   | Inbox -> "/inbox"
@@ -23,6 +24,7 @@ let of_path path =
   match String.split (String.strip ~drop:(Char.equal '/') path) ~on:'/' with
   | [ "advisor" ] -> Advisor None
   | [ "advisor"; id ] -> Advisor (Some id)
+  | [ "agreed" ] -> Agreed
   | [ "transactions" ] -> Transactions { offset = 0; category = None }
   | [ "transactions"; offset ] -> Transactions { offset = Option.value (Int.of_string_opt offset) ~default:0; category = None }
   | [ "transactions"; offset; category ] -> Transactions { offset = Option.value (Int.of_string_opt offset) ~default:0; category = Some category }
@@ -38,6 +40,7 @@ let of_path path =
 let title locale = function
   | Home -> Msg.nav_home locale
   | Advisor _ -> Msg.nav_matters locale
+  | Agreed -> Msg.nav_agreed locale
   | Transactions _ -> Msg.nav_transactions locale
   | Inbox -> Msg.nav_inbox locale
   | Accounts | Account _ -> Msg.nav_accounts locale

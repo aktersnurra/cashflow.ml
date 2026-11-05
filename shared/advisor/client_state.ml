@@ -64,6 +64,7 @@ type action =
   | Delete
   | Delete_owned of string
   | Set_matter of W.matter
+  | Matter_changed of string * W.matter
   | Consent of bool * string option
   | Refresh_status
   | Load_history of int
@@ -601,6 +602,13 @@ let reduce t action =
       match result with
       | Error e -> failure t e
       | Ok matter -> ({ t with v = { t.v with snapshot = Option.map (fun (s : W.snapshot) -> { s with matter }) t.v.snapshot } }, []))
+  | Matter_changed (id, matter) ->
+      ( { t with
+          v =
+            { t.v with
+              snapshot =
+                Option.map (fun (s : W.snapshot) -> if String.equal s.conversation_id id then { s with matter } else s) t.v.snapshot } },
+        [] )
   | Consent (enabled, household) when t.active ->
       let t, tok = fresh t in
       ({ t with consent_request = Some tok; consent_change = Some (enabled, household) }, [ Set_consent (tok, enabled, household) ])

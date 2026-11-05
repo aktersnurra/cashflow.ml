@@ -12,7 +12,7 @@ let component ~(ctx : Ctx.t) ~(ask : (string -> unit Effect.t) Bonsai.t) ~(open_
   and set_theme = ctx.set_theme in
   if not open_ then Vdom.Node.none
   else
-    let pages = List.map Route.[ Home; Advisor None; Transactions { offset = 0; category = None }; Inbox; Accounts; Settings ] ~f:(fun r -> (Msg.command_go_to ~page:(Route.title locale r) locale, navigate r)) in
+    let pages = List.map Route.[ Home; Advisor None; Agreed; Transactions { offset = 0; category = None }; Inbox; Accounts; Settings ] ~f:(fun r -> (Msg.command_go_to ~page:(Route.title locale r) locale, navigate r)) in
     let accounts =
       match accounts with
       | Loaded json ->

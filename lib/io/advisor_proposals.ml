@@ -297,14 +297,26 @@ let apply service ~principal ~id =
                 Ok `Decided
             | `Do write -> (
                 let* claimed = S.decide_proposal (store service) ~owner ~id A.Applied in
-                if not claimed then Ok `Decided else match write () with Ok () -> Ok `Applied | Error () -> Error rejected))
+                if not claimed then Ok `Decided
+                else
+                  match write () with
+                  | Ok () ->
+                      let* () = S.settle_matter (store service) ~owner p.conversation_id in
+                      Ok `Applied
+                  | Error () -> Error rejected))
       with
       | Ok `Applied -> Ok A.Applied
       | Ok `Decided -> S.proposal (store service) ~owner id |> Result.map (fun (p : S.proposal) -> p.state)
       | Error e when e == rejected -> decide service ~owner ~id A.Not_applied
       | Error e -> Error e)
 
-let dismiss service ~principal ~id = with_proposal service ~principal ~id (fun owner _ -> decide service ~owner ~id A.Declined)
+(* Dismissing the last open question settles a matter in which a change stands applied. *)
+let dismiss service ~principal ~id =
+  with_proposal service ~principal ~id (fun owner p ->
+      Sql.transaction_result service.Service.db (fun () ->
+          let* state = decide service ~owner ~id A.Declined in
+          let* () = S.settle_matter (store service) ~owner p.conversation_id in
+          Ok state))
 
 (* Taking an applied proposal back, only if what it did is still exactly as it left it: a budget the user has since
    changed, or a row they have since categorised again, is theirs now and is not touched. Claiming the undo and
@@ -477,7 +489,7 @@ let undo service ~principal ~id =
                 | "entry" -> undo_entry service ~principal ~owner ~id p
                 | _ -> error A.Invalid_request
               in
-              match outcome with `Undone -> Ok () | `Changed -> Error conflict)
+              match outcome with `Undone -> S.reopen_decided (store service) ~owner p.conversation_id | `Changed -> Error conflict)
       with
       | Ok () -> Ok A.Reverted
       | Error e -> Error e)

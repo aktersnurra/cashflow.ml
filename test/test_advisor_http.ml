@@ -902,6 +902,79 @@ let proposal_endpoints () =
       Alcotest.(check (option int64)) "without writing" (Some 1L) (budget ());
       Alcotest.(check int) "wrong method" 405 (status (req ~meth:H.OTHER ("/api/advisor/proposals/" ^ apply ^ "/apply"))))
 
+(* What we agreed: applying settles the matter and puts it on the record, undoing takes it up again and the record says so. *)
+let agreed_endpoints () =
+  fixture (fun _ service token _ req ->
+      let open Yojson.Safe.Util in
+      ignore (req ~meth:POST ~body:"{\"enabled\":true}" "/api/advisor/consent");
+      let access = Test_service_support.sign_in service "http" in
+      let owner = (Access.user access).id in
+      let groceries =
+        (List.find (fun (i : Account_info.t) -> i.account.name = "Groceries" && Owner.equal i.account.owner (Access.personal access))
+           (Service.accounts service access)).account.id
+      in
+      let store = Advisor_store.create ~clock:service.now service.db in
+      let accepted = ok (Advisor_store.accept store ~owner ~session:(Web_auth.session_ref token) ~now ~model:"synthetic" ~source_finding:None (submit "agreed")) in
+      let run = accepted.ids.run_id and conversation_id = accepted.ids.conversation_id in
+      let conversation = Advisor.Conversation_id.to_string conversation_id in
+      ignore (ok (Advisor_store.transition store ~run Advisor.Start));
+      let cycle = Insights.current_cycle_label (Result.get_ok (Insights.context service access ~scope:Analytics.Me ~currency:"SEK" ())) in
+      let propose id sequence =
+        let e : Advisor.evidence =
+          { id = Option.get (Advisor.Evidence_id.of_string id); scope = Personal; currency = (submit "x").currency; sampled_at = now;
+            title = "propose_set_budget"; facts = [ { label = "Category"; value = Text "Groceries" } ]; source_references = [];
+            import_status = Current; reconciled = true; assumptions = []; proposal = Some Advisor.Awaiting }
+        in
+        ignore (ok (Advisor_store.append store ~run ~expected_sequence:sequence [ Advisor.Evidence_added e ]));
+        ok (Advisor_store.add_proposal store ~owner ~conversation_id ~id ~kind:"set_budget"
+              ~arguments:(`Assoc [ ("category_id", `String (Account_id.to_string groceries)); ("monthly_amount", `String "350000"); ("rollover", `Bool false) ])
+              ~precondition:(`Assoc [ ("current_monthly", `Null); ("current_rollover", `Null); ("from_cycle", `String cycle) ])
+              ~now ~expires:(Option.get (Ptime.add_span now (Ptime.Span.of_int_s 3600))))
+      in
+      let applied = "00000000-0000-4000-8000-00000000000a" in
+      propose applied 1L;
+      ignore (ok (Advisor_store.transition store ~run Advisor.Finish));
+      let page () = ok (W.decode_agreed_page (body (req "/api/advisor/agreed"))) in
+      let post action =
+        let response = req ~meth:POST ~body:"{}" ("/api/advisor/proposals/" ^ applied ^ "/" ^ action) in
+        Alcotest.(check int) action 200 (status response);
+        Yojson.Safe.from_string (body response)
+      in
+      Alcotest.(check int) "nothing agreed yet" 0 (List.length (page ()).entries);
+      let answer = post "apply" in
+      Alcotest.(check string) "applied" "applied" (member "state" answer |> to_string);
+      Alcotest.(check string) "says the matter is decided" "decided" (member "matter" answer |> to_string);
+      Alcotest.(check string) "and which matter" conversation (member "conversation_id" answer |> to_string);
+      (match (page ()).entries with
+       | [ entry ] ->
+           Alcotest.(check string) "the matter" conversation entry.conversation_id;
+           Alcotest.(check bool) "decided, with a date" true (entry.matter = W.Decided && Option.is_some entry.decided_at);
+           Alcotest.(check bool) "with its title" true (Option.is_some entry.title);
+           (match entry.changes with
+            | [ change ] ->
+                Alcotest.(check bool) "what was applied" true (change.evidence.title = "propose_set_budget" && change.evidence.proposal = Some W.Applied && change.undone_at = None)
+            | _ -> Alcotest.fail "expected one change")
+       | _ -> Alcotest.fail "expected one entry");
+      let answer = post "undo" in
+      Alcotest.(check string) "undone" "reverted" (member "state" answer |> to_string);
+      Alcotest.(check string) "the matter is open again" "open" (member "matter" answer |> to_string);
+      (match (page ()).entries with
+       | [ { matter = W.Open; decided_at = None; changes = [ { undone_at = Some _; evidence; _ } ]; _ } ] ->
+           Alcotest.(check bool) "the record keeps it, undone" true (evidence.proposal = Some W.Reverted)
+       | _ -> Alcotest.fail "expected the undone change on the record");
+      Alcotest.(check int) "a bad limit is refused" 422 (status (req "/api/advisor/agreed?limit=0"));
+      Alcotest.(check int) "wrong method" 405 (status (req ~meth:H.OTHER "/api/advisor/agreed"));
+      Alcotest.(check int) "needs a session" 401 (status (req ~headers:[] "/api/advisor/agreed"));
+      let other = Test_service_support.sign_in service "agreed-other" in
+      let other_token = Web_auth.create_session service.db ~now (Access.user other) in
+      let other_csrf = (Option.get (Web_auth.inspect_session service ~now (Web_auth.session_ref other_token))).csrf_token in
+      let other_headers = [ ("cookie", Web_auth.session_cookie ^ "=" ^ other_token); ("x-csrf-token", other_csrf); ("origin", "https://cashflow.example"); ("content-type", "application/json") ] in
+      ignore (req ~meth:POST ~body:"{\"enabled\":true}" ~headers:other_headers "/api/advisor/consent");
+      Alcotest.(check int) "another person sees nothing" 0
+        (List.length (ok (W.decode_agreed_page (body (req ~headers:other_headers "/api/advisor/agreed")))).entries);
+      ignore (req ~meth:POST ~body:"{\"enabled\":false}" "/api/advisor/consent");
+      Alcotest.(check int) "without consent nothing is disclosed" 0 (List.length (page ()).entries))
+
 (* A categorize proposal files every row it names, as the Inbox would, only if each is still untouched; nothing else. *)
 let categorize_proposal_endpoints () =
   fixture (fun _ service token _ req ->
@@ -1338,6 +1411,7 @@ let () =
           Alcotest.test_case "memory notes endpoints" `Quick memory_endpoints;
           Alcotest.test_case "matter status endpoints" `Quick matter_endpoints;
           Alcotest.test_case "proposal endpoints" `Quick proposal_endpoints;
+          Alcotest.test_case "what we agreed" `Quick agreed_endpoints;
           Alcotest.test_case "categorize proposal endpoints" `Quick categorize_proposal_endpoints;
           Alcotest.test_case "undo endpoints" `Quick undo_endpoints;
           Alcotest.test_case "undo edge cases" `Quick undo_edge_cases;

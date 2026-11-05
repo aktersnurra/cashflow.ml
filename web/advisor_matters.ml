@@ -8,17 +8,17 @@ module W = Cashflow_advisor_protocol.Wire
 
 let limit = 5
 
-let component ~(advisor : Advisor.controller Bonsai.t) graph =
+let component ~(advisor : Advisor.controller Bonsai.t) ~(version : int Bonsai.t) graph =
   let listed, set_listed = Bonsai.state ~equal:phys_equal ([] : C.metadata list) graph in
   (* Titles are private: nothing shows until access is known, or once it has been lost. *)
   let readable = Bonsai.cutoff (let%arr advisor in if advisor.view.access_denied then None else advisor.view.status) ~equal:Poly.equal in
   (* A new turn, a new status or a deleted conversation changes the list; so does losing consent or a household. *)
   let changes =
     Bonsai.cutoff ~equal:Poly.equal
-      (let%arr advisor in
+      (let%arr advisor and version in
        let view = advisor.view in
        ( view.authenticated && not view.access_denied,
-         Option.map view.snapshot ~f:(fun s -> (s.conversation_id, s.matter, List.length s.turns)),
+         (version, Option.map view.snapshot ~f:(fun s -> (s.conversation_id, s.matter, List.length s.turns))),
          Option.map view.status ~f:(fun s -> (s.consent, s.household)) ))
   in
   let latest = ref 0 in
