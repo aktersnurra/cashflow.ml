@@ -243,17 +243,10 @@ let render_turns ~locale ~(snapshot : W.snapshot option) ~dispatch ~(decided : s
       | children -> [ Vdom.Node.div ~attrs:(cls "advisor-answer-actions") children ]
     in
     Vdom.Node.create "article" ~key:a.ids.attempt_id
-      ~attrs:[ Vdom.Attr.class_ "advisor-answer"; (if streaming then Vdom.Attr.create "data-streaming" "" else Vdom.Attr.empty) ]
-      ([
-         Vdom.Node.div ~attrs:(cls "advisor-answer-heading")
-           [
-             Vdom.Node.span
-               ~attrs:[ Vdom.Attr.class_ "advisor-mark"; Vdom.Attr.create "aria-hidden" "true" ]
-               [ text "✦" ];
-             Vdom.Node.span [ text (Msg.nav_advisor locale) ];
-           ];
-       ]
-      @ List.map a.segments ~f:segment
+      ~attrs:
+        [ Vdom.Attr.class_ "advisor-answer"; Vdom.Attr.create "aria-label" (Msg.advisor_answer locale);
+          (if streaming then Vdom.Attr.create "data-streaming" "" else Vdom.Attr.empty) ]
+      (List.map a.segments ~f:segment
       @ progress
       @ (if foreground || Poly.equal a.state W.Completed then []
          else [ Vdom.Node.p ~attrs:(cls "advisor-attempt-status") [ text (run_status locale a.state) ] ])
@@ -412,6 +405,21 @@ let render_body ~(attach : Vdom.Node.t option) ~turns ~show_source ~intro ~openi
     @ (if generation_ready && Option.is_some view.pending then [ button (Msg.advisor_repeat locale) C.Repeat_pending ]
        else [])
   in
+  (* Every matter ends somewhere: once an answer is in, say where this one stands. Replying opens it again. *)
+  let standing =
+    match view.snapshot with
+    | Some { turns = _ :: _; active_run = None; matter; _ } ->
+        let note, choices =
+          match matter with
+          | W.Open -> (Msg.matter_stands locale, [ (Msg.matter_decide locale, W.Decided); (Msg.matter_park locale, W.Parked) ])
+          | W.Decided -> (Msg.matter_decided_note locale, [ (Msg.matter_reopen locale, W.Open) ])
+          | W.Parked -> (Msg.matter_parked_note locale, [ (Msg.matter_reopen locale, W.Open) ])
+        in
+        Vdom.Node.div ~attrs:(cls "matter-standing")
+          (Vdom.Node.span [ text note ]
+          :: List.map choices ~f:(fun (label, matter) -> button label (C.Set_matter matter)))
+    | _ -> Vdom.Node.none
+  in
   let intro_block =
     if has_messages || not intro then Vdom.Node.none
     else Vdom.Node.div ~attrs:(cls "advisor-intro") [ opening; Ui.muted (Msg.advisor_readonly locale) ]
@@ -451,6 +459,7 @@ let render_body ~(attach : Vdom.Node.t option) ~turns ~show_source ~intro ~openi
     @ [
         intro_block;
         Vdom.Node.div ~attrs:(cls "advisor-messages") turns;
+        standing;
         Vdom.Node.div ~attrs:(cls "advisor-conversation-actions") actions;
         Vdom.Node.div ~attrs:(cls "advisor-composer-area")
           [

@@ -29,14 +29,15 @@ let reveal_opened =
 
 let component ~(ctx : Ctx.t) ~(scope : string option Bonsai.t) ~(cards : J.t list Bonsai.t)
     ~(open_card : (J.t -> unit Effect.t) Bonsai.t)
-    ~(on_ask : (finding_key:string -> scope:W.scope -> unit Effect.t) Bonsai.t) graph =
+    ~(on_ask : (finding_key:string -> scope:W.scope -> unit Effect.t) Bonsai.t)
+    ~(matters : (string * string * string) list Bonsai.t) ~(select_matter : (string -> unit Effect.t) Bonsai.t) graph =
   let active = let%arr scope in Option.is_some scope in
   let scope_arg = let%arr scope in `String (Option.value scope ~default:"me") in
   let outlook = Remote.load ~active ~name:"period_outlook" ~args:(let%arr scope_arg in `Assoc [ ("scope", scope_arg) ]) ~ctx graph in
   let briefing =
     Remote.load ~active ~name:"get_briefing" ~args:(let%arr scope_arg in `Assoc [ ("scope", scope_arg); ("propose", `Bool false) ]) ~ctx graph
   in
-  let%arr scope and outlook and briefing and cards and open_card and on_ask and locale = ctx.locale and session = ctx.session in
+  let%arr scope and outlook and briefing and cards and open_card and on_ask and matters and select_matter and locale = ctx.locale and session = ctx.session in
   match scope with
   | None -> Vdom.Node.none
   | Some scope ->
@@ -98,5 +99,11 @@ let component ~(ctx : Ctx.t) ~(scope : string option Bonsai.t) ~(cards : J.t lis
                 else Some (row ~title ~value ~on_click:(on_ask ~finding_key:(J.str (J.field "key" q)) ~scope:finding_scope)))
         | Loading | Failed _ -> []
       in
+      let still_open =
+        let now = Advisor_navigation.now_ms () in
+        List.map matters ~f:(fun (id, title, updated_at) ->
+            row ~title ~value:(Advisor_navigation.age_caption locale now updated_at) ~on_click:(select_matter id))
+      in
       Ui.div ~cls:"advisor-opening"
-        [ facts; group (Msg.opening_decide locale) decisions; group (Msg.opening_explore locale) (List.take (unusual @ questions) max_topics) ]
+        [ facts; group (Msg.opening_decide locale) decisions; group (Msg.opening_explore locale) (List.take (unusual @ questions) max_topics);
+          group (Msg.opening_still_open locale) still_open ]

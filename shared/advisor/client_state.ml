@@ -25,7 +25,7 @@ type status = {
   household_known : bool; (* Absent legacy metadata is unknown, not confirmed membership loss. *)
 }
 type conversation_preview = { title : string; scope : W.scope }
-type metadata = { conversation_id : string; version : string; updated_at : string; preview : conversation_preview option }
+type metadata = { conversation_id : string; version : string; updated_at : string; preview : conversation_preview option; matter : W.matter }
 type history_page = { conversations : metadata list; next_offset : int option }
 type connection = Disconnected | Connecting | Connected | Reconnecting
 type pending = Submit of W.submit | Retry of W.retry
@@ -38,6 +38,7 @@ type command =
   | Subscribe of token * W.identities * string
   | Unsubscribe
   | Delete_conversation of token * string
+  | Set_matter_state of token * string * W.matter
   | Announce_status of notice
   | Get_status of token
   | Set_consent of token * bool * string option
@@ -52,7 +53,6 @@ type action =
   | Consume_first_acceptance of string
   | Leave_surface
   | Open_conversation of string
-  | Open_latest
   | Open_empty of W.scope * W.currency * string
   | Open_finding of string * W.scope * W.currency * string
   | Draft_changed of string
@@ -63,6 +63,7 @@ type action =
   | Reconnect
   | Delete
   | Delete_owned of string
+  | Set_matter of W.matter
   | Consent of bool * string option
   | Refresh_status
   | Load_history of int
@@ -72,6 +73,7 @@ type action =
   | History of token * (history_page, failure) result
   | Consent_result of token * (unit, failure) result
   | Deleted of token * (unit, failure) result
+  | Matter_set of token * (W.matter, failure) result
   | Stopped of token * (string, failure) result
   | Stream_invalid of token
   | Event of token * W.event
@@ -116,6 +118,7 @@ type t = {
   stop_request : token option;
   delete_request : token option;
   delete_target : string option;
+  matter_request : token option;
   status_request : token option;
   consent_request : token option;
   consent_change : (bool * string option) option;
@@ -126,7 +129,6 @@ type t = {
   stream : (token * W.identities) option;
   buffer : W.event list;
   bytes : int;
-  latest : bool;
   selected : string option;
   context : (string option * W.scope * W.currency * string) option;
   drafts : (string * (W.scope * string)) list;
@@ -168,6 +170,7 @@ let empty =
     stop_request = None;
     delete_request = None;
     delete_target = None;
+    matter_request = None;
     status_request = None;
     consent_request = None;
     consent_change = None;
@@ -178,7 +181,6 @@ let empty =
     stream = None;
     buffer = [];
     bytes = 0;
-    latest = false;
     selected = None;
     context = None;
     drafts = [];
@@ -300,7 +302,7 @@ let filter_history status history =
       match entry.preview with None -> true | Some preview -> scope_readiness status preview.scope <> Some false) history
 
 let invalidate_history_request t =
-  {t with history_request=None; history_next_offset=None; latest=false; v={t.v with history_failed=false}}
+  {t with history_request=None; history_next_offset=None; v={t.v with history_failed=false}}
 
 let drop_history_scope scope t =
   let history = List.filter (fun entry -> match entry.preview with
@@ -369,7 +371,6 @@ let reduce t action =
         let t =
           {
             t with
-            latest = false;
             recovery_required = false;
             context = None;
             suspended = None;
@@ -380,6 +381,7 @@ let reduce t action =
             write_request = None;
             stop_request = None;
             delete_request = None;
+            matter_request = None;
             history_request = None;
             history_offset = 0;
             history_next_offset = None;
@@ -399,16 +401,12 @@ let reduce t action =
       let t = { (clear t) with drafts } in
       selection_status
         ({ t with context = Some (Some key, scope, currency, locale); v = { t.v with status } }, clear_commands)
-  | Open_latest when t.active ->
-      let t, tok = fresh t in
-      ({t with latest=true; history_request=Some tok; history_offset=0; history_next_offset=None;
-        v={t.v with history=[]; history_failed=false}}, [List_conversations (tok, 1, 0)])
   | Refresh_status when t.active -> request_status (t, [])
   | Load_history offset when t.active && offset >= 0 ->
       if offset > 0 && (t.history_request <> None || t.history_next_offset <> Some offset) then (t, [])
       else
         let t, tok = fresh t in
-        ({t with latest=false; history_request=Some tok; history_offset=offset; v={t.v with history_failed=false}}, [List_conversations (tok, 20, offset)])
+        ({t with history_request=Some tok; history_offset=offset; v={t.v with history_failed=false}}, [List_conversations (tok, 20, offset)])
   | Submit_draft key
     when t.active && t.v.pending = None && t.v.draft <> "" && t.write_request = None && t.snapshot_request = None
          && not t.recovery_required -> (
@@ -592,6 +590,17 @@ let reduce t action =
       | Error Access_lost when t.selected <> target -> notice t Request_failed
       | Error e -> failure t e
       | Ok () -> if t.selected = target || t.v.denied_conversation = target then (clear t, clear_commands) else (t, []))
+  | Set_matter matter when t.active -> (
+      match t.v.snapshot with
+      | None -> (t, [])
+      | Some s ->
+          let t, tok = fresh t in
+          ({ t with matter_request = Some tok }, [ Set_matter_state (tok, s.conversation_id, matter) ]))
+  | Matter_set (tok, result) when current t t.matter_request tok -> (
+      let t = { t with matter_request = None } in
+      match result with
+      | Error e -> failure t e
+      | Ok matter -> ({ t with v = { t.v with snapshot = Option.map (fun (s : W.snapshot) -> { s with matter }) t.v.snapshot } }, []))
   | Consent (enabled, household) when t.active ->
       let t, tok = fresh t in
       ({ t with consent_request = Some tok; consent_change = Some (enabled, household) }, [ Set_consent (tok, enabled, household) ])
@@ -645,41 +654,11 @@ let reduce t action =
   | History (tok, result) when current t t.history_request tok -> (
       match result with
       | Error e -> failure {t with history_request=None; v={t.v with history_failed=true}} e
-      | Ok page -> (
+      | Ok page ->
           let incoming = filter_history t.v.status page.conversations in
           let history = append_history (if t.history_offset=0 then [] else t.v.history) incoming in
-          let latest = t.latest in
           let next_offset = match page.next_offset with Some offset when offset > t.history_offset -> Some offset | _ -> None in
-          let t = {t with latest=false; history_request=None; history_next_offset=next_offset; v={t.v with history; history_failed=false}} in
-          match (latest, incoming, next_offset) with
-          | true, [], Some offset ->
-              let t, token = fresh t in
-              ({t with latest=true; history_request=Some token; history_offset=offset}, [List_conversations (token, 20, offset)])
-          | true, h :: _, _ ->
-              let t = remember_draft t in
-              let draft = restored_draft h.conversation_id t.drafts in
-              selection_status
-                (fetch
-                   {
-                     t with
-                     write_request = None;
-                     stop_request = None;
-                     delete_request = None;
-                     status_request = None;
-                     consent_request = None;
-                     consent_change = None;
-                     selected = Some h.conversation_id;
-                     recovery_required = false;
-                     context = None;
-                     suspended = None;
-                     v = { blank with draft; status = t.v.status; history };
-                   }
-                   h.conversation_id)
-          | true, [], None ->
-              let context = t.context and status = t.v.status and drafts = t.drafts in
-              let t = clear t in
-              selection_status ({ t with context; drafts; v = { t.v with status; notice = Choose_context } }, clear_commands)
-          | _ -> (t, [])))
+          ({t with history_request=None; history_next_offset=next_offset; v={t.v with history; history_failed=false}}, []))
   | _ -> (t, [])
 
 let command_is_current t = function
@@ -687,6 +666,7 @@ let command_is_current t = function
   | Fetch_snapshot (tok, _) -> current t t.snapshot_request tok
   | Cancel_run (tok, _) -> current t t.stop_request tok
   | Delete_conversation (tok, _) -> current t t.delete_request tok
+  | Set_matter_state (tok, _, _) -> current t t.matter_request tok
   | Get_status tok -> current t t.status_request tok
   | Set_consent (tok, _, _) -> current t t.consent_request tok
   | List_conversations (tok, _, _) -> current t t.history_request tok

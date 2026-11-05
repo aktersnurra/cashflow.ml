@@ -22,7 +22,7 @@ assert.ok(['name','route','route-history','enable','enable-pending','mobile','re
  page.on('response',r=>{if(r.url().includes('/api/advisor/conversations/')&&r.status()===403)denials++;});
  await page.goto(base);
  if(kind==='mobile'){
-  const finding=page.locator('[data-finding-key^="unusual:"]'),ask=finding.getByRole('button',{name:'Ask advisor',exact:true});
+  const finding=page.locator('[data-finding-key^="unusual:"]'),ask=finding.getByRole('button',{name:'Raise this',exact:true});
   await finding.locator('summary').click();  // the banner opens to what can be done
   await ask.scrollIntoViewIfNeeded();const original=await finding.elementHandle(),beforeAsk=await geometry(finding);
   await ask.click();await page.getByText(/Advisor sends your messages/).waitFor();
@@ -41,7 +41,7 @@ assert.ok(['name','route','route-history','enable','enable-pending','mobile','re
   await nav('Matters').click();await button('Enable Advisor').click();await composer().waitFor();
   await nav('Settings').click();await page.getByRole('switch',{name:'Enable household Advisor',exact:true}).click();await page.getByRole('switch',{name:'Disable household Advisor',exact:true}).waitFor();
   await nav('Review').click();const source=page.locator('[data-finding-key]').filter({has:page.getByRole('heading',{name:'Shared bills may run short before payday',exact:true,includeHidden:true})});
-  await source.locator('summary').click();await source.getByRole('button',{name:'Ask advisor',exact:true}).click();await send('Private completed household source');await page.getByText('first',{exact:true}).waitFor();
+  await source.locator('summary').click();await source.getByRole('button',{name:'Raise this',exact:true}).click();await send('Private completed household source');await page.getByText('first',{exact:true}).waitFor();
   await fetch(base+'/release');await page.getByRole('status').filter({hasText:'Answer completed.'}).waitFor();
   await composer().fill('private household draft');assert.equal(await page.evaluate(()=>window.sources.filter(s=>!s.closedByApp).length),0,'completed thread has no live stream');
   const id=new URL(page.url()).pathname.split('/').pop(),snapshot=await(await page.request.get(base+'/api/advisor/conversations/'+id)).json();
@@ -53,18 +53,18 @@ assert.ok(['name','route','route-history','enable','enable-pending','mobile','re
   if(kind==='leave'){await page.locator('select:visible').first().selectOption('en');await button('Save').click();}else if(kind!=='disable')await page.locator('.sidebar a[href="/settings"]').click();
   for(let i=0;i<100&&((kind!=='disable'&&!denials)||statuses<=before);i++)await sleep(20);
   assert.ok(statuses>before,'ordinary route/version refresh must fetch NEW readiness after cached success');if(kind!=='disable')assert.ok(denials>0,'authorized snapshot must deny completed thread');
-  await page.getByText(/Access to this conversation has ended/).waitFor({state:'attached'});
+  await page.getByText(/Access to this matter has ended/).waitFor({state:'attached'});
   assert.equal(await page.getByTestId('selected-finding').count(),0);assert.equal(await page.getByText('Private completed household source',{exact:true}).count(),0);
   await nav('Matters').click();await composer().waitFor();assert.equal(await composer().inputValue(),'');assert.equal(posts,1);assert.equal((await state()).provider_starts,1);
  } else {
   const shortfall=page.locator('[data-finding-key]').filter({has:page.getByRole('heading',{name:'Bills may run short before payday',exact:true})});
-  await shortfall.locator('summary').click();await shortfall.getByRole('button',{name:'Ask advisor',exact:true}).click();await button('Enable Advisor').click();await composer().waitFor();
+  await shortfall.locator('summary').click();await shortfall.getByRole('button',{name:'Raise this',exact:true}).click();await button('Enable Advisor').click();await composer().waitFor();
   if(kind==='name'){
-   await history();await page.getByRole('menu',{name:'Conversation history',exact:true}).waitFor({timeout:4000});
+   await history();await page.getByRole('menu',{name:'Matters',exact:true}).waitFor({timeout:4000});
    const panel=page.locator('.advisor-history-panel');assert.equal(await panel.evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+20,r.y+20));}),true,'inline finding does not clip the fixed private menu');
   }else if(kind==='route-history'){
    await send('Original history conversation');await page.getByText('first',{exact:true}).waitFor();await fetch(base+'/release');await page.getByRole('status').filter({hasText:'Answer completed.'}).waitFor();const original=new URL(page.url()).pathname;
-   await history();await page.getByRole('menuitem',{name:'New conversation',exact:true}).click();await page.locator('.advisor-opening').waitFor();
+   await history();await page.getByRole('menuitem',{name:'New matter',exact:true}).click();await page.locator('.advisor-opening').waitFor();
    let release,ready,id;const held=new Promise(r=>ready=r);
    await page.route('**/api/advisor/turns',async route=>{const response=await route.fetch();id=(await response.json()).data.ids.conversation_id;release=()=>route.fulfill({response});ready();});
    await send('Deferred different conversation');await until(held);await page.locator('.sidebar a[href="/settings"]').click();

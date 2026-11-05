@@ -205,6 +205,9 @@ let turn_out (v : A.turn) : W.turn =
     attempts = List.map (fun x -> attempt_out x) v.attempts;
   }
 
+let matter_out : A.matter -> W.matter = function Open -> Open | Decided -> Decided | Parked -> Parked
+let matter_in : W.matter -> A.matter = function Open -> Open | Decided -> Decided | Parked -> Parked
+
 let snapshot_out (v : A.snapshot) : W.snapshot =
   {
     conversation_id = A.Conversation_id.to_string v.conversation_id;
@@ -215,6 +218,7 @@ let snapshot_out (v : A.snapshot) : W.snapshot =
     turns = List.map (fun x -> turn_out x) v.turns;
     active_run = Option.map (fun x -> A.Run_id.to_string x) v.active_run;
     version = Int64.to_string v.version;
+    matter = matter_out v.matter;
   }
 
 let scope_in (v : W.scope) : A.scope =

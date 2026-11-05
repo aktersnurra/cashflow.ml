@@ -15,21 +15,21 @@ const base='http://127.0.0.1:18197';const sleep=ms=>new Promise(r=>setTimeout(r,
  await button('Stop').click();await p.getByRole('status').filter({hasText:'Answer stopped.'}).waitFor();await fetch(base+'/release');
  await nav('Settings').click();await p.getByRole('switch',{name:'Enable household Advisor',exact:true}).click();
  await p.getByRole('switch',{name:'Disable household Advisor',exact:true}).waitFor();await nav('Matters').click();
- await history();await menuItem('New household conversation').click();await p.getByText('Household · Only you',{exact:true}).waitFor();
+ await history();await menuItem('New household matter').click();await p.getByText('Household · Only you',{exact:true}).waitFor();
  await p.locator('textarea.advisor-input').fill('Household scale four');await button('Send').click();await p.getByRole('status').filter({hasText:'Answer completed.'}).waitFor();
  assert.deepEqual(bodies.at(-1).currency,{code:'EUR',scale:4});
  await nav('Settings').click();await p.locator('.setting-row',{hasText:'Currency'}).locator('input').fill('EUR');await button('Save').click();await p.getByText('Saved.',{exact:true}).waitFor();
  const session=await(await p.request.get(base+'/api/session')).json();assert.deepEqual(session.currency_metadata,[{code:'EUR',scale:4}]);
  await p.goto(base+original);await p.locator('textarea.advisor-input').fill('Pinned original currency');await button('Send').click();await p.getByRole('status').filter({hasText:'Answer completed.'}).waitFor();
  assert.deepEqual(bodies.at(-1).currency,{code:'SEK',scale:0},'settings refresh never rewrites pinned conversation currency');
- await history();await menuItem('New conversation').click();await p.locator('.advisor-opening').waitFor();
+ await history();await menuItem('New matter').click();await p.locator('.advisor-opening').waitFor();
  await p.locator('textarea.advisor-input').fill('New current default');await button('Send').click();await p.getByRole('status').filter({hasText:'Answer completed.'}).waitFor();
  assert.deepEqual(bodies.at(-1).currency,{code:'EUR',scale:4});
  console.log('PASS native currency metadata: Personal SEK0, Household EUR4, settings deduplication, pinned original SEK0, explicit new default EUR4');
  // Existing authorized snapshots remain usable even if metadata cannot initialize a new context.
  const invalid=route=>route.fetch().then(async response=>{const json=await response.json();delete json.currency_metadata;return route.fulfill({response,json});});
  await p.route('**/api/session*',invalid);await p.goto(base+original);await p.locator('textarea.advisor-input').waitFor();
- await history();const before=bodies.length;await menuItem('New conversation').click();
+ await history();const before=bodies.length;await menuItem('New matter').click();
  await p.getByText('Could not read the currency. Refresh this page before asking.',{exact:true}).waitFor();assert.equal(bodies.length,before);
  await p.unroute('**/api/session*',invalid);
  const fresh=await browser.newPage();await fresh.context().addCookies([{name:'cashflow_session',value:sessions.c.token,url:base}]);

@@ -87,6 +87,10 @@ kbd { font: 11px/16px var(--mono); padding: 0 4px; border: 1px solid var(--line-
 .icon svg { display: block; width: 16px; height: 16px; }
 .badge { margin-left: auto; min-width: 20px; text-align: center; background: var(--surface-2); color: var(--text); font-size: 11px; line-height: 18px; font-weight: 600; font-variant-numeric: lining-nums tabular-nums; padding: 0 6px; border-radius: 999px; }
 .nav-link.active .badge, .nav-link:hover .badge { background: var(--line-strong); }
+.nav-matters { display: flex; flex-direction: column; margin: 2px 0 6px 28px; min-width: 0; }
+.nav-matter { display: block; padding: 3px 8px; border-radius: 6px; color: var(--text-3); font-size: 13px; line-height: 20px; text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nav-matter:hover { background: var(--surface-2); color: var(--text); }
+.nav-matter[aria-current] { color: var(--text); font-weight: 500; }
 .sidebar-foot { margin-top: auto; display: flex; align-items: center; gap: 4px; } .sidebar-foot .nav-link { flex: 1; }
 .content { min-width: 0; }
 .page { max-width: 760px; margin: 0 auto; padding: 28px 32px 96px; }
@@ -586,8 +590,6 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
 .advisor-user-message { width: fit-content; max-width: 85%; margin: 0 0 22px auto; padding: 8px 12px; border-radius: 8px;
   background: var(--chat-bubble); white-space: pre-wrap; overflow-wrap: anywhere; font: 15px/24px var(--chat-ui); }
 .advisor-answer { margin: 0 0 28px; min-width: 0; }
-.advisor-answer-heading { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; font: 600 13px/22px var(--chat-ui); }
-.advisor-mark { font-size: 18px; font-weight: 400; color: var(--chat-accent); }
 .advisor-prose { font: 16px/1.65 var(--font); overflow-wrap: anywhere; }
 .advisor-markdown p { margin: 0 0 14px; text-wrap: wrap; }
 .advisor-markdown h2, .advisor-markdown h3, .advisor-markdown h4, .advisor-markdown h5, .advisor-markdown h6 {
@@ -660,6 +662,9 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
 .advisor-status, .advisor-attempt-status { font: 12px/20px var(--chat-ui); color: var(--chat-muted); margin: 8px 4px 0; }
 .advisor-status:empty { display: none; }
 .advisor-status-quiet { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.matter-standing { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 4px 0 12px; color: var(--text-3); font-size: 13px; line-height: 20px; }
+.matter-standing > span { margin-right: 4px; }
+.matter-standing .button { font: 12px/18px var(--chat-ui); }
 .advisor-conversation-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; padding: 12px 0 4px; }
 .advisor-conversation-actions:empty { display: none; }
 /* Under an answer: the quiet tools, and on a computer those of earlier answers wait for the pointer. */
@@ -863,6 +868,7 @@ main.page.advisor-page.dropping { outline: 2px dashed var(--accent); outline-off
   .shell[data-nav-open] .sidebar { transform: none; visibility: visible; box-shadow: var(--overlay-shadow); transition: transform .2s ease; }
   .shell[data-nav-open] .nav-scrim { display: block; position: fixed; inset: 0; z-index: 40; background: var(--scrim); touch-action: none; }
   .nav-link { height: 44px; font-size: 15px; }
+  .nav-matter { padding: 11px 8px; font-size: 14px; line-height: 22px; }
   /* A finger needs more room than a pointer. */
   .row { padding: 10px 12px; }
 }

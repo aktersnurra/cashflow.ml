@@ -1,6 +1,8 @@
 val event : Cashflow_core.Advisor.event -> Cashflow_advisor_protocol.Wire.event
 (** Explicit public projection; internal run/session data has no wire conversion. *)
 
+val matter_out : Cashflow_core.Advisor.matter -> Cashflow_advisor_protocol.Wire.matter
+val matter_in : Cashflow_advisor_protocol.Wire.matter -> Cashflow_core.Advisor.matter
 val snapshot : Cashflow_core.Advisor.snapshot -> Cashflow_advisor_protocol.Wire.snapshot
 val accepted : Cashflow_core.Advisor.accepted -> Cashflow_advisor_protocol.Wire.accepted
 val submit : Cashflow_advisor_protocol.Wire.submit -> (Cashflow_core.Advisor.submit, Cashflow_core.Advisor.error) result

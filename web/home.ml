@@ -217,7 +217,7 @@ let mostly_uncategorized categories_json =
   Float.(total uncategorized > total (fun _ -> true) /. 2.)
 
 let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor_protocol.Wire.scope -> unit Effect.t) Bonsai.t)
-    ~(desk : Desk.t Bonsai.t) ~selected_finding ~outlet ~opening_scope ~advisor_route ~(visible : bool Bonsai.t) graph =
+    ~(desk : Desk.t Bonsai.t) ~selected_finding ~outlet ~opening_scope ~matters ~select_matter ~advisor_route ~(visible : bool Bonsai.t) graph =
   let captured, set_captured = Bonsai.state None graph in
   let offset, set_offset = Bonsai.state 0 graph in
   let picking, set_picking = Bonsai.state false graph in
@@ -261,7 +261,7 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
   (* A new conversation opens on what the accountant found. Choosing a finding goes to the review and opens it there,
      under its card with its figures, the same way as asking from the review. *)
   let opening =
-    Advisor_opening.component ~ctx ~scope:opening_scope
+    Advisor_opening.component ~ctx ~scope:opening_scope ~matters ~select_matter
       ~on_ask:(let%arr on_ask and navigate = ctx.navigate in fun ~finding_key ~scope ->
         Effect.Many [navigate Route.Home; on_ask ~finding_key ~scope; Advisor_opening.reveal_opened])
       ~cards:(let%arr visible_cards in Map.data visible_cards)

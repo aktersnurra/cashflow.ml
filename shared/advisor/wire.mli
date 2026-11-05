@@ -59,6 +59,8 @@ type finding = { kind : string; key : string; scope : scope; title : string; sum
 type display_value = Text of string | Money of money | Date of string
 type fact = { label : string; value : display_value }
 type import_status = Current | Stale | Incomplete | Unknown
+type matter = Open | Decided | Parked
+
 type proposal_state = Awaiting | Applied | Declined | Out_of_date | Not_applied | Lapsed | Reverted
 
 type evidence = {
@@ -133,6 +135,7 @@ type snapshot = {
   turns : turn list;
   active_run : string option;
   version : string;
+  matter : matter;
 }
 
 (** Encoders are total structural projections. Decoders validate the version-1 envelope, required fields, canonical
@@ -150,6 +153,8 @@ val encode_accepted : accepted -> string
 val decode_accepted : string -> (accepted, decode_error) result
 val encode_event : event -> string
 val decode_event : string -> (event, decode_error) result
+val matter_to_string : matter -> string
+val matter_of_string : string -> matter option
 val proposal_state_to_string : proposal_state -> string
 val proposal_state_of_string : string -> proposal_state option
 val encode_snapshot : snapshot -> string

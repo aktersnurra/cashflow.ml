@@ -68,6 +68,9 @@ type import_status = Current | Stale | Incomplete | Unknown
 
 (* A card the user can act on. Only the server moves it: Awaiting to exactly one of the others, and no further, except that an Applied change the user takes back reads Reverted.
    Declined: dismissed. Out_of_date: what it was based on changed. Not_applied: rejected when applied. Lapsed: not decided in time. *)
+(** Where a conversation with the accountant stands. Every matter ends decided, parked or still open. *)
+type matter = Open | Decided | Parked
+
 type proposal_state = Awaiting | Applied | Declined | Out_of_date | Not_applied | Lapsed | Reverted
 
 type evidence = {
@@ -134,6 +137,7 @@ type snapshot = {
   turns : turn list;
   active_run : Run_id.t option;
   version : int64;
+  matter : matter;
 }
 
 type transition =

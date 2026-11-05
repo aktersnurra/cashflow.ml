@@ -38,11 +38,12 @@ let day_start value days =
   ignore (Js.Unsafe.meth_call date "setHours" [|Js.Unsafe.inject 0;Js.Unsafe.inject 0;Js.Unsafe.inject 0;Js.Unsafe.inject 0|] : float);
   ignore (date##setDate (date##getDate - days)); date##getTime
 
-let date_caption locale now value =
+(* How long ago, for a row in a list of matters. *)
+let age_caption locale now value =
   let date = date (Js.Unsafe.inject (Js.string value)) in
   let timestamp = date##getTime in
   match Stdlib.classify_float timestamp with
-  | FP_nan | FP_infinite -> Older, ""
+  | FP_nan | FP_infinite -> ""
   | _ ->
       let today = day_start now 0 in
       let group = if Float.(timestamp >= today) then Today
@@ -52,20 +53,19 @@ let date_caption locale now value =
         let options = Js.Unsafe.obj (Array.of_list (List.map fields ~f:(fun (key,value) -> key,Js.Unsafe.inject (Js.string value)))) in
         let result : Js.js_string Js.t = Js.Unsafe.meth_call date method_ [|Js.Unsafe.inject (Js.string locale);Js.Unsafe.inject options|] in
         Js.to_string result in
-      let label = match group with
+      match group with
         | Today -> format "toLocaleTimeString" ["hour","2-digit";"minute","2-digit"]
         | Yesterday -> Msg.advisor_history_days locale ~days:"1"
         | Week -> let days = Int.of_float (Stdlib.floor ((today -. day_start timestamp 0) /. 86400000. +. 0.5)) in
             Msg.advisor_history_days locale ~days:(Int.to_string (Int.max 1 days))
-        | Older -> format "toLocaleDateString" ["month","short";"day","numeric"] in
-      group,label
+        | Older -> format "toLocaleDateString" ["month","short";"day","numeric"]
 
 let component ~locale ~advisor ~route ~on_select ~on_new ~menu_button graph =
   let menu, set_menu = Bonsai.state ~equal:Poly.equal Closed graph in
   let mobile, set_mobile = Bonsai.state ~equal:Bool.equal (H.is_mobile ()) graph in
   let source = Bonsai.cutoff (let%arr advisor in title_source advisor.Advisor.view) ~equal:Poly.equal in
   let title = let%arr source and locale in match source with
-    | New -> Msg.advisor_new_conversation locale
+    | New -> Msg.nav_matters locale
     | Existing -> Msg.advisor_conversation locale
     | Unavailable -> Msg.advisor_history_unavailable_title locale
     | First_message message -> let title = Title.of_first_message message in
@@ -73,7 +73,7 @@ let component ~locale ~advisor ~route ~on_select ~on_new ~menu_button graph =
   let history = Bonsai.cutoff (let%arr advisor in advisor.Advisor.view.history) ~equal:phys_equal in
   let formatted = let%arr history and locale and menu in
     if not (Poly.equal menu History) then [] else
-    let now = now_ms () in List.map history ~f:(fun entry -> let group,age=date_caption locale now entry.C.updated_at in entry,group,age) in
+    let now = now_ms () in List.map history ~f:(fun entry -> entry,age_caption locale now entry.C.updated_at) in
   let boundary = let%arr advisor in
     let v = advisor.Advisor.view in
     v.authenticated,v.access_denied,v.selected_conversation,v.context_scope,v.denied_conversation,
@@ -101,15 +101,15 @@ let component ~locale ~advisor ~route ~on_select ~on_new ~menu_button graph =
   let new_item scope label = item ~disabled:(not (can_new scope))
     [Vdom.Node.span ~attrs:[Vdom.Attr.class_ "advisor-menu-icon";Vdom.Attr.create "aria-hidden" "true"] [text "+"];text label]
     (Effect.Many [close false;on_new scope]) in
-  let groups = List.filter_map [Today;Yesterday;Week;Older] ~f:(fun group ->
-    let entries = List.filter formatted ~f:(fun (_,g,_) -> Poly.equal group g) in
+  let groups = List.filter_map [W.Open;W.Parked;W.Decided] ~f:(fun group ->
+    let entries = List.filter formatted ~f:(fun ((entry:C.metadata),_) -> Poly.equal group entry.matter) in
     if List.is_empty entries then None else
-    let label = match group with Today->Msg.advisor_history_today locale | Yesterday->Msg.advisor_history_yesterday locale
-      | Week->Msg.advisor_history_week locale | Older->Msg.advisor_history_older locale in
-    Some (Vdom.Node.div ~key:(match group with Today->"today"|Yesterday->"yesterday"|Week->"week"|Older->"older")
+    let label = match group with W.Open->Msg.matter_group_open locale | W.Parked->Msg.matter_group_parked locale
+      | W.Decided->Msg.matter_group_decided locale in
+    Some (Vdom.Node.div ~key:(W.matter_to_string group)
       ~attrs:[Vdom.Attr.class_ "advisor-history-group";Vdom.Attr.create "role" "group";Vdom.Attr.create "aria-label" label]
       (Vdom.Node.div ~attrs:[Vdom.Attr.class_ "advisor-history-caption";Vdom.Attr.create "aria-hidden" "true"] [text label] ::
-        List.map entries ~f:(fun ((entry:C.metadata),_,age) ->
+        List.map entries ~f:(fun ((entry:C.metadata),age) ->
           let current = Option.equal String.equal view.selected_conversation (Some entry.conversation_id) in
           let name = match entry.preview with Some p when not (String.is_empty p.title)->p.title
             | _ when current -> title | _ -> Msg.advisor_conversation locale in

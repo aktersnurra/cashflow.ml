@@ -13,7 +13,6 @@ type controller = {
   open_finding : key:string -> scope:W.scope -> currency:W.currency -> locale:string -> unit Effect.t;
   open_conversation : string -> unit Effect.t;
   open_empty : scope:W.scope -> currency:W.currency -> locale:string -> unit Effect.t;
-  open_latest : unit Effect.t;
   leave_surface : unit Effect.t;
   stop : unit Effect.t;
   invalidate : unit Effect.t;
@@ -74,12 +73,16 @@ let execute r inject command =
            send (C.Status (tok, x)))
     | List_conversations (tok, limit, offset) ->
         don't_wait_for
-          (let%map.Deferred x = Advisor_api.history ~limit ~offset in
+          (let%map.Deferred x = Advisor_api.history ~limit ~offset () in
            send (C.History (tok, x)))
     | Set_consent (tok, enabled, household_id) ->
         don't_wait_for
           (let%map.Deferred x = Advisor_api.consent ~enabled ~household_id in
            send (C.Consent_result (tok, x)))
+    | Set_matter_state (tok, id, matter) ->
+        don't_wait_for
+          (let%map.Deferred x = Advisor_api.set_matter id matter in
+           send (C.Matter_set (tok, x)))
     | Delete_conversation (tok, id) ->
         don't_wait_for
           (let%map.Deferred x = Advisor_api.delete id in
@@ -238,7 +241,6 @@ let component ~ctx:_ graph =
     open_finding = (fun ~key ~scope ~currency ~locale -> dispatch (C.Open_finding (key, scope, currency, locale)));
     open_empty = (fun ~scope ~currency ~locale -> dispatch (C.Open_empty (scope, currency, locale)));
     open_conversation = (fun id -> dispatch (C.Open_conversation id));
-    open_latest = dispatch C.Open_latest;
     leave_surface = dispatch C.Leave_surface;
     stop = dispatch C.Stop;
     invalidate =

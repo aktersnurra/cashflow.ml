@@ -8,7 +8,6 @@ type controller = {
   open_finding : key:string -> scope:W.scope -> currency:W.currency -> locale:string -> unit Effect.t;
   open_conversation : string -> unit Effect.t;
   open_empty : scope:W.scope -> currency:W.currency -> locale:string -> unit Effect.t;
-  open_latest : unit Effect.t;
   leave_surface : unit Effect.t;
   stop : unit Effect.t;
   invalidate : unit Effect.t; (** Synchronously closes resources before queued private-view clearing. *)

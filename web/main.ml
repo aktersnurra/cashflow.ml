@@ -165,7 +165,7 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
       | Advisor None ->
           Effect.Many [set_declined false;
             (if Option.is_some advisor.view.selected_conversation || Option.is_some advisor.view.context_scope then Effect.Ignore
-             else Effect.Many [(match advisor_currency session W.Personal with Some currency -> advisor.open_empty ~scope:W.Personal ~currency ~locale | None -> Effect.Ignore); advisor.open_latest])]
+             else Effect.Many [(match advisor_currency session W.Personal with Some currency -> advisor.open_empty ~scope:W.Personal ~currency ~locale | None -> Effect.Ignore)])]
       | Home when advisor.view.access_denied -> Effect.Many [set_selected_finding None;
           (match advisor_currency session W.Personal with Some currency -> advisor.open_empty ~scope:W.Personal ~currency ~locale | None -> advisor.leave_surface)]
       | _ -> advisor.leave_surface)] in
@@ -219,6 +219,7 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
         advisor.open_empty ~scope ~currency ~locale; navigate (Route.Advisor None)] in
   let select_conversation = let%arr set_selected_finding and navigate in
     fun id -> Effect.Many [set_selected_finding None; navigate (Route.Advisor (Some id))] in
+  let matters = Advisor_matters.component ~advisor graph in
   let nav_open, set_nav_open = Bonsai.state false graph in
   let menu_button = let%arr locale and nav_open and set_nav_open in
     Vdom.Node.button
@@ -260,7 +261,7 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
     match%sub home_access with
     | false, _ -> Bonsai.return Vdom.Node.none
     | true, true -> let%arr outlet and locale in Ui.page ~title:(Msg.nav_matters locale) [outlet ~opening:Vdom.Node.none]
-    | true, false -> Home.page ~ctx ~on_ask ~desk ~selected_finding ~outlet ~opening_scope
+    | true, false -> Home.page ~ctx ~on_ask ~desk ~selected_finding ~outlet ~opening_scope ~matters ~select_matter:select_conversation
         ~advisor_route:(let%arr route in match route with Route.Advisor _ -> true | _ -> false)
         ~visible:(let%arr route in match route with Route.Home | Route.Advisor _ -> true | _ -> false) graph) graph in
   let clear_home = let%arr reset_home and set_selected_finding and set_selected_scope in fun denied ->
@@ -326,7 +327,7 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
   let palette_view = Palette.component ~ctx ~ask:ask_advisor ~open_:palette ~close:(let%arr set_palette in set_palette false) graph in
   let inbox_count = let%arr session in J.int (J.field "inbox_count" session) in
   let%arr page and home and route and locale and navigate and toast and pending_g and set_pending_g and set_palette and palette_view and inbox_count
-  and set_route and nav_open and set_nav_open and menu_button in
+  and set_route and nav_open and set_nav_open and menu_button and matters and select_conversation in
   (* Back and forward buttons. *)
   Dom_html.window##.onpopstate :=
     Dom_html.handler (fun _ ->
@@ -344,6 +345,20 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
          @ if active then [ Vdom.Attr.create "aria-current" "page" ] else [])
       [ Ui.span ~cls:"icon" [ icon r ]; Ui.span ~cls:"label" [ Ui.text label ];
         (match r with Route.Transactions _ when inbox_count > 0 -> Ui.span ~cls:"badge" [ Ui.text (Int.to_string inbox_count) ] | _ -> Vdom.Node.none) ]
+  in
+  let open_matters =
+    if List.is_empty matters then Vdom.Node.none
+    else
+      Vdom.Node.div
+        ~attrs:[ Vdom.Attr.class_ "nav-matters"; Vdom.Attr.create "role" "group"; Vdom.Attr.create "aria-label" (Msg.matter_open_list locale) ]
+        (List.map matters ~f:(fun (id, title, _) ->
+             let target = Route.Advisor (Some id) in
+             Vdom.Node.a
+               ~attrs:
+                 ([ Vdom.Attr.class_ "nav-matter"; Vdom.Attr.href (Route.to_path target); Vdom.Attr.create "dir" "auto"; Vdom.Attr.title title;
+                    Vdom.Attr.on_click (fun _ -> Effect.Many [ Effect.Prevent_default; set_nav_open false; select_conversation id ]) ]
+                  @ if Route.equal route target then [ Vdom.Attr.create "aria-current" "true" ] else [])
+               [ Ui.text title ]))
   in
   (* Only one of the two menu buttons is on the screen, and focusing a hidden one does nothing. *)
   let close_nav = Effect.Many [ set_nav_open false; focus_next_frame ".topbar .menu-button"; focus_next_frame ".advisor-page .menu-button" ] in
@@ -383,7 +398,7 @@ let signed_in ~(session : J.t Bonsai.t) ~(reload_session : unit Effect.t Bonsai.
              [ Ui.span ~cls:"icon" [ Feather_icon.svg ~size:(`Px 18) ~stroke:(`Name "currentColor") ~stroke_width:(`Px 2) Search ];
                Ui.span ~cls:"label" [ Ui.text (Msg.label_search locale) ]; Vdom.Node.create "kbd" [ Ui.text "⌘K" ] ];
            Ui.div ~cls:"nav-gap" [] ]
-         @ List.map nav_items ~f:link
+         @ List.concat_map nav_items ~f:(fun r -> match r with Route.Advisor _ -> [ link r; open_matters ] | _ -> [ link r ])
          @ [ Ui.div ~cls:"sidebar-foot" [ link Route.Settings ] ]);
       Vdom.Node.div ~attrs:[ Vdom.Attr.class_ "nav-scrim"; Vdom.Attr.on_click (fun _ -> close_nav) ] [];
       Ui.div ~cls:"topbar" [ menu_button ];

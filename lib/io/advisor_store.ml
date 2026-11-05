@@ -14,6 +14,7 @@ type metadata = {
   version : int64;
   updated_at : Ptime.t;
   active_run : A.Run_id.t option;
+  matter : A.matter;
 }
 
 type history_entry = { conversation : metadata; title : string option }
@@ -224,19 +225,23 @@ let descriptor s : A.snapshot =
     turns = [];
     active_run = None;
     version = Int64.of_string s.version;
+    matter = Advisor_codec.matter_in s.matter;
   }
+
+let matter_to_db m = W.matter_to_string (Advisor_codec.matter_out m)
+let matter_of_db s = Advisor_codec.matter_in (Option.get (W.matter_of_string s))
 
 let conversation t owner id =
   match
     Sql.(
       run t.db
-        (stmt "SELECT projection,version,updated_at FROM advisor_conversations WHERE id=? AND owner_id=?"
+        (stmt "SELECT projection,version,updated_at,matter_state FROM advisor_conversations WHERE id=? AND owner_id=?"
            (text @-> text @-> nil)
-           (opt (row (text @-> int64 @-> text @-> nil) (fun p v u -> (p, v, u))))))
+           (opt (row (text @-> int64 @-> text @-> text @-> nil) (fun p v u m -> (p, v, u, m))))))
       (cid id) (uid owner)
   with
   | None -> reject A.Not_found
-  | Some (p, v, u) -> ({ (descriptor p) with version = v }, time u)
+  | Some (p, v, u, m) -> ({ (descriptor p) with version = v; matter = matter_of_db m }, time u)
 
 let active_id t id =
   Sql.(
@@ -256,31 +261,47 @@ let metadata t ~owner id =
         version = s.version;
         updated_at = u;
         active_run = active_id t id;
+        matter = s.matter;
       })
 
-let list t ~owner ?(limit = 20) ?(offset = 0) () =
+let list t ~owner ?(limit = 20) ?(offset = 0) ?matter () =
   read t (fun () ->
       if limit < 1 || offset < 0 then reject A.Invalid_request;
+      let state = Option.fold ~none:"" ~some:matter_to_db matter in
       let entries =
         Sql.(
           run t.db
             (stmt
                "SELECT c.id,(SELECT t.user_text FROM advisor_turns t WHERE t.conversation_id=c.id \
                 ORDER BY t.ordinal LIMIT 1) FROM advisor_conversations c WHERE c.owner_id=? \
+                AND (?='' OR c.matter_state=?) \
                 ORDER BY c.updated_at DESC,c.id DESC LIMIT ? OFFSET ?"
-               (text @-> int @-> int @-> nil)
+               (text @-> text @-> text @-> int @-> int @-> nil)
                (many (row (text @-> nullable text @-> nil)
                  (fun id text -> (require (A.Conversation_id.of_string id), text))))))
-          (uid owner) (min 100 limit) offset
+          (uid owner) state state (min 100 limit) offset
       in
       List.map
         (fun (id, first_message) ->
           let s, u = conversation t owner id in
           { conversation = {
               conversation_id = id; scope = s.scope; currency = s.currency;
-              locale = s.locale; version = s.version; updated_at = u; active_run = active_id t id };
+              locale = s.locale; version = s.version; updated_at = u; active_run = active_id t id; matter = s.matter };
             title = Option.map Cashflow_advisor_protocol.Conversation_title.of_first_message first_message })
         entries)
+
+let set_matter t ~owner id matter =
+  tx t (fun () ->
+      match
+        Sql.(
+          run t.db
+            (stmt "UPDATE advisor_conversations SET matter_state=? WHERE id=? AND owner_id=? RETURNING id"
+               (text @-> text @-> text @-> nil)
+               (opt (row (text @-> nil) Fun.id))))
+          (matter_to_db matter) (cid id) (uid owner)
+      with
+      | None -> reject A.Not_found
+      | Some _ -> ())
 
 (* The joined row is the immutable attempt identity plus the mutable runtime checkpoint. *)
 let run_query =
@@ -456,7 +477,8 @@ let new_ids conversation turn user : A.identities =
 let bump t id version now =
   Sql.(
     run t.db
-      (stmt "UPDATE advisor_conversations SET version=?,updated_at=? WHERE id=?" (int64 @-> text @-> text @-> nil) exec))
+      (stmt "UPDATE advisor_conversations SET version=?,updated_at=?,matter_state='open' WHERE id=?"
+         (int64 @-> text @-> text @-> nil) exec))
     version (stamp now) (cid id)
 
 let check_version expected version =
@@ -530,6 +552,7 @@ let accept ?(available = true) ?resolve_source_finding t ~owner ~session ~now ~m
                   turns = [];
                   active_run = None;
                   version = 0L;
+                  matter = Open;
                 }
               in
               let projection = encode_descriptor s in
