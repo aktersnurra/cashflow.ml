@@ -167,6 +167,22 @@ let query_int query name default max =
       if n <= Int64.of_int max then Ok (Int64.to_int n) else Error invalid
   | _ -> Error invalid
 
+(* Both days or neither, in order. *)
+let date_range query =
+  let day name =
+    match List.assoc_opt name query with
+    | None -> Ok None
+    | Some [ v ] -> (
+        match Cashflow_core.Date.of_string v with Ok d -> Ok (Some d) | Error _ -> Error invalid)
+    | Some _ -> Error invalid
+  in
+  let* first = day "from" in
+  let* last = day "to" in
+  match (first, last) with
+  | None, None -> Ok None
+  | Some f, Some l when Cashflow_core.Date.compare f l <= 0 -> Ok (Some (f, l))
+  | _ -> Error invalid
+
 let run_id s = match A.Run_id.of_string s with Some x -> Ok x | None -> Error invalid
 let conversation_id s = match A.Conversation_id.of_string s with Some x -> Ok x | None -> Error invalid
 
@@ -294,10 +310,11 @@ let route t req p path query parsed =
       result (fun () ->
           let* limit = query_int query "limit" 20 100 in
           let* offset = query_int query "offset" 0 max_int in
+          let* within = date_range query in
           if limit = 0 then Error invalid
           else
             read t p (fun user store ->
-                let* entries = Advisor_store.agreed store ~owner:user.id ~limit ~offset in
+                let* entries = Advisor_store.agreed store ~owner:user.id ?within ~limit ~offset () in
                 let next_offset = if List.length entries = limit && offset <= max_int - limit then Some (offset + limit) else None in
                 (* As with the list of matters: a matter whose scope can no longer be read is passed over, never shown. *)
                 let entries =

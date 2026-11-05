@@ -1,6 +1,6 @@
 # The accountant's review
 
-Status: direction agreed with the user on 2026-11-03/04. Steps 1, 2 and 3 are built; step 4 follows. This extends
+Status: direction agreed with the user on 2026-11-03/04. All four steps are built. This extends
 `2026-10-29-accountant-briefing-design.md`, whose first principles still hold.
 
 ## Why
@@ -78,3 +78,18 @@ decided or had a change applied, newest first, with what each change did, taken 
   hides the record without deleting it.
 - "Their effect" means what changed and whether it still stands. The figures since, such as what has been spent against
   a budget that was agreed, are not here yet.
+
+## Step 4 as built
+
+A past review is an earlier cycle on the Review, chosen from the month picker, which now reaches every cycle loaded
+(thirteen) rather than seven.
+
+- It opens on the cycle's dates and a verdict from the engine's figures: what was saved or overspent, what came in and
+  what went out. A cycle the statements don't reach the end of gets no verdict; it keeps its note under the figures.
+- Under that: how many budgets held and which went over, then what was agreed in the cycle, each leading to its matter.
+- Today's to-dos and what is ahead are left out, as they aren't about that month.
+- It is worked out from the books as they stand now, not stored when the cycle ended. A statement imported late corrects
+  it, and nothing has to run at the end of a cycle. So it doesn't preserve what the accountant said at the time.
+- What was agreed goes by the UTC day it was last settled, against the cycle's dates, so a decision just after midnight
+  on the first or last day of a cycle can fall in the neighbouring one.
+- A past review has no address of its own: reloading returns to the current cycle.

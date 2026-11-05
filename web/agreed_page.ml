@@ -48,7 +48,7 @@ let page ~(ctx : Ctx.t) ~(advisor : Advisor.controller Bonsai.t) ~(decide : (str
     let%arr set_listed and listed in
     fun ~offset ->
       let%bind.Effect request = Effect.of_thunk (fun () -> incr latest; !latest) in
-      let%bind.Effect result = Effect.of_deferred_thunk (fun () -> Advisor_api.agreed ~limit:page_size ~offset) in
+      let%bind.Effect result = Effect.of_deferred_thunk (fun () -> Advisor_api.agreed ~limit:page_size ~offset ()) in
       if request <> !latest then Effect.Ignore
       else
         match result, listed with

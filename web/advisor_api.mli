@@ -22,4 +22,5 @@ val decide_proposal : id:string -> string -> (W.proposal_state * string * W.matt
 (** [action] is "apply", "dismiss" or "undo". The result is the state the server recorded, the matter it belongs to and
     where that matter now stands. *)
 
-val agreed : limit:int -> offset:int -> (W.agreed_page, C.failure) result Async_kernel.Deferred.t
+val agreed : ?within:string * string -> limit:int -> offset:int -> unit -> (W.agreed_page, C.failure) result Async_kernel.Deferred.t
+(** [within]: the first and last day of a pay cycle, as YYYY-MM-DD. *)

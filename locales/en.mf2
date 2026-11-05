@@ -796,3 +796,11 @@ agreed.change_category = Category added
 agreed.change_entry = Entry added
 agreed.budget_was = Budget was
 agreed.budget_now = New budget
+
+review.past_period = Pay cycle {$first :date} to {$last :date}
+review.past_saved = In {$month} you saved {$amount}. {$income} came in and {$spending} went out.
+review.past_short = In {$month} you spent {$amount} more than came in. {$income} came in and {$spending} went out.
+review.past_budgets = Budgets
+review.past_budgets_held = {$held} of {$total} budgets held
+review.past_budget_over = {$spent} of {$budget}
+review.past_agreed = Agreed in this pay cycle

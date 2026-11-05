@@ -1326,23 +1326,27 @@ type agreed_entry = {
   changes : agreed_change list;
 }
 
-let agreed t ~owner ~limit ~offset =
+let agreed t ~owner ?within ~limit ~offset () =
   read t (fun () ->
       if limit < 1 || offset < 0 then reject A.Invalid_request;
+      let first, last = match within with Some (f, l) -> (Date.to_string f, Date.to_string l) | None -> ("", "") in
+      let settled =
+        "max(COALESCE(c.decided_at,''),COALESCE((SELECT max(p.decided_at) FROM advisor_proposals p WHERE p.conversation_id=c.id AND p.state='applied'),''))"
+      in
       let rows =
         Sql.(
           run t.db
             (stmt
-               "SELECT c.id,(SELECT t.user_text FROM advisor_turns t WHERE t.conversation_id=c.id ORDER BY t.ordinal LIMIT 1),c.decided_at \
+               ("SELECT c.id,(SELECT t.user_text FROM advisor_turns t WHERE t.conversation_id=c.id ORDER BY t.ordinal LIMIT 1),c.decided_at \
                 FROM advisor_conversations c WHERE c.owner_id=? AND (c.matter_state='decided' OR EXISTS \
                 (SELECT 1 FROM advisor_proposals p WHERE p.conversation_id=c.id AND p.state='applied')) \
-                ORDER BY max(COALESCE(c.decided_at,''),COALESCE((SELECT max(p.decided_at) FROM advisor_proposals p \
-                WHERE p.conversation_id=c.id AND p.state='applied'),'')) DESC,c.id DESC LIMIT ? OFFSET ?"
-               (text @-> int @-> int @-> nil)
+                AND (?='' OR substr(" ^ settled ^ ",1,10) BETWEEN ? AND ?) \
+                ORDER BY " ^ settled ^ " DESC,c.id DESC LIMIT ? OFFSET ?")
+               (text @-> text @-> text @-> text @-> int @-> int @-> nil)
                (many
                   (row (text @-> nullable text @-> nullable text @-> nil) (fun id first decided ->
                        (require (A.Conversation_id.of_string id), first, Option.map time decided))))))
-          (uid owner) (min 100 limit) offset
+          (uid owner) first first last (min 100 limit) offset
       in
       List.map
         (fun (id, first_message, decided_at) ->
