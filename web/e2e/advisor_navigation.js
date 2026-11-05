@@ -73,7 +73,13 @@ const wait=async f=>{const end=Date.now()+6000;while(Date.now()<end){const x=awa
   const rect=await dialog.boundingBox();assert.ok(rect.y>=0&&rect.y+rect.height<=845,'mobile sheet fits viewport');
   await page.keyboard.press('Tab');assert.equal(await dialog.evaluate(el=>el.contains(document.activeElement)),true,'modal sheet retains keyboard focus');
   await page.screenshot({path:output+'/history-mobile.png'});
+  // The sheet covers the page and is closed by its backdrop: the page moving under it is not a request to close.
+  await page.evaluate(()=>window.dispatchEvent(new Event('scroll')));await page.evaluate(()=>new Promise(requestAnimationFrame));
+  assert.equal(await menu.isVisible(),true,'a scroll underneath leaves the sheet open');
   await page.keyboard.press('Escape');await menu.waitFor({state:'hidden'});
+  // Nothing pans sideways: a stray wide element is cut off rather than scrolled to.
+  const sideways=await page.evaluate(()=>{const wide=document.createElement('div');wide.style.cssText='width:2000px;height:1px';document.body.append(wide);window.scrollTo(500,scrollY);const x=scrollX;wide.remove();return x;});
+  assert.equal(sideways,0,'the page does not scroll sideways');
   await page.goto(base+'/advisor/'+first);await wait(async()=>/Holiday savings for February/.test(await trigger.innerText()));
   await page.getByRole('button',{name:'Matter actions',exact:true}).click();
   const actions=page.getByRole('menu',{name:'Matter actions',exact:true});await actions.waitFor();
