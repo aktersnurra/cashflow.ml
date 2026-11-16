@@ -1072,8 +1072,8 @@ summary { list-style: none; } summary::-webkit-details-marker { display: none; }
 .banner-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--mark); }
 .banner-main { min-width: 0; }
 .banner-main h2 { margin: 0; font-size: var(--t14); font-weight: 600; line-height: 1.4; }
-.banner-sub { margin: 2px 0 0; font-size: 13px; line-height: 1.45; color: var(--text-2); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
-.banner[open] .banner-sub { -webkit-line-clamp: unset; }
+/* The whole line, always: a finding cut short can hide the figure that matters. */
+.banner-sub { margin: 2px 0 0; font-size: 13px; line-height: 1.45; color: var(--text-2); }
 .banner-chevron { color: var(--text-3); transition: transform .15s; }
 .banner[open] .banner-chevron { transform: rotate(90deg); }
 .banner-detail { padding: 0 var(--s4) var(--s3) calc(var(--s4) + 8px + var(--s3)); }
