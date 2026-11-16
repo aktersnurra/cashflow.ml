@@ -16,7 +16,7 @@ let card_view ~(ctx : Ctx.t) (key : string Bonsai.t) (card : J.t Bonsai.t) graph
   let currency = J.str ~default:"SEK" (J.path [ "user"; "default_currency" ] session) in
   let data = J.field "data" card in
   let card_key = J.str (J.field "key" card) in
-  let money ?(code = currency) json = Fmt.money_json ~code json in
+  let money ?(code = currency) json = Fmt.whole_money ~code json in
   (* Whole kronor for what is read at a glance. *)
   let kr ?(code = currency) json = Fmt.whole locale ~code json in
   let account_currency = J.str ~default:currency (J.path [ "account"; "currency" ] data) in

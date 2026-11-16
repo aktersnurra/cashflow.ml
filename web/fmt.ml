@@ -27,6 +27,16 @@ let date text : Mf2_runtime.date =
 let date_json json = date (J.str ~default:"1970-01-01" json)
 let format_date locale json = Mf2_runtime.format_date locale (date_json json)
 
+(* What an amount field suggests: "0.00", "0,00". *)
+let amount_placeholder locale = Mf2_runtime.format_decimal locale ~scale:2 0L
+
+(* An amount as typed, as the server's decimal. Spaces group thousands ("1 234,50"); with both marks, the commas
+   group thousands ("1,234.50"); otherwise a comma is the decimal mark. Anything ambiguous ("1,234") reads as three
+   decimals, which the server refuses rather than taking a thousand times less. *)
+let typed_amount text =
+  let text = String.substr_replace_all text ~pattern:"\xC2\xA0" ~with_:"" |> String.filter ~f:(fun c -> not (Char.is_whitespace c)) in
+  if String.mem text '.' then String.filter text ~f:(fun c -> not (Char.equal c ',')) else String.tr text ~target:',' ~replacement:'.'
+
 (* A date that may be in another year, with its year: "Jun 1, 2027", "1 juni 2027". *)
 let full_date locale text =
   let d = date text in
@@ -50,9 +60,11 @@ let month_label locale cycle =
 (* Saving is good news; dipping into savings isn't. *)
 let sign_tone amount = if Float.is_negative (to_float amount) then "negative" else "positive"
 
-(* Overview figures in whole currency units: "18 420 kr", not "18 420,00 kr". *)
-let whole locale ~code json =
-  Mf2_runtime.format_money locale { minor = Int64.of_float (Float.round_nearest (to_float json)); scale = 0; code }
+(* Money in a sentence or a summary is whole: "18 420 kr", not "18 420,00 kr". Exact figures belong where they are
+   checked against a statement: the ledger, an account's balance. *)
+let whole_money ~code json : Mf2_runtime.money = { minor = Int64.of_float (Float.round_nearest (to_float json)); scale = 0; code }
+
+let whole locale ~code json = Mf2_runtime.format_money locale (whole_money ~code json)
 
 let signed_whole locale ~code json = (if Float.is_positive (to_float json) then "+" else "") ^ whole locale ~code json
 

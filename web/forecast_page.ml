@@ -28,7 +28,7 @@ let args ~scope ~months what_if =
 
 (* A typed amount as the server's decimal: "12 000,50" is "12000.50"; signed by direction. *)
 let amount_of_text ~out value =
-  let text = String.filter (String.strip value) ~f:(fun c -> not (Char.is_whitespace c)) |> String.tr ~target:',' ~replacement:'.' in
+  let text = Fmt.typed_amount value in
   match Float.of_string_opt text with
   | Some v when Float.(v > 0.) -> Some ((if out then "-" else "") ^ text)
   | _ -> None
@@ -61,7 +61,7 @@ let section ~(ctx : Ctx.t) ~(visible : bool Bonsai.t) graph =
   in
   let view (f : D.t) =
     let code = f.currency in
-    let money json = Fmt.format_money locale ~code json and whole json = Fmt.whole locale ~code json in
+    let whole json = Fmt.whole locale ~code json in
     let whole_float v = whole (`String (Float.to_string v)) in
     let date d = Fmt.date d and nice_date d = Mf2_runtime.format_date locale (Fmt.date d) in
     let timeline = f.history @ f.baseline in
@@ -166,8 +166,8 @@ let section ~(ctx : Ctx.t) ~(visible : bool Bonsai.t) graph =
                 ~title:(Msg.forecast_overdraw ~account:a.account_name ~date:(date d) locale)
                 ~body:
                   [ Ui.muted
-                      (if List.is_empty causes then Msg.forecast_overdraw_spending ~amount:(Fmt.money_json ~code a.lowest) ~date:(date a.lowest_date) locale
-                       else Msg.forecast_overdraw_body ~amount:(Fmt.money_json ~code a.lowest) ~date:(date a.lowest_date) ~items:(String.concat ~sep:", " causes) locale) ]
+                      (if List.is_empty causes then Msg.forecast_overdraw_spending ~amount:(Fmt.whole_money ~code a.lowest) ~date:(date a.lowest_date) locale
+                       else Msg.forecast_overdraw_body ~amount:(Fmt.whole_money ~code a.lowest) ~date:(date a.lowest_date) ~items:(String.concat ~sep:", " causes) locale) ]
                 ~actions:[ Ui.button (Msg.action_review locale) (navigate (Route.Account a.account_id)) ]
                 ()))
     in
@@ -201,8 +201,8 @@ let section ~(ctx : Ctx.t) ~(visible : bool Bonsai.t) graph =
                 | Some b, true ->
                     [ Ui.div ~cls:"row-sub"
                         [ Ui.text
-                            (Msg.forecast_basis ~cadence:(cadence b.cadence) ~since:(date b.since) ~typical:(Fmt.money_json ~code b.typical)
-                               ~last:(Fmt.money_json ~code b.last) locale);
+                            (Msg.forecast_basis ~cadence:(cadence b.cadence) ~since:(date b.since) ~typical:(Fmt.whole_money ~code b.typical)
+                               ~last:(Fmt.whole_money ~code b.last) locale);
                           Ui.text " ";
                           Vdom.Node.a
                             ~attrs:
@@ -211,7 +211,7 @@ let section ~(ctx : Ctx.t) ~(visible : bool Bonsai.t) graph =
                             [ Ui.text (Msg.forecast_past_payments locale) ] ] ]
                 | _ -> []) ];
           Ui.span ~cls:"muted txn-account" [ Ui.text i.account_name ];
-          Ui.span ~cls:("amount" ^ if Float.(D.value i.amount > 0.) then " positive" else "") [ Ui.text (money i.amount) ];
+          Ui.span ~cls:("amount" ^ if Float.(D.value i.amount > 0.) then " positive" else "") [ Ui.text (whole i.amount) ];
           (match i.basis with
           | Some _ ->
               Vdom.Node.button
@@ -245,7 +245,7 @@ let section ~(ctx : Ctx.t) ~(visible : bool Bonsai.t) graph =
     let chips =
       List.map what_if.one_offs ~f:(fun o ->
           chip
-            (String.concat ~sep:" " [ (if String.is_empty o.description then nice_date o.date else o.description); money (`String o.amount); nice_date o.date ])
+            (String.concat ~sep:" " [ (if String.is_empty o.description then nice_date o.date else o.description); whole (`String o.amount); nice_date o.date ])
             (set_what_if { what_if with one_offs = List.filter what_if.one_offs ~f:(Fn.non (equal_one_off o)) }))
       @ List.map what_if.leave_out ~f:(fun id -> chip (Msg.forecast_leave_out locale ^ ": " ^ name_of id) (toggle id))
     in
@@ -271,7 +271,7 @@ let section ~(ctx : Ctx.t) ~(visible : bool Bonsai.t) graph =
                            Vdom.Attr.on_input (fun _ v -> set_on v) ]
                        ());
                   Ui.field (Msg.label_description locale) (Ui.input ~value:text ~on_input:set_text ());
-                  Ui.field (Msg.label_amount locale) (Ui.input ~type_:"text" ~placeholder:"12 000" ~value ~on_input:set_value ());
+                  Ui.field (Msg.label_amount locale) (Ui.input ~type_:"text" ~placeholder:(Mf2_runtime.format_integer locale 12000) ~value ~on_input:set_value ());
                   Ui.div ~cls:"what-if-actions"
                     [ segmented
                         [ (true, Msg.forecast_money_out locale); (false, Msg.forecast_money_in locale) ]
@@ -292,7 +292,7 @@ let section ~(ctx : Ctx.t) ~(visible : bool Bonsai.t) graph =
     let assumption a =
       let d name = date (J.str (J.field name a)) in
       match J.str (J.field "kind" a) with
-      | "usual_spending" -> Some (Msg.forecast_a_usual ~amount:(Fmt.money_json ~code (J.field "amount" a)) ~from:(d "from") ~to_:(d "to") locale)
+      | "usual_spending" -> Some (Msg.forecast_a_usual ~amount:(Fmt.whole_money ~code (J.field "amount" a)) ~from:(d "from") ~to_:(d "to") locale)
       | "stale_import" -> Some (Msg.forecast_a_stale ~date:(d "date") locale)
       | "stopped" -> Some (Msg.forecast_a_stopped ~name:(J.str (J.field "name" a)) ~date:(d "last_date") locale)
       | "other_currency" ->
