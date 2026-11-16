@@ -122,6 +122,7 @@ product matters advisor_matters.js
 product agreed advisor_agreed.js --privacy-mode propose
 product past-review advisor_past_review.js --privacy-mode propose
 product forecast-fits forecast_fits.js
+product load-failures load_failures.js
 ADVISOR_CHAT_PAUSED=1 product presentation-paused advisor_presentation.js
 product smoothness advisor_smoothness.js
 product boundaries advisor_boundaries.js --browser-text

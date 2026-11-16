@@ -5,7 +5,7 @@ open! Core
 open! Bonsai_web.Cont
 open Bonsai.Let_syntax
 
-type t = Loading | Loaded of J.t | Failed of string
+type t = Loading | Loaded of J.t | Failed of { failure : Api.failure; retry : unit Effect.t }
 
 (* [active] says whether anyone can see the result. A page that stays mounted behind others (Home) passes whether it is
    showing, so a write elsewhere does not recompute its figures while hidden; it reloads when it appears again. *)
@@ -17,7 +17,9 @@ let load ?(args = Bonsai.return (`Assoc [])) ?(active = Bonsai.return true) ~nam
   let generation = ref 0 and active = ref false and requested = ref None in
   let equal_key (a, v, x) (b, w, y) = Yojson.Safe.equal a b && Int.equal v w && Bool.equal x y in
   let request =
-    let%arr set_result in
+    let%arr set_result and changed = ctx.changed in
+    (* Trying again shows that it is asking, and reloads everything showing: whatever failed beside this failed too. *)
+    let retry = Effect.Many [ set_result Loading; changed ] in
     fun key ->
       let%bind.Effect () = Effect.of_thunk ignore in
       let _, _, showing = key in
@@ -26,9 +28,9 @@ let load ?(args = Bonsai.return (`Assoc [])) ?(active = Bonsai.return true) ~nam
         let%bind.Effect ticket = Effect.of_thunk (fun () ->
           incr generation; requested := Some key; !generation) in
         let args, _, _ = key in
-        let%bind.Effect response = Api.run name args in
+        let%bind.Effect response = Api.read_effect (name, args) in
         if !active && ticket = !generation then
-          set_result (match response with Ok json -> Loaded json | Error message -> Failed message)
+          set_result (match response with Ok json -> Loaded json | Error failure -> Failed { failure; retry })
         else Effect.Ignore
   in
   let activate = let%arr request and key in
@@ -39,8 +41,19 @@ let load ?(args = Bonsai.return (`Assoc [])) ?(active = Bonsai.return true) ~nam
   Bonsai.Edge.on_change ~equal:equal_key key ~callback:request graph;
   result
 
+(* Something didn't load: said once, in plain words that say which part failed, with the way to try again. *)
+let failed ~locale ~(broken : Api.broken) ~retry =
+  let says = match broken with Unreachable -> Msg.load_unreachable locale | Server_error -> Msg.load_server_error locale in
+  Vdom.Node.div
+    ~attrs:[ Vdom.Attr.class_ "load-failed"; Vdom.Attr.create "role" "alert" ]
+    [ Vdom.Node.p [ Vdom.Node.text says ]; Ui.button (Msg.load_retry locale) retry ]
+
+(* The server said no in words of its own: there is nothing to try again. *)
+let refused message = Vdom.Node.div ~attrs:[ Vdom.Attr.class_ "load-failed" ] [ Vdom.Node.p [ Vdom.Node.text (String.capitalize message) ] ]
+
 let view ~locale result ~f =
   match result with
   | Loading -> Vdom.Node.div ~attrs:[ Vdom.Attr.class_ "loading" ] [ Vdom.Node.div ~attrs:[ Vdom.Attr.class_ "shimmer" ] [] ]
-  | Failed message -> Vdom.Node.div ~attrs:[ Vdom.Attr.class_ "error" ] [ Vdom.Node.text (Msg.error_generic ~message locale) ]
+  | Failed { failure = Broken broken; retry } -> failed ~locale ~broken ~retry
+  | Failed { failure = Refused message; _ } -> refused message
   | Loaded json -> f json

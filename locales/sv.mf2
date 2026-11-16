@@ -261,6 +261,7 @@ household.none_body = Ett hushåll delar sina konton, budgetar och kostnader mel
 household.col_member = Medlem
 household.col_planned = Planerat
 household.no_plan = Planerade överföringar räknas fram ur hushållets budgetar och sparmål. Sätt en budget för att se vem som betalar vad.
+household.no_incomes = Överföringarna delas efter inkomst, och ingen i hushållet har någon inkomst den här månaden än.
 
 insights.title = Insikter
 insights.tab_all = Allt
@@ -300,6 +301,9 @@ add.pending_note = Kontot bekräftas av kontoutdrag, så posten väntar tills ko
 
 error.generic = Något gick fel: {$message}
 error.offline = Når inte servern. Försöker igen…
+load.unreachable = Servern går inte att nå, så det här gick inte att hämta.
+load.server_error = Servern fick ett fel när det här skulle hämtas.
+load.retry = Försök igen
 
 label.statement_balance = Saldo enligt banken
 label.transactions = Transaktioner
@@ -776,7 +780,6 @@ nav.agreed = Det vi enats om
 agreed.intro = Allt vi har avgjort, det senaste först. En ändring gäller tills du ångrar den.
 agreed.empty = Inget är överenskommet än. När du genomför en ändring jag föreslår, eller markerar ett ärende som avgjort, hamnar det här.
 agreed.off = Rådgivaren är avstängd, så de här uppgifterna är dolda. Slå på den under Inställningar för att se dem.
-agreed.failed = Det gick inte att hämta uppgifterna. Försök igen om en stund.
 agreed.decided = Avgjort {$date}
 agreed.no_change = Inget ändrades i bokföringen.
 agreed.open = Öppet

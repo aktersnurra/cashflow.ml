@@ -300,6 +300,9 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
       if String.equal (String.prefix cycle 4) current_year then String.chop_suffix_if_exists label ~suffix:(" " ^ current_year) else label
     in
     let choices = List.mapi cycles ~f:(fun i c -> (i - (List.length cycles - 1), c)) |> List.rev in
+    (* No month is known until the figures load: no title, rather than a chevron on its own. *)
+    if Option.is_none selected then Vdom.Node.none
+    else
     Ui.div ~cls:("month-picker" ^ if picking then " open" else "")
       ([ Vdom.Node.button
            ~attrs:

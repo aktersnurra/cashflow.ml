@@ -191,3 +191,8 @@ let decide_proposal ~id action =
                Option.bind (str (field "matter" j)) ~f:W.matter_of_string with
          | Some state, Some conversation_id, Some matter -> Some (state, conversation_id, matter)
          | _ -> None))
+
+(* What to tell the reader when the advisor gave no usable answer: no reply came at all, or the server couldn't give one. *)
+let broken : C.failure -> Api.broken = function
+  | Transport -> Unreachable
+  | Session_lost | Access_lost | Rejected | Not_accepted _ -> Server_error

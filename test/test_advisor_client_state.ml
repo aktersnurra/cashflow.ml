@@ -548,6 +548,25 @@ let first_acceptance_and_revocation () =
   Alcotest.(check bool) "explicit opt-out clears private view and preserves only delete handoff" true
     ((C.view s).snapshot = None && (C.view s).access_denied && (C.view s).denied_conversation = Some "c")
 
+(* A status check that fails is said, not taken for "nothing chosen": the pages say so and offer to try again. *)
+let status_failure () =
+  let s, commands = C.reduce C.empty C.Activate in
+  let token = token_of (function C.Get_status token -> Some token | _ -> None) commands in
+  let failure s = (C.view s).status_failure in
+  Alcotest.(check bool) "not failed while asking" true (Option.is_none (failure s));
+  let s = apply s (C.Status (token, Error C.Transport)) in
+  Alcotest.(check bool) "a status check that got no reply is known as one" true
+    ((match failure s with Some C.Transport -> true | _ -> false) && (C.view s).status = None);
+  let s, commands = C.reduce s C.Refresh_status in
+  let token = token_of (function C.Get_status token -> Some token | _ -> None) commands in
+  Alcotest.(check bool) "asking again clears it" true (Option.is_none (failure s));
+  let s = apply s (C.Status (token, Error C.Rejected)) in
+  Alcotest.(check bool) "a refusal is a failure too" true (match failure s with Some C.Rejected -> true | _ -> false);
+  let s, commands = C.reduce s C.Refresh_status in
+  let token = token_of (function C.Get_status token -> Some token | _ -> None) commands in
+  let s = apply s (C.Status (token, Ok {C.available=true; consent=true; household=None; household_known=true})) in
+  Alcotest.(check bool) "an answer clears it" true (Option.is_none (failure s) && (C.view s).status <> None)
+
 let cached_ready_snapshot snap =
   let s, commands = C.reduce C.empty C.Activate in
   let token = token_of (function C.Get_status token -> Some token | _ -> None) commands in
@@ -807,6 +826,7 @@ let () =
             ("request lanes and household consent", concurrent_and_consent);
             ("pagination races", list_races);
             ("matter status", matter_status);
+            ("status failure", status_failure);
             ("bounded buffering", bounds);
           ] );
     ]

@@ -10,6 +10,7 @@ val cancel : string -> (string, C.failure) result Async_kernel.Deferred.t
 val set_matter : string -> W.matter -> (W.matter, C.failure) result Async_kernel.Deferred.t
 val delete : string -> (unit, C.failure) result Async_kernel.Deferred.t
 val consent : enabled:bool -> household_id:string option -> (unit, C.failure) result Async_kernel.Deferred.t
+val broken : C.failure -> Api.broken
 
 type memory = { id : string; text : string }
 

@@ -22,7 +22,9 @@ let app graph =
         match remote with
         | Remote.Loading -> Ui.text "waiting"
         | Loaded json -> Ui.text (J.str (J.field "label" json))
-        | Failed message -> Ui.text message) graph in
+        | Failed { failure = Refused message; _ } -> Ui.text message
+        | Failed { failure = Broken Unreachable; _ } -> Ui.text "unreachable"
+        | Failed { failure = Broken Server_error; _ } -> Ui.text "server error") graph in
   let clear = let%arr reset in fun active -> if active then Effect.Ignore else reset in
   Bonsai.Edge.on_change ~equal:Bool.equal active ~callback:clear graph;
   let%arr surface and set_active and version and set_version in

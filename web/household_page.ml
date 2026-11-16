@@ -46,7 +46,11 @@ and view ~(ctx : Ctx.t) ~(advisor : Advisor.controller Bonsai.t) ~plan ~owed gra
         | _ -> Vdom.Node.none);
         (* Each member's planned transfer this cycle, how much of it has arrived, and what is left. *)
         section (Msg.household_plan locale)
-          (Remote.view ~locale plan ~f:(fun json ->
+          (match plan with
+           (* The plan splits by income; the engine refuses when no member has any yet. *)
+           | Failed { failure = Refused _; _ } -> Ui.div ~cls:"panel empty-panel" [ Ui.p (Msg.household_no_incomes locale) ]
+           | _ ->
+           Remote.view ~locale plan ~f:(fun json ->
                let c = code json in
                let members = J.list (J.field "members" json) in
                if List.for_all members ~f:(fun m -> Float.(Fmt.to_float (J.field "contribution" m) = 0.)) then

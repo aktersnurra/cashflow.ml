@@ -96,6 +96,7 @@ type view = {
   draft : string;
   connection : connection;
   status : status option;
+  status_failure : failure option;
   history : metadata list;
   history_loading : bool;
   history_failed : bool;
@@ -147,6 +148,7 @@ let blank =
     draft = "";
     connection = Disconnected;
     status = None;
+    status_failure = None;
     history = [];
     history_loading = false;
     history_failed = false;
@@ -219,7 +221,7 @@ let fetch t id =
 
 let request_status (t, commands) =
   let t, tok = fresh t in
-  ({ t with status_request = Some tok }, commands @ [ Get_status tok ])
+  ({ t with status_request = Some tok; v = { t.v with status_failure = None } }, commands @ [ Get_status tok ])
 
 (* Selection may reuse known readiness; an explicit refresh must not. *)
 let selection_status ((t, _) as input) =
@@ -639,7 +641,7 @@ let reduce t action =
       | Ok (), None -> (t, []))
   | Status (tok, result) when current t t.status_request tok -> (
       match result with
-      | Error e -> failure { t with status_request = None } e
+      | Error e -> failure { t with status_request = None; v = { t.v with status_failure = Some e } } e
       | Ok status ->
           let context_lost = t.v.snapshot = None && (match selected_scope t, t.v.status with
             | Some scope, Some previous -> scope_readiness previous scope = Some true && scope_readiness status scope = Some false

@@ -401,6 +401,9 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
 .hint { font-size: 13px; line-height: 16px; color: var(--text-2); margin: 0 0 12px; }
 .empty { padding: 48px 0; text-align: center; color: var(--text-2); }
 .error { color: var(--negative); padding: 12px 0; }
+/* Something didn't load: one quiet line where it would have been, and the way to try again. */
+.load-failed { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s2) var(--s3); padding: var(--s3) var(--s4); border: 1px solid var(--line); border-radius: var(--r2); background: var(--panel); color: var(--text-2); }
+.load-failed p { margin: 0; }
 .ok { color: var(--positive); margin-top: 8px; }
 .warning:not(.card) { color: var(--warning); margin-top: 8px; }
 

@@ -96,6 +96,7 @@ type view = {
   draft : string;
   connection : connection;
   status : status option;
+  status_failure : failure option;  (** why the last status check got no usable answer *)
   history : metadata list;
   history_loading : bool;
   history_failed : bool;

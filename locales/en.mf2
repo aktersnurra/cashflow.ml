@@ -262,6 +262,7 @@ household.none_body = A household shares its accounts, budgets and costs between
 household.col_member = Member
 household.col_planned = Planned
 household.no_plan = Planned transfers come from the household's budgets and savings goals. Set a budget to see who pays what.
+household.no_incomes = Transfers are split by income, and no one in the household has income this month yet.
 
 insights.title = Insights
 insights.tab_all = All
@@ -301,6 +302,9 @@ add.pending_note = This account is confirmed by bank statements, so the entry st
 
 error.generic = Something went wrong: {$message}
 error.offline = Can't reach the server. Retrying…
+load.unreachable = Can't reach the server, so this didn't load.
+load.server_error = The server ran into a problem loading this.
+load.retry = Try again
 
 label.statement_balance = Statement balance
 label.transactions = Transactions
@@ -777,7 +781,6 @@ nav.agreed = What we agreed
 agreed.intro = Everything we've settled, newest first. A change stands until you undo it.
 agreed.empty = Nothing agreed yet. When you apply a change I propose, or mark a matter decided, it's recorded here.
 agreed.off = The advisor is off, so this record is hidden. Turn it on in Settings to see it.
-agreed.failed = The record couldn't be loaded. Try again in a moment.
 agreed.decided = Decided {$date}
 agreed.no_change = Nothing changed in the books.
 agreed.open = Open

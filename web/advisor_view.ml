@@ -497,6 +497,8 @@ let render_inline ~locale ~(view : C.view) ~dispatch =
 
 let consent ~locale ~(view : C.view) ~dispatch ~decline =
   match view.status with
+  | None when Option.is_some view.status_failure ->
+      Remote.failed ~locale ~broken:(Advisor_api.broken (Option.value_exn view.status_failure)) ~retry:(dispatch C.Refresh_status)
   | None -> Ui.muted (Msg.advisor_choose_context locale)
   | Some status when (not status.available) && not status.consent -> Ui.muted (Msg.advisor_unavailable locale)
   | Some status ->
