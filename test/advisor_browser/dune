@@ -9,6 +9,7 @@
 (copy_files ../../web/api.ml)
 (copy_files ../../web/ctx.ml)
 (copy_files ../../web/j.ml)
+(copy_files ../../web/fmt.ml)
 (copy_files ../../web/route.ml)
 (copy_files ../../web/theme.ml)
 (copy_files ../../web/advisor.mli)

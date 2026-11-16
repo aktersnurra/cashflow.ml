@@ -83,8 +83,13 @@ let value locale (f : Cashflow_advisor_protocol.Wire.fact) =
   | "Kind", W.Text "income" -> Msg.advisor_evidence_kind_income locale
   | "Owner", W.Text "personal" -> Msg.advisor_evidence_owner_personal locale
   | "Owner", W.Text "household" -> Msg.advisor_evidence_owner_household locale
-  | _, (W.Text x | Date x) -> x
-  | _, Money m -> m.decimal ^ " " ^ m.currency.code
+  | "From cycle", W.Text cycle -> Fmt.month_label locale cycle
+  (* "2026-10-14 · Coffee": the day as the ledger writes it. *)
+  | "Transaction", W.Text x when String.length x > 10 && String.is_substring_at x ~pos:10 ~substring:" · " ->
+      Mf2_runtime.format_date locale (Fmt.date (String.prefix x 10)) ^ String.drop_prefix x 10
+  | _, W.Text x -> x
+  | _, Date x -> Fmt.full_date locale x
+  | _, Money m -> Fmt.amount locale ~code:m.currency.code m.decimal
 
 let digits s = not (String.is_empty s) && String.for_all s ~f:Char.is_digit
 let integer s = digits s || (String.is_prefix s ~prefix:"-" && digits (String.drop_prefix s 1))

@@ -30,7 +30,8 @@ const output=process.env.ADVISOR_EVIDENCE_DIR||'/tmp/advisor-categorize';fs.mkdi
   const text=await card.innerText();
   assert.ok(text.includes('Synthetic coffee'),'the card names the transaction');
   assert.ok(text.includes('Groceries'),'and the category');
-  assert.ok(text.includes('-35.00 SEK'),'and the amount, from the server');
+  assert.match(text,/SEK\s\u221235(?![\d.,])/,'and the amount, from the server');
+  assert.doesNotMatch(text,/\d{4}-\d{2}-\d{2}/,'and the date by its name: '+text);
   assert.ok(await card.getByRole('button',{name:'Apply',exact:true}).isVisible(),'Apply is offered');
   assert.ok(await count()>0,'proposing files nothing');
   await page.screenshot({path:output+'/categorize-card.png',fullPage:true});

@@ -11,6 +11,12 @@ let money ~code text : Mf2_runtime.money =
   { minor = (if negative then Int64.neg minor else minor); scale = String.length fraction; code }
 
 let money_json ~code json = money ~code (J.str ~default:"0" json)
+
+(* An amount to approve, or on the record: whole when it is, exact when it isn't. "SEK 4,000", "SEK 123.45". *)
+let amount locale ~code text =
+  let m = money ~code text in
+  let unit = Int64.pow 10L (Int64.of_int m.scale) in
+  Mf2_runtime.format_money locale (if Int64.(rem m.minor unit = 0L) then { m with minor = Int64.(m.minor / unit); scale = 0 } else m)
 let format_money locale ~code json = Mf2_runtime.format_money locale (money_json ~code json)
 
 let date text : Mf2_runtime.date =
@@ -20,6 +26,12 @@ let date text : Mf2_runtime.date =
 
 let date_json json = date (J.str ~default:"1970-01-01" json)
 let format_date locale json = Mf2_runtime.format_date locale (date_json json)
+
+(* A date that may be in another year, with its year: "Jun 1, 2027", "1 juni 2027". *)
+let full_date locale text =
+  let d = date text in
+  let day = Mf2_runtime.format_date locale d in
+  if String.is_prefix locale ~prefix:"sv" then sprintf "%s %d" day d.year else sprintf "%s, %d" day d.year
 let to_float json = Option.value (Float.of_string_opt (J.str ~default:"0" json)) ~default:0.
 
 (* "2026-11" as "November 2026" in the user's language. *)

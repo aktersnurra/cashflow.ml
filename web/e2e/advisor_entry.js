@@ -26,7 +26,7 @@ const output=process.env.ADVISOR_EVIDENCE_DIR||'/tmp/advisor-entry';fs.mkdirSync
   await page.getByRole('button',{name:'Send',exact:true}).click();
   await card.waitFor({timeout:15000});
   const text=await card.innerText();
-  for (const expected of ['From','Everyday','To','Groceries','Amount','123.45 SEK','Description','Fixture lunch','Status','Posted at once']) assert.ok(text.includes(expected),'the card shows '+expected+': '+text);
+  for (const expected of ['From','Everyday','To','Groceries','Amount','SEK\u00a0123.45','Description','Fixture lunch','Status','Posted at once']) assert.ok(text.includes(expected),'the card shows '+expected+': '+text);
   assert.equal(await lunches(),0,'proposing enters nothing');
   await page.screenshot({path:output+'/entry-card.png',fullPage:true});
   await card.getByRole('button',{name:'Apply',exact:true}).click();

@@ -637,7 +637,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
 .advisor-evidence-warning { color: var(--warning); font-size: 12px; }
 .advisor-evidence-body { margin: 4px 0 12px 1px; padding: 2px 0 2px 14px; border-left: 1px solid var(--line-strong); }
 .advisor-evidence[data-proposal] { margin: 16px 0; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--chat-composer); }
-.advisor-evidence[data-proposal] summary { padding: 10px 14px; }
+.advisor-evidence[data-proposal] summary { padding: 10px 16px; }
 .advisor-evidence[data-proposal] .advisor-evidence-chevron { display: none; }
 .advisor-evidence[data-proposal] .advisor-evidence-body { margin: 0; padding: 0 16px 14px; border-left: 0; }
 .advisor-evidence time { display: block; color: var(--chat-muted); font-size: 12px; margin-bottom: 10px; }
@@ -645,6 +645,8 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
 .advisor-fact { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 20px; padding: 5px 0; border-bottom: 1px solid var(--line); }
 .advisor-fact dt { color: var(--chat-muted); }
 .advisor-fact dd { margin: 0; font-variant-numeric: tabular-nums; }
+/* The rule above what is asked closes the list; its last row needs none of its own. */
+.advisor-fact:last-child { border-bottom: 0; }
 .advisor-caveats { display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--chat-muted); margin-top: 12px; }
 .advisor-evidence-body ul { color: var(--chat-muted); padding-left: 18px; margin: 8px 0 0; }
 .advisor-proposal { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line-strong); }
