@@ -538,15 +538,6 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
   .import-counts { grid-template-columns: 1fr; }
   .overlay { padding-top: 0; align-items: flex-end; }
   .palette, .sheet { width: 100vw; border-radius: 12px 12px 0 0; }
-  .forecast-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .forecast-row, .row.forecast-row { grid-template-columns: 52px minmax(0, 1fr) auto; gap: 12px; }
-  .forecast-row > .txn-account, .forecast-row > .button { display: none; }
-  .forecast-row.selected > .button { display: inline-flex; grid-column: 1 / -1; justify-self: start; }
-  .what-if-form { grid-template-columns: 1fr 1fr; }
-  .what-if-form > :nth-child(2) { grid-column: 1 / -1; order: -1; }
-  .what-if-actions { flex-wrap: wrap; }
-  .projection.wide { display: none; } .projection.narrow { display: block; }
-  .assumptions { padding: 12px 16px 12px 32px; }
 
   .logo-overlay { z-index: 40; }
   .sheet.logo-sheet { max-height: calc(100dvh - 32px); overflow-y: auto; padding-bottom: calc(18px + env(safe-area-inset-bottom)); }
@@ -1023,6 +1014,23 @@ summary { list-style: none; } summary::-webkit-details-marker { display: none; }
 .ahead-details[open] > summary { margin-bottom: var(--s3); }
 .plan-controls { margin-bottom: var(--s3); }
 .goals-details[open] > summary { margin-bottom: var(--s3); }
+/* What is ahead lays itself out by its own width, not the screen's: on a computer it is a narrow column beside
+   the number, on a phone the whole screen. */
+.overview-side > .ahead { container-type: inline-size; }
+.plan-controls .page-controls { flex-wrap: wrap; }
+@container (max-width: 640px) {
+  .forecast-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .forecast-row, .row.forecast-row { grid-template-columns: 52px minmax(0, 1fr) auto; gap: 12px; }
+  .forecast-row > .txn-account, .forecast-row > .button { display: none; }
+  .forecast-row.selected > .button { display: inline-flex; grid-column: 1 / -1; justify-self: start; }
+  .what-if-form { grid-template-columns: 1fr 1fr; }
+  .what-if-form > :nth-child(2) { grid-column: 1 / -1; order: -1; }
+  .what-if-actions { flex-wrap: wrap; }
+  .projection.wide { display: none; } .projection.narrow { display: block; }
+  .assumptions { padding: 12px 16px 12px 32px; }
+  .budget-row, .row.budget-row { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, .9fr); gap: 12px; }
+  .budget-row > :nth-child(3) { display: none; }
+}
 
 /* A computer: two columns, each laid out on its own, so nothing on one side moves the other. */
 .overview-cols { display: block; }
