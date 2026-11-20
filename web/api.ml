@@ -63,6 +63,21 @@ let command name (args : json) =
   | Ok (_, body) -> Error (error_message body)
   | Error (`Network m) -> Error m
 
+(* Reading, for what a page shows: the server refused, in its words (a 4xx), or no usable answer came, which trying
+   again may fix. That is either the way to the server (no answer at all) or the server itself (an answer it couldn't
+   give); only the first is the reader's to fix. *)
+type broken = Unreachable | Server_error
+type failure = Refused of string | Broken of broken
+
+let read name (args : json) =
+  match%map http ~meth:`Post ~url:("/api/commands/" ^ name) ~body:(Yojson.Safe.to_string args) () with
+  | Ok (200, body) -> (match parse body with Some json -> Ok json | None -> Error (Broken Server_error))
+  | Ok (status, body) when status < 500 -> Error (Refused (error_message body))
+  | Ok _ -> Error (Broken Server_error)
+  | Error (`Network _) -> Error (Broken Unreachable)
+
+let read_effect = Bonsai_web.Effect.of_deferred_fun (fun (name, args) -> read name args)
+
 (* Logo editing needs machine-readable failure codes; other commands retain readable errors. *)
 let command_with_code name (args : json) =
   match%map http ~meth:`Post ~url:("/api/commands/" ^ name) ~body:(Yojson.Safe.to_string args) () with

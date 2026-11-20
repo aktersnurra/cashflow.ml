@@ -11,6 +11,12 @@ let money ~code text : Mf2_runtime.money =
   { minor = (if negative then Int64.neg minor else minor); scale = String.length fraction; code }
 
 let money_json ~code json = money ~code (J.str ~default:"0" json)
+
+(* An amount to approve, or on the record: whole when it is, exact when it isn't. "SEK 4,000", "SEK 123.45". *)
+let amount locale ~code text =
+  let m = money ~code text in
+  let unit = Int64.pow 10L (Int64.of_int m.scale) in
+  Mf2_runtime.format_money locale (if Int64.(rem m.minor unit = 0L) then { m with minor = Int64.(m.minor / unit); scale = 0 } else m)
 let format_money locale ~code json = Mf2_runtime.format_money locale (money_json ~code json)
 
 let date text : Mf2_runtime.date =
@@ -20,6 +26,22 @@ let date text : Mf2_runtime.date =
 
 let date_json json = date (J.str ~default:"1970-01-01" json)
 let format_date locale json = Mf2_runtime.format_date locale (date_json json)
+
+(* What an amount field suggests: "0.00", "0,00". *)
+let amount_placeholder locale = Mf2_runtime.format_decimal locale ~scale:2 0L
+
+(* An amount as typed, as the server's decimal. Spaces group thousands ("1 234,50"); with both marks, the commas
+   group thousands ("1,234.50"); otherwise a comma is the decimal mark. Anything ambiguous ("1,234") reads as three
+   decimals, which the server refuses rather than taking a thousand times less. *)
+let typed_amount text =
+  let text = String.substr_replace_all text ~pattern:"\xC2\xA0" ~with_:"" |> String.filter ~f:(fun c -> not (Char.is_whitespace c)) in
+  if String.mem text '.' then String.filter text ~f:(fun c -> not (Char.equal c ',')) else String.tr text ~target:',' ~replacement:'.'
+
+(* A date that may be in another year, with its year: "Jun 1, 2027", "1 juni 2027". *)
+let full_date locale text =
+  let d = date text in
+  let day = Mf2_runtime.format_date locale d in
+  if String.is_prefix locale ~prefix:"sv" then sprintf "%s %d" day d.year else sprintf "%s, %d" day d.year
 let to_float json = Option.value (Float.of_string_opt (J.str ~default:"0" json)) ~default:0.
 
 (* "2026-11" as "November 2026" in the user's language. *)
@@ -38,9 +60,11 @@ let month_label locale cycle =
 (* Saving is good news; dipping into savings isn't. *)
 let sign_tone amount = if Float.is_negative (to_float amount) then "negative" else "positive"
 
-(* Overview figures in whole currency units: "18 420 kr", not "18 420,00 kr". *)
-let whole locale ~code json =
-  Mf2_runtime.format_money locale { minor = Int64.of_float (Float.round_nearest (to_float json)); scale = 0; code }
+(* Money in a sentence or a summary is whole: "18 420 kr", not "18 420,00 kr". Exact figures belong where they are
+   checked against a statement: the ledger, an account's balance. *)
+let whole_money ~code json : Mf2_runtime.money = { minor = Int64.of_float (Float.round_nearest (to_float json)); scale = 0; code }
+
+let whole locale ~code json = Mf2_runtime.format_money locale (whole_money ~code json)
 
 let signed_whole locale ~code json = (if Float.is_positive (to_float json) then "+" else "") ^ whole locale ~code json
 

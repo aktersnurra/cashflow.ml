@@ -26,7 +26,7 @@ const output=process.env.ADVISOR_EVIDENCE_DIR||'/tmp/advisor-goal';fs.mkdirSync(
   await page.getByRole('button',{name:'Send',exact:true}).click();
   await card.waitFor({timeout:15000});
   const text=await card.innerText();
-  for (const expected of ['Name','Sofa','Target','9000.00 SEK','Target date','2027-06-01','Monthly saving','750.00 SEK']) assert.ok(text.includes(expected),'the card shows '+expected+': '+text);
+  for (const expected of ['Name','Sofa','Target','SEK\u00a09,000','Target date','Jun 1, 2027','Monthly saving','SEK\u00a0750']) assert.ok(text.includes(expected),'the card shows '+expected+': '+text);
   assert.ok(!(await goals()).includes('Sofa'),'proposing creates nothing');
   await page.screenshot({path:output+'/goal-card.png',fullPage:true});
   await card.getByRole('button',{name:'Apply',exact:true}).click();

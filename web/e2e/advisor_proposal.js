@@ -27,7 +27,12 @@ const output=process.env.ADVISOR_EVIDENCE_DIR||'/tmp/advisor-proposal';fs.mkdirS
   await card.waitFor({timeout:15000});
   assert.ok(await card.getByRole('button',{name:'Apply',exact:true}).isVisible(),'Apply is offered');
   assert.ok(await card.getByRole('button',{name:'Dismiss',exact:true}).isVisible(),'Dismiss is offered');
-  assert.ok((await card.innerText()).includes('4000.00 SEK'),'the proposed amount is shown by the server');
+  // The server's figures, written the way the rest of the app writes them: whole money, a month by its name.
+  const shown = await card.innerText();
+  assert.match(shown,/Proposed budget\s+SEK\s4,000(?![\d.,])/,'the proposed amount: '+shown);
+  assert.ok(shown.includes('October 2026'),'the pay cycle by its name: '+shown);
+  assert.match(shown,/Current budget\s+None/,'no budget yet: '+shown);
+  assert.doesNotMatch(shown,/\d{4}-\d{2}|\.00/,'nothing raw: '+shown);
   assert.ok((await card.innerText()).includes('Nothing changes until you apply it.'));
   assert.equal(await budgets(),before,'proposing changes no budget');
   await page.screenshot({path:output+'/proposal-card.png',fullPage:true});

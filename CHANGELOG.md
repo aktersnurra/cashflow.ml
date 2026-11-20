@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### What was broken or misleading
+
+- **The forecast fits on a computer.** Opened on the Review, it no longer runs past its column, and every period button can be reached.
+- **What didn't load says so.** A part that fails to load says whether the server couldn't be reached or ran into a problem, with Try again, instead of "Something went wrong: internal". What we agreed and Matters no longer go blank or say nothing was chosen when the advisor doesn't answer.
+- **Proposal figures read like the rest of the app:** "SEK 4,000", "October 2026", "Jun 1, 2027" and "None".
+- **Findings on the Review show their whole line,** on a phone too.
+- **One way to write money.** Whole in sentences and summaries, exact in the ledger. Amount fields suggest the reader's format and take it as typed, "1 234,50" in Swedish included.
+
 ### A quieter matter header
 
 - The "⋯" beside the title is gone: it opened a menu with one item. "Delete this matter" now sits in the title's menu, and the top of a matter is the menu button and the title.

@@ -57,7 +57,7 @@ const question = 'Set a budget for my biggest category';
   assert.match(await entry.locator('.agreed-status').innerText(),/^Decided /);
   const change = entry.locator('.agreed-change');
   await change.getByText('Budget change',{exact:true}).waitFor();
-  assert.ok((await change.innerText()).includes('4000.00 SEK'),'the figure from the card');
+  assert.match(await change.innerText(),/SEK\s4,000(?![\d.,])/,'the figure from the card');
   assert.ok(!(await change.innerText()).includes('Proposed'),'it is no longer a proposal');
   assert.match(await change.locator('.agreed-effect').innerText(),/^In effect since /);
   await page.screenshot({path:evidence+'/agreed.png'});

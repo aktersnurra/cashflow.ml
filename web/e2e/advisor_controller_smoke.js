@@ -172,7 +172,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await page.locator('#advisor-evidence-00000000-0000-4000-8000-000000000010 summary').click();
   assert.ok((await page.locator('.advisor-conversation').innerText()).includes('Synthetic assumption <script>window.fixtureXss=true</script>'));
   await page.getByText('Exact amount',{exact:true}).waitFor();
-  await page.getByText('9007199254740993.01 SEK',{exact:true}).waitFor();
+  await page.getByText('SEK\u00a09,007,199,254,740,993.01',{exact:true}).waitFor();
   assert.match(await page.locator('.advisor-conversation').innerText(),/Import may be stale/);
   await page.locator('#delete-other').click();
   await page.getByRole('status').filter({hasText:'Request could not be completed.'}).waitFor();

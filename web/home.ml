@@ -16,7 +16,7 @@ let card_view ~(ctx : Ctx.t) (key : string Bonsai.t) (card : J.t Bonsai.t) graph
   let currency = J.str ~default:"SEK" (J.path [ "user"; "default_currency" ] session) in
   let data = J.field "data" card in
   let card_key = J.str (J.field "key" card) in
-  let money ?(code = currency) json = Fmt.money_json ~code json in
+  let money ?(code = currency) json = Fmt.whole_money ~code json in
   (* Whole kronor for what is read at a glance. *)
   let kr ?(code = currency) json = Fmt.whole locale ~code json in
   let account_currency = J.str ~default:currency (J.path [ "account"; "currency" ] data) in
@@ -300,6 +300,9 @@ let page ~(ctx : Ctx.t) ~(on_ask : (finding_key:string -> scope:Cashflow_advisor
       if String.equal (String.prefix cycle 4) current_year then String.chop_suffix_if_exists label ~suffix:(" " ^ current_year) else label
     in
     let choices = List.mapi cycles ~f:(fun i c -> (i - (List.length cycles - 1), c)) |> List.rev in
+    (* No month is known until the figures load: no title, rather than a chevron on its own. *)
+    if Option.is_none selected then Vdom.Node.none
+    else
     Ui.div ~cls:("month-picker" ^ if picking then " open" else "")
       ([ Vdom.Node.button
            ~attrs:

@@ -401,6 +401,9 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
 .hint { font-size: 13px; line-height: 16px; color: var(--text-2); margin: 0 0 12px; }
 .empty { padding: 48px 0; text-align: center; color: var(--text-2); }
 .error { color: var(--negative); padding: 12px 0; }
+/* Something didn't load: one quiet line where it would have been, and the way to try again. */
+.load-failed { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s2) var(--s3); padding: var(--s3) var(--s4); border: 1px solid var(--line); border-radius: var(--r2); background: var(--panel); color: var(--text-2); }
+.load-failed p { margin: 0; }
 .ok { color: var(--positive); margin-top: 8px; }
 .warning:not(.card) { color: var(--warning); margin-top: 8px; }
 
@@ -538,15 +541,6 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
   .import-counts { grid-template-columns: 1fr; }
   .overlay { padding-top: 0; align-items: flex-end; }
   .palette, .sheet { width: 100vw; border-radius: 12px 12px 0 0; }
-  .forecast-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .forecast-row, .row.forecast-row { grid-template-columns: 52px minmax(0, 1fr) auto; gap: 12px; }
-  .forecast-row > .txn-account, .forecast-row > .button { display: none; }
-  .forecast-row.selected > .button { display: inline-flex; grid-column: 1 / -1; justify-self: start; }
-  .what-if-form { grid-template-columns: 1fr 1fr; }
-  .what-if-form > :nth-child(2) { grid-column: 1 / -1; order: -1; }
-  .what-if-actions { flex-wrap: wrap; }
-  .projection.wide { display: none; } .projection.narrow { display: block; }
-  .assumptions { padding: 12px 16px 12px 32px; }
 
   .logo-overlay { z-index: 40; }
   .sheet.logo-sheet { max-height: calc(100dvh - 32px); overflow-y: auto; padding-bottom: calc(18px + env(safe-area-inset-bottom)); }
@@ -643,7 +637,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
 .advisor-evidence-warning { color: var(--warning); font-size: 12px; }
 .advisor-evidence-body { margin: 4px 0 12px 1px; padding: 2px 0 2px 14px; border-left: 1px solid var(--line-strong); }
 .advisor-evidence[data-proposal] { margin: 16px 0; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--chat-composer); }
-.advisor-evidence[data-proposal] summary { padding: 10px 14px; }
+.advisor-evidence[data-proposal] summary { padding: 10px 16px; }
 .advisor-evidence[data-proposal] .advisor-evidence-chevron { display: none; }
 .advisor-evidence[data-proposal] .advisor-evidence-body { margin: 0; padding: 0 16px 14px; border-left: 0; }
 .advisor-evidence time { display: block; color: var(--chat-muted); font-size: 12px; margin-bottom: 10px; }
@@ -651,6 +645,8 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--f
 .advisor-fact { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 20px; padding: 5px 0; border-bottom: 1px solid var(--line); }
 .advisor-fact dt { color: var(--chat-muted); }
 .advisor-fact dd { margin: 0; font-variant-numeric: tabular-nums; }
+/* The rule above what is asked closes the list; its last row needs none of its own. */
+.advisor-fact:last-child { border-bottom: 0; }
 .advisor-caveats { display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--chat-muted); margin-top: 12px; }
 .advisor-evidence-body ul { color: var(--chat-muted); padding-left: 18px; margin: 8px 0 0; }
 .advisor-proposal { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line-strong); }
@@ -1023,6 +1019,23 @@ summary { list-style: none; } summary::-webkit-details-marker { display: none; }
 .ahead-details[open] > summary { margin-bottom: var(--s3); }
 .plan-controls { margin-bottom: var(--s3); }
 .goals-details[open] > summary { margin-bottom: var(--s3); }
+/* What is ahead lays itself out by its own width, not the screen's: on a computer it is a narrow column beside
+   the number, on a phone the whole screen. */
+.overview-side > .ahead { container-type: inline-size; }
+.plan-controls .page-controls { flex-wrap: wrap; }
+@container (max-width: 640px) {
+  .forecast-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .forecast-row, .row.forecast-row { grid-template-columns: 52px minmax(0, 1fr) auto; gap: 12px; }
+  .forecast-row > .txn-account, .forecast-row > .button { display: none; }
+  .forecast-row.selected > .button { display: inline-flex; grid-column: 1 / -1; justify-self: start; }
+  .what-if-form { grid-template-columns: 1fr 1fr; }
+  .what-if-form > :nth-child(2) { grid-column: 1 / -1; order: -1; }
+  .what-if-actions { flex-wrap: wrap; }
+  .projection.wide { display: none; } .projection.narrow { display: block; }
+  .assumptions { padding: 12px 16px 12px 32px; }
+  .budget-row, .row.budget-row { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, .9fr); gap: 12px; }
+  .budget-row > :nth-child(3) { display: none; }
+}
 
 /* A computer: two columns, each laid out on its own, so nothing on one side moves the other. */
 .overview-cols { display: block; }
@@ -1059,8 +1072,8 @@ summary { list-style: none; } summary::-webkit-details-marker { display: none; }
 .banner-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--mark); }
 .banner-main { min-width: 0; }
 .banner-main h2 { margin: 0; font-size: var(--t14); font-weight: 600; line-height: 1.4; }
-.banner-sub { margin: 2px 0 0; font-size: 13px; line-height: 1.45; color: var(--text-2); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
-.banner[open] .banner-sub { -webkit-line-clamp: unset; }
+/* The whole line, always: a finding cut short can hide the figure that matters. */
+.banner-sub { margin: 2px 0 0; font-size: 13px; line-height: 1.45; color: var(--text-2); }
 .banner-chevron { color: var(--text-3); transition: transform .15s; }
 .banner[open] .banner-chevron { transform: rotate(90deg); }
 .banner-detail { padding: 0 var(--s4) var(--s3) calc(var(--s4) + 8px + var(--s3)); }

@@ -75,7 +75,7 @@ const markdown = '# A plan for February\n\nSet aside **6,250.00 SEK** each month
   assert.equal(await evidence.getAttribute('open'),null,'evidence is collapsed initially');
   assert.equal(await evidence.getByText('Check data',{exact:true}).isVisible(),true,'collapsed evidence still surfaces data caveats');
   await evidence.locator('summary').click();
-  await evidence.getByText('9007199254740993.01 SEK',{exact:true}).waitFor();
+  await evidence.getByText('SEK\u00a09,007,199,254,740,993.01',{exact:true}).waitFor();
   await evidence.locator('summary').click();
   await page.evaluate(()=>window.scrollTo(0,0));
   const scroll=await page.evaluate(()=>scrollY);await page.waitForTimeout(120);

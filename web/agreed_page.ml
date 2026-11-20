@@ -6,7 +6,7 @@ open Bonsai.Let_syntax
 open Js_of_ocaml
 module W = Cashflow_advisor_protocol.Wire
 
-type listed = Loading | Failed | Loaded of W.agreed_entry list * int option
+type listed = Loading | Failed of Advisor.C.failure | Loaded of W.agreed_entry list * int option
 
 let page_size = 20
 
@@ -54,7 +54,7 @@ let page ~(ctx : Ctx.t) ~(advisor : Advisor.controller Bonsai.t) ~(decide : (str
         match result, listed with
         | Ok page, Loaded (shown, _) when offset > 0 -> set_listed (Loaded (shown @ page.entries, page.next_offset))
         | Ok page, _ -> set_listed (Loaded (page.entries, page.next_offset))
-        | Error _, _ -> set_listed Failed
+        | Error failure, _ -> set_listed (Failed failure)
   in
   let fresh = let%arr fetch and set_listed in Effect.Many [ set_listed Loading; fetch ~offset:0 ] in
   let refetch = let%arr fetch in fetch ~offset:0 in
@@ -68,7 +68,10 @@ let page ~(ctx : Ctx.t) ~(advisor : Advisor.controller Bonsai.t) ~(decide : (str
       (let%arr advisor in
        if advisor.view.access_denied then Some false else Option.map advisor.view.status ~f:(fun (s : Advisor.C.status) -> s.consent))
   in
-  let%arr listed and consent and locale = ctx.locale and fetch and decide and select in
+  (* Whether the advisor's status check failed, and how to ask again, for when consent can't be known. *)
+  let status_failure = Bonsai.cutoff ~equal:phys_equal (let%arr advisor in advisor.view.status_failure) in
+  let retry = let%arr advisor and fresh in Effect.Many [ advisor.dispatch Advisor.C.Refresh_status; fresh ] in
+  let%arr listed and consent and status_failure and retry and locale = ctx.locale and fetch and decide and select in
   let head =
     Ui.div ~cls:"page-head" [ Vdom.Node.h1 [ Ui.text (Msg.nav_agreed locale) ] ]
   in
@@ -117,8 +120,10 @@ let page ~(ctx : Ctx.t) ~(advisor : Advisor.controller Bonsai.t) ~(decide : (str
     match consent, listed with
     | Some false, _ -> [ Ui.empty (Msg.agreed_off locale) ]
     (* Until access is known, and while loading afresh, no title is shown. *)
+    | None, _ when Option.is_some status_failure ->
+        [ Remote.failed ~locale ~broken:(Advisor_api.broken (Option.value_exn status_failure)) ~retry ]
     | None, _ | Some true, Loading -> []
-    | Some true, Failed -> [ Ui.empty (Msg.agreed_failed locale) ]
+    | Some true, Failed failure -> [ Remote.failed ~locale ~broken:(Advisor_api.broken failure) ~retry ]
     | Some true, Loaded ([], _) -> [ Ui.empty (Msg.agreed_empty locale) ]
     | Some true, Loaded (entries, next) ->
         [ Vdom.Node.p ~attrs:[ Vdom.Attr.class_ "agreed-intro" ] [ Ui.text (Msg.agreed_intro locale) ] ]

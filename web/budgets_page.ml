@@ -36,13 +36,13 @@ let section ~(ctx : Ctx.t) ~(visible : bool Bonsai.t) graph =
   let budget_form ~category ~name ~amount ~rollover =
     Ui.card ~title:(Msg.budgets_set ~category:name locale)
       ~body:
-        [ Ui.field (Msg.label_monthly_amount locale) (Ui.input ~value:amount ~placeholder:"0.00" ~on_input:(fun amount -> set_editing (Budget { category; amount; rollover })) ());
+        [ Ui.field (Msg.label_monthly_amount locale) (Ui.input ~value:amount ~placeholder:(Fmt.amount_placeholder locale) ~on_input:(fun amount -> set_editing (Budget { category; amount; rollover })) ());
           Vdom.Node.label
             ~attrs:[ Vdom.Attr.class_ "checkbox" ]
             [ Vdom.Node.input ~attrs:([ Vdom.Attr.type_ "checkbox"; Vdom.Attr.on_change (fun _ _ -> set_editing (Budget { category; amount; rollover = not rollover })) ] @ if rollover then [ Vdom.Attr.checked ] else []) ();
               Ui.text (Msg.label_rollover locale) ] ]
       ~actions:
-        [ Ui.button ~kind:"primary" (Msg.action_save locale) (save "set_budget" [ ("category_id", `String category); ("monthly_amount", `String amount); ("rollover", `Bool rollover) ]);
+        [ Ui.button ~kind:"primary" (Msg.action_save locale) (save "set_budget" [ ("category_id", `String category); ("monthly_amount", `String (Fmt.typed_amount amount)); ("rollover", `Bool rollover) ]);
           Ui.button (Msg.action_cancel locale) (set_editing Not_editing) ] ()
   in
   (* One row per budgeted category: spent (with a bar against the budget, red once over),
@@ -76,7 +76,7 @@ let section ~(ctx : Ctx.t) ~(visible : bool Bonsai.t) graph =
             Ui.meter (if Float.(target > 0.) then saved /. target else 0.);
             Ui.div ~cls:"row-sub"
               [ Ui.text
-                  (Fmt.format_money locale ~code:c (J.field "saved" g) ^ " / " ^ Fmt.format_money locale ~code:c (J.field "target" g)
+                  (Fmt.whole locale ~code:c (J.field "saved" g) ^ " / " ^ Fmt.whole locale ~code:c (J.field "target" g)
                   ^ if J.is_null (J.field "target_date" g) then "" else " · " ^ Fmt.format_date locale (J.field "target_date" g)) ] ];
         Ui.div ~cls:(if J.bool (J.field "on_track" g) then "positive" else "warning") [ Ui.text (if J.bool (J.field "on_track" g) then "✓" else "!") ] ]
   in
@@ -127,15 +127,15 @@ let section ~(ctx : Ctx.t) ~(visible : bool Bonsai.t) graph =
             ~body:
               [ Ui.field (Msg.label_name locale) (Ui.input ~value:g.name ~on_input:(fun v -> set (fun g -> { g with name = v })) ());
                 Ui.div ~cls:"form-row"
-                  [ Ui.field (Msg.label_target locale) (Ui.input ~value:g.target ~placeholder:"0.00" ~on_input:(fun v -> set (fun g -> { g with target = v })) ());
+                  [ Ui.field (Msg.label_target locale) (Ui.input ~value:g.target ~placeholder:(Fmt.amount_placeholder locale) ~on_input:(fun v -> set (fun g -> { g with target = v })) ());
                     Ui.field (Msg.label_target_date locale) (Ui.input ~type_:"date" ~value:g.date ~on_input:(fun v -> set (fun g -> { g with date = v })) ());
-                    Ui.field (Msg.label_monthly_amount locale) (Ui.input ~value:g.monthly ~placeholder:"0.00" ~on_input:(fun v -> set (fun g -> { g with monthly = v })) ()) ] ]
+                    Ui.field (Msg.label_monthly_amount locale) (Ui.input ~value:g.monthly ~placeholder:(Fmt.amount_placeholder locale) ~on_input:(fun v -> set (fun g -> { g with monthly = v })) ()) ] ]
             ~actions:
               [ Ui.button ~kind:"primary" (Msg.action_save locale)
                   (save "save_savings_goal"
-                     ([ ("name", `String g.name); ("target_amount", `String g.target) ]
+                     ([ ("name", `String g.name); ("target_amount", `String (Fmt.typed_amount g.target)) ]
                      @ (if String.is_empty g.date then [] else [ ("target_date", `String g.date) ])
-                     @ if String.is_empty g.monthly then [] else [ ("monthly_amount", `String g.monthly) ]));
+                     @ if String.is_empty g.monthly then [] else [ ("monthly_amount", `String (Fmt.typed_amount g.monthly)) ]));
                 Ui.button (Msg.action_cancel locale) (set_editing Not_editing) ] ()
       | _ -> Ui.div ~cls:"actions" [ Ui.button (Msg.action_new_goal locale) (set_editing (Goal { name = ""; target = ""; date = ""; monthly = "" } : editing)) ]) ]
   in

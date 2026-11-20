@@ -86,7 +86,10 @@ let test_advisor_evidence_text () =
   equal (E.value "sv" { W.label = "Truncated"; value = W.Text "false" }) "Nej";
   equal (E.value "sv" { W.label = "Merchant"; value = W.Text "false" }) "false";
   equal (E.value "sv" { W.label = "Largest returned category";
-    value = W.Money { decimal = "90071992547409.93"; currency = {code="SEK"; scale=2} } }) "90071992547409.93 SEK"
+    value = W.Money { decimal = "90071992547409.93"; currency = {code="SEK"; scale=2} } }) "90\xC2\xA0071\xC2\xA0992\xC2\xA0547\xC2\xA0409,93\xC2\xA0kr";
+  equal (E.value "en" { W.label = "Proposed budget"; value = W.Money { decimal = "4000.00"; currency = {code="SEK"; scale=2} } }) "SEK\xC2\xA04,000";
+  equal (E.value "en" { W.label = "From cycle"; value = W.Text "2026-10" }) "October 2026";
+  equal (E.value "sv" { W.label = "Target date"; value = W.Date "2027-06-01" }) "1 juni 2027"
 
 let () =
   test_advisor_evidence_text ();

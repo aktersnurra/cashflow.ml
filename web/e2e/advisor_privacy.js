@@ -130,7 +130,10 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
       assert.match(await card.innerText(),/Returnerade rader/);
       assert.match(await card.innerText(),/Största returnerade kategori/);
       const money=wire.facts.find(f=>f.value.type==='Money').value.value;
-      assert.ok((await card.innerText()).includes(money.decimal+' '+money.currency.code),'exact wire decimal retained');
+      // Written the Swedish way ("1 234,56 kr", whole when there are no öre), with every digit of the wire decimal kept.
+      const [whole,frac='']=money.decimal.replace(/^-/,'−').split('.');
+      const exact=/^0*$/.test(frac)?whole:whole+','+frac;
+      assert.ok((await card.innerText()).replace(/[\s  ]/g,'').includes(exact+(money.currency.code==='SEK'?'kr':money.currency.code)),'exact wire decimal retained');
       assert.equal(await card.locator('script,img,a').count(),0);
      }
      if(!before.rebased)before.financial_digest=updated; // Only the explicit fixture import (and the language rename above) are authorized financial mutations.

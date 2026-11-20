@@ -112,7 +112,7 @@ let list ~(ctx : Ctx.t) graph =
               let banks = List.filter accounts ~f:Accounts_data.is_bank in
               let categories kind = List.filter accounts ~f:(fun a -> Accounts_data.is_category a && String.equal a.kind kind) in
               let bank_row (a : Accounts_data.account) =
-                account_row ~locale ~navigate ~household a ~amount:(Ui.span ~cls:"amount" [ Ui.text (Fmt.format_money locale ~code:a.currency a.balance) ])
+                account_row ~locale ~navigate ~household a ~amount:(Ui.span ~cls:"amount" [ Ui.text (Fmt.whole locale ~code:a.currency a.balance) ])
               in
               let category_row (a : Accounts_data.account) =
                 account_row ~locale ~navigate ~household a ~amount:(Ui.span ~cls:"amount muted" [ Ui.text (if Float.(Fmt.to_float a.balance = 0.) then "–" else Fmt.whole locale ~code:a.currency a.balance) ])
@@ -173,22 +173,22 @@ let detail ~(ctx : Ctx.t) ~(account_id : string Bonsai.t) graph =
               ~body:
                 [ Ui.div ~cls:"form-row"
                     [ Ui.field (Msg.label_date locale) (Ui.input ~type_:"date" ~value:date ~on_input:(fun date -> set_tool (Reconcile { date; balance })) ());
-                      Ui.field (Msg.label_statement_balance locale) (Ui.input ~value:balance ~placeholder:"0.00" ~on_input:(fun balance -> set_tool (Reconcile { date; balance })) ()) ] ]
+                      Ui.field (Msg.label_statement_balance locale) (Ui.input ~value:balance ~placeholder:(Fmt.amount_placeholder locale) ~on_input:(fun balance -> set_tool (Reconcile { date; balance })) ()) ] ]
               ~actions:
-                [ Ui.button ~kind:"primary" (Msg.action_adjust locale) (run "reconcile" [ ("date", `String date); ("statement_balance", `String balance); ("adjust", `Bool true) ]);
-                  Ui.button (Msg.action_reconcile locale) (run "reconcile" [ ("date", `String date); ("statement_balance", `String balance) ]);
+                [ Ui.button ~kind:"primary" (Msg.action_adjust locale) (run "reconcile" [ ("date", `String date); ("statement_balance", `String (Fmt.typed_amount balance)); ("adjust", `Bool true) ]);
+                  Ui.button (Msg.action_reconcile locale) (run "reconcile" [ ("date", `String date); ("statement_balance", `String (Fmt.typed_amount balance)) ]);
                   Ui.button (Msg.action_cancel locale) (set_tool No_tool) ] ()
         | Opening { date; balance } ->
             Ui.card ~title:(Msg.label_opening_balance locale)
               ~body:
                 [ Ui.div ~cls:"form-row"
                     [ Ui.field (Msg.label_date locale) (Ui.input ~type_:"date" ~value:date ~on_input:(fun date -> set_tool (Opening { date; balance })) ());
-                      Ui.field (Msg.label_balance locale) (Ui.input ~value:balance ~placeholder:"0.00" ~on_input:(fun balance -> set_tool (Opening { date; balance })) ()) ] ]
-              ~actions:[ Ui.button ~kind:"primary" (Msg.action_save locale) (run "set_opening_balance" [ ("date", `String date); ("balance", `String balance) ]); Ui.button (Msg.action_cancel locale) (set_tool No_tool) ] ()
+                      Ui.field (Msg.label_balance locale) (Ui.input ~value:balance ~placeholder:(Fmt.amount_placeholder locale) ~on_input:(fun balance -> set_tool (Opening { date; balance })) ()) ] ]
+              ~actions:[ Ui.button ~kind:"primary" (Msg.action_save locale) (run "set_opening_balance" [ ("date", `String date); ("balance", `String (Fmt.typed_amount balance)) ]); Ui.button (Msg.action_cancel locale) (set_tool No_tool) ] ()
         | Market value ->
             Ui.card ~title:(Msg.label_market_value locale)
-              ~body:[ Ui.field (Msg.label_market_value locale) (Ui.input ~value ~placeholder:"0.00" ~on_input:(fun v -> set_tool (Market v)) ()) ]
-              ~actions:[ Ui.button ~kind:"primary" (Msg.action_save locale) (run "set_market_value" [ ("value", `String value) ]); Ui.button (Msg.action_cancel locale) (set_tool No_tool) ] ()
+              ~body:[ Ui.field (Msg.label_market_value locale) (Ui.input ~value ~placeholder:(Fmt.amount_placeholder locale) ~on_input:(fun v -> set_tool (Market v)) ()) ]
+              ~actions:[ Ui.button ~kind:"primary" (Msg.action_save locale) (run "set_market_value" [ ("value", `String (Fmt.typed_amount value)) ]); Ui.button (Msg.action_cancel locale) (set_tool No_tool) ] ()
       in
       let bank = Accounts_data.is_bank a in
       let transaction_row t =
